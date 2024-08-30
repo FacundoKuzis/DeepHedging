@@ -7,7 +7,7 @@ with open(os.path.join(current_directory, "requirements.txt"), encoding="utf-8")
     requirements_list = f.read()
 
 setup(
-    name="Deep Hedging - Tesis",
+    name="DeepHedging",
     version="0.1",
     license_file="None.",
     description="Deep Hedging",

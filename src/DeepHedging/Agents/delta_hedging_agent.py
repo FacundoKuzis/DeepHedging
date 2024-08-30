@@ -99,3 +99,25 @@ class DeltaHedgingAgent(BaseAgent):
         all_actions = tf.concat([all_actions, zero_action], axis=1)
 
         return all_actions
+
+    def get_model_price(self):
+        """
+        Calculate the Black-Scholes price for the option.
+
+        Returns:
+        - price (tf.Tensor): The Black-Scholes price of the option.
+        """
+        d1 = self.d1(self.S0, self.T)
+        d2 = d1 - self.sigma * tf.sqrt(self.T)
+        
+        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
+        if self.option_type == 'call':
+            price = (self.S0 * normal_dist.cdf(d1) - 
+                     self.strike * tf.exp(-self.r * self.T) * normal_dist.cdf(d2))
+        elif self.option_type == 'put':
+            price = (self.strike * tf.exp(-self.r * self.T) * normal_dist.cdf(-d2) - 
+                     self.S0 * normal_dist.cdf(-d1))
+        else:
+            raise ValueError("Option type must be either 'call' or 'put'.")
+        
+        return price

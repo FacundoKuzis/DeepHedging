@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
 import numpy as np
 
 class RiskMeasure:
@@ -100,8 +101,6 @@ class MAE(RiskMeasure):
         return mae
 
 
-
-
 class VaR(RiskMeasure):
     """
     A class representing the Value at Risk (VaR) risk measure.
@@ -130,9 +129,8 @@ class VaR(RiskMeasure):
         Returns:
         - var (tf.Tensor): Scalar tensor containing the calculated VaR.
         """
-        pnl_np = pnl.numpy()  # Convert TensorFlow tensor to NumPy array
-        var = np.percentile(pnl_np, (1 - self.alpha) * 100)
-        return tf.convert_to_tensor(-var, dtype=pnl.dtype)
+        var = tfp.stats.percentile(pnl, q=(1 - self.alpha) * 100, interpolation='linear')
+        return -var
 
 class CVaR(RiskMeasure):
     """
@@ -162,7 +160,10 @@ class CVaR(RiskMeasure):
         Returns:
         - cvar (tf.Tensor): Scalar tensor containing the calculated CVaR.
         """
-        pnl_np = pnl.numpy()  # Convert TensorFlow tensor to NumPy array
-        var = np.percentile(pnl_np, (1 - self.alpha) * 100)
-        cvar = np.mean(pnl_np[pnl_np <= var])
-        return tf.convert_to_tensor(-cvar, dtype=pnl.dtype)
+        # Compute the Value at Risk (VaR)
+        var = tfp.stats.percentile(pnl, q=(1 - self.alpha) * 100, interpolation='linear')
+
+        # Compute CVaR by taking the mean of the losses that are less than or equal to VaR
+        cvar = tf.reduce_mean(tf.boolean_mask(pnl, pnl <= var))
+
+        return -cvar

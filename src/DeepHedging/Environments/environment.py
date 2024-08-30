@@ -25,23 +25,40 @@ class Environment:
         val_data = self.instrument.generate_paths(val_paths)
         return train_data, val_data
 
-    def calculate_pnl(self, paths, actions):
+    def calculate_pnl(self, paths, actions, include_decomposition = False):
         # Calculate the portfolio value at each time step
-        portfolio_values = tf.cumsum(actions, axis=1) * paths
-        
-        # The final portfolio value is the last column of portfolio_values
+        portfolio_values = tf.cumsum(actions, axis=1) * paths        
         final_portfolio_value = portfolio_values[:, -1]
-        
+
+        # Calculate the total transaction costs
+        costs = self.cost_function(actions, paths)
+
+        # Calculate the cash flows from purchases and transaction costs
+        purchases_cashflows = -actions * paths - costs
+
+        # Calculate the factor for compounding cash positions
+        factor = (1 + self.instrument.r) ** self.instrument.dt - 1
+
+        # Initialize the cash tensor with the first cash flow
+        cash = purchases_cashflows[:, 0:1]
+
+        # Iterate over the remaining time steps to accumulate cash values
+        for t in range(1, tf.shape(purchases_cashflows)[1]):
+            current_cash = cash[:, -1:] * (1 + factor) + purchases_cashflows[:, t:t+1]
+            cash = tf.concat([cash, current_cash], axis=1)
+
+        final_cash_positions = cash[:, -1]
+
         # Calculate the payoff of the contingent claim
         payoff = self.contingent_claim.calculate_payoff(paths)
         
-        # Calculate the total transaction costs
-        costs = tf.reduce_sum(self.cost_function(actions, paths), axis=1)
-        
         # Calculate the PnL
-        pnl = final_portfolio_value - payoff - costs
+        pnl = final_portfolio_value + final_cash_positions - payoff
         
-        return pnl
+        if include_decomposition:
+            return pnl, portfolio_values, cash, payoff
+        else:
+            return pnl
 
     def loss_function(self, paths, actions):
         pnl = self.calculate_pnl(paths, actions)
@@ -70,16 +87,14 @@ class Environment:
                 val_actions = self.agent.process_batch(val_data, T_minus_t_val)
                 val_loss = self.loss_function(val_data, val_actions)
                 self.val_losses.append(val_loss.numpy())
-
-                print(f"Epoch {epoch+1}/{self.n_epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}")
+                print(f"Epoch {epoch+1}/{self.n_epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}, LR: {self.optimizer.learning_rate}")
             else:
-                print(f"Epoch {epoch+1}/{self.n_epochs}, Train Loss: {avg_train_loss:.4f}")
+                print(f"Epoch {epoch+1}/{self.n_epochs}, Train Loss: {avg_train_loss:.4f}, LR: {self.optimizer.learning_rate}")
 
         if val_paths > 0:
             return self.train_losses, self.val_losses
         else:
             return self.train_losses
-
 
     def test(self, paths_to_test = None, n_paths = None, random_seed = None, 
              plot_pnl = False, plot_title = 'PnL distribution', save_plot_path = None):
@@ -116,6 +131,56 @@ class Environment:
                 
         return loss
 
+    def get_T_minus_t(self, shape):
+        T_minus_t_single = tf.range(self.instrument.N, 0, -1, dtype=tf.float32) * self.instrument.dt
+        T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [shape, 1])
+        return T_minus_t
+
+    def terminal_hedging_error(self, paths_to_test = None, n_paths = None, random_seed = None, 
+                               fixed_price = None, n_paths_for_pricing = None, plot_error = False, 
+                               plot_title = 'Terminal Hedging Error', save_plot_path = None):
+        
+        if paths_to_test:
+            paths = paths_to_test
+        elif n_paths:
+            paths = self.instrument.generate_paths(n_paths, random_seed = random_seed)
+        else:
+            raise ValueError('Insert either paths_to_test or n_paths.')
+        
+        if fixed_price:
+            price = fixed_price
+        elif n_paths_for_pricing:
+            price_paths = self.instrument.generate_paths(n_paths)
+            T_minus_t = self.get_T_minus_t(price_paths.shape[0])
+            actions = self.agent.process_batch(paths, T_minus_t)
+            loss = self.loss_function(paths, actions)
+            price = loss * np.exp(-self.instrument.r * self.instrument.T)
+        else:
+            raise ValueError('Insert either fixed_price or n_paths_for_pricing.')
+        
+        T_minus_t = self.get_T_minus_t(paths.shape[0])
+        val_actions = self.agent.process_batch(paths, T_minus_t)
+        loss = self.loss_function(paths, val_actions)
+
+        pnl = self.calculate_pnl(paths, val_actions)
+        error = price + pnl * np.exp(-self.instrument.r * self.instrument.T)
+        mean_error = tf.reduce_mean(error)        
+
+        if plot_error:
+            plt.figure(figsize=(10, 6))
+            plt.hist(error, bins=30, color='blue', alpha=0.7, edgecolor='black')
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.title(f'{plot_title}. Mean Error: {mean_error:.4f}', fontsize=14)
+            plt.xlabel('Error', fontsize=12)
+            plt.ylabel('Frequency', fontsize=12)
+
+            if save_plot_path:
+                plt.savefig(save_plot_path)
+                print(f"Plot saved to {save_plot_path}")
+            else:
+                plt.show()
+                
+        return mean_error
 
     def plot_losses(self, losses, title = 'Training Losses'):
         plt.figure(figsize=(10, 6))
@@ -220,19 +285,15 @@ class Environment:
         # Get the hedging actions
         actions = self.agent.process_batch(single_path, T_minus_t_single)  # Shape: (1, N)
 
-        # Calculate the portfolio value over time
-        portfolio_values = (tf.cumsum(actions, axis=1) * single_path).numpy().flatten()
+        pnl, portfolio_values, cash, payoff = self.calculate_pnl(single_path, actions, include_decomposition = True)
 
-        # Calculate the contingent claim payoff at the final timestep
-        payoff = self.contingent_claim.calculate_payoff(single_path).numpy().flatten()
-
-        # Calculate the loss
-        loss = self.loss_function(single_path, actions).numpy()
+        net_portfolio_values = portfolio_values + cash
+        net_portfolio_values = net_portfolio_values.numpy()[0]
 
         # Plot the portfolio value over time
         timesteps = np.arange(self.instrument.N + 1)
         fig, ax1 = plt.figure(figsize=(10, 6)), plt.gca()
-        ax1.bar(timesteps, portfolio_values, label="Portfolio Value", color='b', alpha=0.6)
+        ax1.bar(timesteps, net_portfolio_values, label="Net Portfolio Values", color='b', alpha=0.6)
 
         # Plot the contingent claim payoff at the final timestep as a bar
         ax1.bar(self.instrument.N, payoff, color='r', alpha=0.6, label="Contingent Claim Payoff")
@@ -254,7 +315,7 @@ class Environment:
         ax1.legend(lines + lines2, labels + labels2, loc='upper left')
 
         # Title and layout
-        plt.title(f"Hedging Strategy Over Time. Loss: {loss:.4f}")
+        plt.title(f"Hedging Strategy Over Time. PnL: {pnl.numpy()[0]:.4f}")
         fig.tight_layout()
 
         # Save the plot if a path is provided, otherwise show it

@@ -10,11 +10,13 @@ class LSTMAgent(BaseAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, n_hedging_timesteps):
+    def __init__(self, n_hedging_timesteps, path_transformation_type = None, K = None):
         input_shape = (n_hedging_timesteps, 2)
         output_shape = 1
         self.model = self.build_model(input_shape, output_shape)
         self.name = 'lstm'
+        self.path_transformation_type = path_transformation_type
+        self.K = K
 
     def build_model(self, input_shape, output_shape):
         """
@@ -49,6 +51,8 @@ class LSTMAgent(BaseAgent):
         - input_data (tf.Tensor): The transformed input data.
                                 Shape: (batch_size, input_shape + 1)
         """
+        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_type, K = self.K)
+
         # Ensure both tensors have the same rank by expanding dimensions of instrument_paths
         instrument_paths = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (batch_size, input_shape, 1)
         T_minus_t = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, 1)

@@ -10,12 +10,14 @@ class RecurrentAgent(SimpleAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self):
+    def __init__(self, path_transformation_type = None, K = None):
         input_shape = (3,)
         output_shape = 1
         self.model = self.build_model(input_shape, output_shape)
         self.accumulated_position = None  # Initialize accumulated position
         self.name = 'recurrent'
+        self.path_transformation_type = path_transformation_type
+        self.K = K
 
     def build_model(self, input_shape, output_shape):
         """
@@ -55,6 +57,8 @@ class RecurrentAgent(SimpleAgent):
         Returns:
         - transformed_input (tf.Tensor): The transformed input, including accumulated position and T_minus_t.
         """
+        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_type, K = self.K)
+
         # Concatenate the instrument paths, accumulated position, and T_minus_t
         instrument_paths_expanded = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (batch_size, input_shape, 1)
         accumulated_position_expanded = tf.expand_dims(self.accumulated_position, axis=-1)
