@@ -155,6 +155,7 @@ class Environment:
             actions = self.agent.process_batch(paths, T_minus_t)
             loss = self.loss_function(paths, actions)
             price = loss * np.exp(-self.instrument.r * self.instrument.T)
+            print(price)
         else:
             raise ValueError('Insert either fixed_price or n_paths_for_pricing.')
         

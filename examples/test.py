@@ -6,6 +6,7 @@ from DeepHedging.ContingentClaims import EuropeanCall
 from DeepHedging.CostFunctions import ProportionalCost
 from DeepHedging.RiskMeasures import MAE, CVaR
 from DeepHedging.Environments import Environment
+import time
 
 instrument = GBMStock(S0=100, T=50/252, N=50, r=0.05, sigma=0.2)
 contingent_claim = EuropeanCall(strike=100)
@@ -18,7 +19,7 @@ delta_agent = DeltaHedgingAgent(instrument, contingent_claim)
 bs_price = delta_agent.get_model_price()
 agent = delta_agent
 #agent = RecurrentAgent(path_transformation_type=None, K = contingent_claim.strike)
-agent = LSTMAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
+#agent = LSTMAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
 
 model_path = os.path.join(os.getcwd(), 'models', agent.name, 'logm_0c_cvar50.keras')
 optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, 'logm_0c_cvar50')
@@ -46,16 +47,20 @@ env = Environment(
     optimizer=tf.keras.optimizers.Adam
 )
 
+print(time.ctime())
+
 env.load_model(model_path)
 env.load_optimizer(optimizer_path, only_weights=True)
 
-env.train(train_paths=20_000, val_paths=2000)
+#env.train(train_paths=20_000, val_paths=2000)
 
-env.save_model(model_path)
-env.save_optimizer(optimizer_path)
+#env.save_model(model_path)
+#env.save_optimizer(optimizer_path)
 
-#env.terminal_hedging_error(n_paths=5000, random_seed=33, plot_error=True, fixed_price = bs_price, # n_paths_for_pricing= 10_000, 
-#         save_plot_path=os.path.join(os.getcwd(), 'assets', 'plots', agent.name, 'hedge_error_3.pdf'))
+env.terminal_hedging_error(n_paths=5000, random_seed=33, plot_error=True, fixed_price = bs_price, n_paths_for_pricing = 50_000, 
+         save_plot_path=os.path.join(os.getcwd(), 'assets', 'plots', agent.name, 'hedge_error_cv50_bsprice.pdf'))
 
-#for i in range(10,20):
-#    env.plot_hedging_strategy(os.path.join(os.getcwd(), 'assets', 'plots', agent.name, f'plot_{i+1}.pdf'), random_seed = i + 1)
+for i in range(10,20):
+   env.plot_hedging_strategy(os.path.join(os.getcwd(), 'assets', 'plots', agent.name, f'plot_{i+1}.pdf'), random_seed = i + 1)
+
+print(time.ctime())
