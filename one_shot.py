@@ -1465,12 +1465,12 @@ env = Environment(
 
 print(time.ctime())
 
-env.load_model(model_path)
+agent.load_model(model_path)
 env.load_optimizer(optimizer_path, only_weights=True)
 
 env.train(train_paths=300_000)
 
-env.save_model(model_path)
+agent.save_model(model_path)
 env.save_optimizer(optimizer_path)
 
 print(time.ctime())
