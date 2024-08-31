@@ -1,6 +1,7 @@
 import tensorflow as tf
 from abc import ABC, abstractmethod
-
+import os
+import warnings
 class BaseAgent(ABC):
     """
     The base class for all agents.
@@ -50,3 +51,26 @@ class BaseAgent(ABC):
 
         else:
             raise ValueError(f"Unsupported transformation type: {transformation_type}")
+
+    def load_model(self, model_path):
+        """
+        Load the model from the specified path.
+
+        Arguments:
+        - model_path (str): File path from which the model will be loaded.
+        """
+        if not os.path.exists(model_path):
+            warnings.warn(f"Model path '{model_path}' does not exist. Exiting the load function.")
+            return
+
+        self.model = tf.keras.models.load_model(model_path)
+
+    def save_model(self, model_path):
+        """
+        Save the model to the specified path.
+
+        Arguments:
+        - model_path (str): File path where the model will be saved.
+        """
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        self.model.save(model_path)

@@ -22,6 +22,7 @@ class DeltaHedgingAgent(BaseAgent):
         self.option_type = option_class.option_type
         self.dt = gbm_stock.dt
         self.name = 'delta_hedging'
+        self.plot_name = 'BS Delta'
 
     def build_model(self):
         """

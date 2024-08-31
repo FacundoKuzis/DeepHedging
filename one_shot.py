@@ -1314,7 +1314,7 @@ class CVaR(RiskMeasure):
 
 instrument = GBMStock(S0=100, T=50/252, N=50, r=0.05, sigma=0.2)
 contingent_claim = EuropeanCall(strike=100)
-cost_function = ProportionalCost(proportion=0.0)
+cost_function = ProportionalCost(proportion=0.01)
 risk_measure = CVaR(alpha=0.5)
 #risk_measure = MAE()
 #agent = LSTMAgent(instrument.N)
@@ -1322,11 +1322,11 @@ risk_measure = CVaR(alpha=0.5)
 delta_agent = DeltaHedgingAgent(instrument, contingent_claim)
 bs_price = delta_agent.get_model_price()
 agent = delta_agent
-#agent = RecurrentAgent(path_transformation_type=None, K = contingent_claim.strike)
+#agent = RecurrentAgent(path_transformation_type='log_moneyness', K = contingent_claim.strike)
 #agent = LSTMAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
 
-model_path = os.path.join(os.getcwd(), 'models', agent.name, 'logm_0c_cvar50.keras')
-optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, 'logm_0c_cvar50')
+model_path = os.path.join(os.getcwd(), 'models', agent.name, 'logm_2c_cvar50_double.keras')
+optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, 'logm_2c_cvar50_double')
 
 
 initial_learning_rate = 0.001
@@ -1362,10 +1362,10 @@ env.load_optimizer(optimizer_path, only_weights=True)
 #env.save_optimizer(optimizer_path)
 
 env.terminal_hedging_error(n_paths=5000, random_seed=33, plot_error=True, fixed_price = bs_price, n_paths_for_pricing = 50_000, 
-         save_plot_path=os.path.join(os.getcwd(), 'assets', 'plots', agent.name, 'hedge_error_cv50_bsprice.pdf'))
+         save_plot_path=os.path.join(os.getcwd(), 'assets', 'plots', agent.name, 'hedge_error_cv50_double_1c_bsprice.pdf'))
 
-for i in range(10,20):
-   env.plot_hedging_strategy(os.path.join(os.getcwd(), 'assets', 'plots', agent.name, f'plot_{i+1}.pdf'), random_seed = i + 1)
+#for i in range(10,20):
+#   env.plot_hedging_strategy(os.path.join(os.getcwd(), 'assets', 'plots', agent.name, f'plot_{i+1}.pdf'), random_seed = i + 1)
 
 print(time.ctime())
 

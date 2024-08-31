@@ -4,6 +4,7 @@ import numpy as np
 import os
 import pickle
 import warnings
+import pandas as pd
 
 class Environment:
     def __init__(self, agent, instrument, contingent_claim, cost_function, risk_measure,
@@ -183,6 +184,79 @@ class Environment:
                 
         return mean_error
 
+    def terminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
+                                                fixed_price=None, plot_error=False, 
+                                                plot_title='Terminal Hedging Error', save_plot_path=None, 
+                                                colors=None, save_stats_path=None):
+        
+        paths = self.instrument.generate_paths(n_paths, random_seed=random_seed)
+
+        if fixed_price is not None:
+            price = fixed_price
+        else:
+            raise ValueError('Insert fixed_price.')
+
+        errors = []
+        mean_errors = []
+        std_errors = []
+        losses = []
+
+        for agent in agents:
+            T_minus_t = self.get_T_minus_t(paths.shape[0])
+            val_actions = agent.process_batch(paths, T_minus_t)
+            loss = self.loss_function(paths, val_actions)
+            pnl = self.calculate_pnl(paths, val_actions)
+            error = price + pnl * np.exp(-self.instrument.r * self.instrument.T)
+            
+            errors.append(error)
+            mean_errors.append(tf.reduce_mean(error).numpy())
+            std_errors.append(tf.math.reduce_std(error).numpy())
+            losses.append(tf.reduce_mean(loss).numpy())
+
+        if plot_error:
+            plt.figure(figsize=(10, 6))
+
+            # Calculate combined bin edges to ensure consistent bins across all histograms
+            all_errors = np.concatenate(errors)
+            min_error = np.min(all_errors)
+            max_error = np.max(all_errors)
+            min_error = -4.
+            max_error = 4.
+            bins = np.linspace(min_error, max_error, 60)  # 50 bins across the range of all errors
+
+            if colors is None:
+                cmap = plt.cm.get_cmap('tab10', len(agents))
+                colors = [cmap(i) for i in range(len(agents))]
+
+            for i, error in enumerate(errors):
+                plt.hist(error, bins=bins, color=colors[i], alpha=0.8, edgecolor='black', 
+                        label=f'{agents[i].plot_name} Agent')
+
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.title(f'{plot_title}', fontsize=14)
+            plt.xlabel('Error', fontsize=12)
+            plt.ylabel('Frequency', fontsize=12)
+            plt.legend()
+
+            if save_plot_path:
+                plt.savefig(save_plot_path)
+                print(f"Plot saved to {save_plot_path}")
+            else:
+                plt.show()
+
+        # Save statistics to CSV if save_stats_path is provided
+        if save_stats_path:
+            df = pd.DataFrame({
+                'Agent': [agent.plot_name for agent in agents],
+                'Mean Error': mean_errors,
+                'Standard Deviation': std_errors,
+                'CVaR50': losses
+            })
+            df.to_csv(save_stats_path, index=False)
+            print(f"Statistics saved to {save_stats_path}")
+
+        return mean_errors, std_errors, losses
+
     def plot_losses(self, losses, title = 'Training Losses'):
         plt.figure(figsize=(10, 6))
         plt.plot(losses)
@@ -191,29 +265,6 @@ class Environment:
         plt.title(title)
         plt.legend()
         plt.show()
-
-    def save_model(self, model_path):
-        """
-        Save the model to the specified path.
-
-        Arguments:
-        - model_path (str): File path where the model will be saved.
-        """
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        self.agent.model.save(model_path)
-
-    def load_model(self, model_path):
-        """
-        Load the model from the specified path.
-
-        Arguments:
-        - model_path (str): File path from which the model will be loaded.
-        """
-        if not os.path.exists(model_path):
-            warnings.warn(f"Model path '{model_path}' does not exist. Exiting the load function.")
-            return
-
-        self.agent.model = tf.keras.models.load_model(model_path)
 
     def save_optimizer(self, optimizer_path):
         """

@@ -14,9 +14,10 @@ class LSTMAgent(BaseAgent):
         input_shape = (n_hedging_timesteps, 2)
         output_shape = 1
         self.model = self.build_model(input_shape, output_shape)
-        self.name = 'lstm'
         self.path_transformation_type = path_transformation_type
         self.K = K
+        self.name = 'lstm'
+        self.plot_name = 'LSTM'
 
     def build_model(self, input_shape, output_shape):
         """
@@ -31,7 +32,8 @@ class LSTMAgent(BaseAgent):
         """
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=input_shape),
-            tf.keras.layers.LSTM(64, return_sequences=True),
+            tf.keras.layers.LSTM(50, return_sequences=True, activation = 'relu'),
+            tf.keras.layers.LSTM(50, return_sequences=True),
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])
         return model

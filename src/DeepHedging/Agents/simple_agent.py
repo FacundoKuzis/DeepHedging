@@ -14,9 +14,10 @@ class SimpleAgent(BaseAgent):
         input_shape = (2,)
         output_shape = 1
         self.model = self.build_model(input_shape, output_shape)
-        self.name = 'simple'
         self.path_transformation_type = path_transformation_type
         self.K = K
+        self.name = 'simple'
+        self.plot_name = 'Simple'
 
     def build_model(self, input_shape, output_shape):
         """
@@ -31,6 +32,7 @@ class SimpleAgent(BaseAgent):
         """
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=input_shape),
+            tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])

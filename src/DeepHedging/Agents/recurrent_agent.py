@@ -15,9 +15,10 @@ class RecurrentAgent(SimpleAgent):
         output_shape = 1
         self.model = self.build_model(input_shape, output_shape)
         self.accumulated_position = None  # Initialize accumulated position
-        self.name = 'recurrent'
         self.path_transformation_type = path_transformation_type
         self.K = K
+        self.name = 'recurrent'
+        self.plot_name = 'Recurrent'
 
     def build_model(self, input_shape, output_shape):
         """
@@ -32,6 +33,7 @@ class RecurrentAgent(SimpleAgent):
         """
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=input_shape),  # Adjust input shape for accumulated position and T_minus_t
+            tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])
