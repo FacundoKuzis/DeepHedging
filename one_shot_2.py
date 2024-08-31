@@ -8,6 +8,10 @@ import numpy as np
 import pickle
 import warnings
 
+import tensorflow as tf
+from abc import ABC, abstractmethod
+import os
+import warnings
 class BaseAgent(ABC):
     """
     The base class for all agents.
@@ -80,6 +84,10 @@ class BaseAgent(ABC):
         """
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
         self.model.save(model_path)
+
+import tensorflow as tf
+import tensorflow_probability as tfp
+from DeepHedging.Agents import BaseAgent
 
 class DeltaHedgingAgent(BaseAgent):
     """
@@ -202,6 +210,9 @@ class DeltaHedgingAgent(BaseAgent):
         
         return price
     
+import tensorflow as tf
+from DeepHedging.Agents import BaseAgent
+
 class SimpleAgent(BaseAgent):
     """
     A simple agent that processes inputs timestep by timestep.
@@ -315,6 +326,9 @@ class SimpleAgent(BaseAgent):
 
         return loss
 
+import tensorflow as tf
+from DeepHedging.Agents import SimpleAgent
+
 class RecurrentAgent(SimpleAgent):
     """
     A recurrent agent that processes inputs timestep by timestep and includes the accumulated position.
@@ -417,6 +431,8 @@ class RecurrentAgent(SimpleAgent):
         self.reset_accumulated_position(batch_paths.shape[0])
         return super().process_batch(batch_paths, batch_T_minus_t)
 
+import tensorflow as tf
+from DeepHedging.Agents import BaseAgent
 
 class LSTMAgent(BaseAgent):
     """
@@ -530,6 +546,9 @@ class LSTMAgent(BaseAgent):
 
         return loss
     
+import tensorflow as tf
+from DeepHedging.Agents import LSTMAgent
+
 class GRUAgent(LSTMAgent):
     """
     A GRU agent that processes the entire sequence of inputs at once.
@@ -588,6 +607,9 @@ class ContingentClaim:
         None. (Must be implemented in subclasses.)
         """
         raise NotImplementedError("Subclasses must implement this method.")
+
+import tensorflow as tf
+from DeepHedging.ContingentClaims import ContingentClaim
 
 class EuropeanCall(ContingentClaim):
     """
@@ -680,6 +702,9 @@ class CostFunction:
 
     def __call__(self, actions, paths):
         return self.calculate(actions, paths) 
+    
+import tensorflow as tf
+from DeepHedging.CostFunctions import CostFunction
 
 class ProportionalCost(CostFunction):
     """
@@ -721,6 +746,14 @@ class ProportionalCost(CostFunction):
         cost = self.proportion * tf.abs(actions) * paths
         
         return cost
+
+import tensorflow as tf
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import pickle
+import warnings
+import pandas as pd
 
 class Environment:
     def __init__(self, agent, instrument, contingent_claim, cost_function, risk_measure,
@@ -1093,6 +1126,10 @@ class Environment:
         else:
             plt.show()
 
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+
 class Stock:
     """
     The base class for simulating stock price paths. This class provides the basic
@@ -1259,6 +1296,10 @@ class HestonStock(Stock):
             return S_paths, v_paths
         else:
             return S_paths
+
+import tensorflow as tf
+import tensorflow_probability as tfp
+import numpy as np
 
 class RiskMeasure:
     """
@@ -1430,17 +1471,14 @@ instrument = GBMStock(S0=100, T=1, N=252, r=0.05, sigma=0.2)
 contingent_claim = EuropeanCall(strike=100)
 cost_function = ProportionalCost(proportion=0.0)
 risk_measure = CVaR(alpha=0.5)
-
-agent = RecurrentAgent(path_transformation_type='log_moneyness', K = contingent_claim.strike)
+#agent = RecurrentAgent(path_transformation_type='log_moneyness', K = contingent_claim.strike)
 #agent = LSTMAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
 #agent = GRUAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
 
-model_name = 'logm_0c_cvar50'
-model_path = os.path.join(os.getcwd(), 'models', agent.name, f'{model_name}.keras')
-optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, model_name)
+model_path = os.path.join(os.getcwd(), 'models', agent.name, 'logm_2c_cvar50_double.keras')
+optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, 'logm_2c_cvar50_double')
 
 
-print(agent.name, model_name)
 initial_learning_rate = 0.001
 decay_steps = 10 
 decay_rate = 0.99  
@@ -1468,10 +1506,16 @@ print(time.ctime())
 env.load_model(model_path)
 env.load_optimizer(optimizer_path, only_weights=True)
 
-env.train(train_paths=300_000)
+#env.train(train_paths=20_000, val_paths=2000)
 
-env.save_model(model_path)
-env.save_optimizer(optimizer_path)
+#env.save_model(model_path)
+#env.save_optimizer(optimizer_path)
+
+env.terminal_hedging_error(n_paths=5000, random_seed=33, plot_error=True, fixed_price = bs_price, n_paths_for_pricing = 50_000, 
+         save_plot_path=os.path.join(os.getcwd(), 'assets', 'plots', agent.name, 'hedge_error_cv50_double_1c_bsprice.pdf'))
+
+#for i in range(10,20):
+#   env.plot_hedging_strategy(os.path.join(os.getcwd(), 'assets', 'plots', agent.name, f'plot_{i+1}.pdf'), random_seed = i + 1)
 
 print(time.ctime())
 
