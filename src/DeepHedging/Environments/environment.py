@@ -187,7 +187,27 @@ class Environment:
     def terminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
                                                 fixed_price=None, plot_error=False, 
                                                 plot_title='Terminal Hedging Error', save_plot_path=None, 
-                                                colors=None, save_stats_path=None):
+                                                colors=None, save_stats_path=None, loss_functions=None):
+        """
+        Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
+
+        Arguments:
+        - agents (list): List of agent instances to evaluate.
+        - n_paths (int): Number of paths to generate for evaluation.
+        - random_seed (int or None): Random seed for path generation.
+        - fixed_price (float): The fixed price to use in calculating the hedging error.
+        - plot_error (bool): Whether to plot the error histograms.
+        - plot_title (str): Title of the plot.
+        - save_plot_path (str or None): Path to save the plot image. If None, plot is shown.
+        - colors (list or None): List of colors for the plot. If None, default colors are used.
+        - save_stats_path (str or None): Path to save the statistics as an Excel file.
+        - loss_functions (list of callables or None): List of loss functions to evaluate on the PnL.
+
+        Returns:
+        - mean_errors (list): List of mean errors for each agent.
+        - std_errors (list): List of standard deviations of errors for each agent.
+        - losses (list of lists): List of loss values for each agent and loss function.
+        """
         
         paths = self.instrument.generate_paths(n_paths, random_seed=random_seed)
 
@@ -199,30 +219,33 @@ class Environment:
         errors = []
         mean_errors = []
         std_errors = []
-        losses = []
+
+        # Initialize a dictionary to store losses for each loss function and agent
+        loss_results = {loss_fn.name: [] for loss_fn in loss_functions} if loss_functions else {}
 
         for agent in agents:
             T_minus_t = self.get_T_minus_t(paths.shape[0])
             val_actions = agent.process_batch(paths, T_minus_t)
-            loss = self.loss_function(paths, val_actions)
             pnl = self.calculate_pnl(paths, val_actions)
             error = price + pnl * np.exp(-self.instrument.r * self.instrument.T)
             
             errors.append(error)
             mean_errors.append(tf.reduce_mean(error).numpy())
             std_errors.append(tf.math.reduce_std(error).numpy())
-            losses.append(tf.reduce_mean(loss).numpy())
+
+            # Compute additional loss functions if provided
+            if loss_functions:
+                for loss_fn in loss_functions:
+                    loss_value = loss_fn(pnl)
+                    loss_results[loss_fn.name].append(tf.reduce_mean(loss_value).numpy())
 
         if plot_error:
             plt.figure(figsize=(10, 6))
 
             # Calculate combined bin edges to ensure consistent bins across all histograms
-            all_errors = np.concatenate(errors)
-            min_error = np.min(all_errors)
-            max_error = np.max(all_errors)
-            min_error = -4.
-            max_error = 4.
-            bins = np.linspace(min_error, max_error, 60)  # 50 bins across the range of all errors
+            min_error = -4.  # Fixed minimum error range for bins
+            max_error = 4.   # Fixed maximum error range for bins
+            bins = np.linspace(min_error, max_error, 60)  # 60 bins across the range of all errors
 
             if colors is None:
                 cmap = plt.cm.get_cmap('tab10', len(agents))
@@ -244,27 +267,24 @@ class Environment:
             else:
                 plt.show()
 
-        # Save statistics to CSV if save_stats_path is provided
+        # Save statistics to Excel if save_stats_path is provided
         if save_stats_path:
-            df = pd.DataFrame({
+            data = {
                 'Agent': [agent.plot_name for agent in agents],
                 'Mean Error': mean_errors,
                 'Standard Deviation': std_errors,
-                'CVaR50': losses
-            })
-            df.to_csv(save_stats_path, index=False)
+            }
+            # Add additional loss functions to the data dictionary
+            if loss_functions:
+                for loss_fn_name, results in loss_results.items():
+                    data[loss_fn_name] = results
+
+            df = pd.DataFrame(data)
+            df.to_excel(save_stats_path, index=False)
             print(f"Statistics saved to {save_stats_path}")
+            return df
 
-        return mean_errors, std_errors, losses
-
-    def plot_losses(self, losses, title = 'Training Losses'):
-        plt.figure(figsize=(10, 6))
-        plt.plot(losses)
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title(title)
-        plt.legend()
-        plt.show()
+        return mean_errors, std_errors, loss_results
 
     def save_optimizer(self, optimizer_path):
         """

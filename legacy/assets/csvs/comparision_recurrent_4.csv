@@ -1,0 +1,3 @@
+Agent,Mean Error,Standard Deviation,CVaR50
+Recurrent,0.015405935,0.4891598,5.02092
+BS Delta,0.016525816,0.4285244,4.982047

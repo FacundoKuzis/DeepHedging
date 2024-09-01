@@ -9,6 +9,8 @@ class RiskMeasure:
     Methods:
     - calculate(self, pnl): Abstract method that must be implemented by subclasses to calculate the risk measure.
     """
+    def __init__(self):
+        self.name = 'unknown'
 
     def calculate(self, pnl):
         """
@@ -22,6 +24,9 @@ class RiskMeasure:
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def __call__(self, pnl):
+        return self.calculate(pnl)
+    
 class MSE(RiskMeasure):
     """
     A class representing the Mean Squared Error (MSE) risk measure.
@@ -33,6 +38,8 @@ class MSE(RiskMeasure):
       - Returns:
         - mse (tf.Tensor): Scalar tensor containing the calculated MSE.
     """
+    def __init__(self):
+        self.name = 'MSE'
 
     def calculate(self, pnl):
         """
@@ -59,6 +66,8 @@ class SMSE(RiskMeasure):
       - Returns:
         - smse (tf.Tensor): Scalar tensor containing the calculated SMSE.
     """
+    def __init__(self):
+        self.name = 'SMSE'
 
     def calculate(self, pnl):
         """
@@ -86,6 +95,8 @@ class MAE(RiskMeasure):
       - Returns:
         - mae (tf.Tensor): Scalar tensor containing the calculated MAE.
     """
+    def __init__(self):
+        self.name = 'MAE'
 
     def calculate(self, pnl):
         """
@@ -118,6 +129,7 @@ class VaR(RiskMeasure):
 
     def __init__(self, alpha=0.95):
         self.alpha = alpha
+        self.name = f'VaR_{int(alpha*100)}'
 
     def calculate(self, pnl):
         """
@@ -149,6 +161,7 @@ class CVaR(RiskMeasure):
 
     def __init__(self, alpha=0.95):
         self.alpha = alpha
+        self.name = f'CVaR_{int(alpha*100)}'
 
     def calculate(self, pnl):
         """
@@ -167,3 +180,64 @@ class CVaR(RiskMeasure):
         cvar = tf.reduce_mean(tf.boolean_mask(pnl, pnl <= var))
 
         return -cvar
+
+class WorstCase(RiskMeasure):
+    """
+    A class representing the Worst Case risk measure, 
+    which returns the minimum value of the PnL (worst-case scenario).
+
+    Methods:
+    - calculate(self, pnl): Calculates the worst-case scenario of the given PnL.
+      - Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+      - Returns:
+        - worst_case (tf.Tensor): Scalar tensor containing the calculated worst-case scenario.
+    """
+    def __init__(self):
+        self.name = 'WorstCase'
+
+    def calculate(self, pnl):
+        """
+        Calculates the Worst Case scenario of the given PnL.
+
+        Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+
+        Returns:
+        - worst_case (tf.Tensor): Scalar tensor containing the calculated worst-case scenario.
+        """
+        worst_case = tf.reduce_min(pnl)
+        return -worst_case
+
+class Entropy(RiskMeasure):
+    """
+    A class representing the Entropy risk measure, 
+    which quantifies the uncertainty in the PnL distribution.
+
+    Methods:
+    - calculate(self, pnl): Calculates the entropy of the given PnL.
+      - Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+      - Returns:
+        - entropy (tf.Tensor): Scalar tensor containing the calculated entropy.
+    """
+    def __init__(self):
+        self.name = 'Entropy'
+
+    def calculate(self, pnl):
+        """
+        Calculates the entropy of the given PnL.
+
+        Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+
+        Returns:
+        - entropy (tf.Tensor): Scalar tensor containing the calculated entropy.
+        """
+        # Normalize the PnL values to obtain a probability distribution
+        normalized_pnl = pnl - tf.reduce_min(pnl) + 1e-9  # Shift to positive values to avoid log(0)
+        probabilities = normalized_pnl / tf.reduce_sum(normalized_pnl)
+
+        # Compute the entropy
+        entropy = -tf.reduce_sum(probabilities * tf.math.log(probabilities))
+        return entropy

@@ -32,8 +32,8 @@ class LSTMAgent(BaseAgent):
         """
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=input_shape),
-            tf.keras.layers.LSTM(50, return_sequences=True, activation = 'relu'),
-            tf.keras.layers.LSTM(50, return_sequences=True),
+            tf.keras.layers.LSTM(30, return_sequences=True),
+            tf.keras.layers.LSTM(30, return_sequences=True, activation = 'relu'),
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])
         return model

@@ -58,6 +58,29 @@ class BaseAgent(ABC):
         else:
             raise ValueError(f"Unsupported transformation type: {transformation_type}")
 
+    def load_model(self, model_path):
+        """
+        Load the model from the specified path.
+
+        Arguments:
+        - model_path (str): File path from which the model will be loaded.
+        """
+        if not os.path.exists(model_path):
+            warnings.warn(f"Model path '{model_path}' does not exist. Exiting the load function.")
+            return
+
+        self.model = tf.keras.models.load_model(model_path)
+
+    def save_model(self, model_path):
+        """
+        Save the model to the specified path.
+
+        Arguments:
+        - model_path (str): File path where the model will be saved.
+        """
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        self.model.save(model_path)
+
 class DeltaHedgingAgent(BaseAgent):
     """
     A delta hedging agent that computes the delta of an option and uses it as the hedging strategy.
@@ -78,6 +101,7 @@ class DeltaHedgingAgent(BaseAgent):
         self.option_type = option_class.option_type
         self.dt = gbm_stock.dt
         self.name = 'delta_hedging'
+        self.plot_name = 'BS Delta'
 
     def build_model(self):
         """
@@ -177,117 +201,6 @@ class DeltaHedgingAgent(BaseAgent):
             raise ValueError("Option type must be either 'call' or 'put'.")
         
         return price
-
-class LSTMAgent(BaseAgent):
-    """
-    An LSTM agent that processes the entire sequence of inputs at once.
-
-    Arguments:
-    - input_shape (tuple): Shape of the input.
-    - output_shape (int): Shape of the output.
-    """
-
-    def __init__(self, n_hedging_timesteps, path_transformation_type = None, K = None):
-        input_shape = (n_hedging_timesteps, 2)
-        output_shape = 1
-        self.model = self.build_model(input_shape, output_shape)
-        self.name = 'lstm'
-        self.path_transformation_type = path_transformation_type
-        self.K = K
-
-    def build_model(self, input_shape, output_shape):
-        """
-        Builds an LSTM model.
-
-        Arguments:
-        - input_shape (tuple): Shape of the input.
-        - output_shape (int): Shape of the output.
-
-        Returns:
-        - model (tf.keras.Model): The built model.
-        """
-        model = tf.keras.Sequential([
-            tf.keras.layers.InputLayer(input_shape=input_shape),
-            tf.keras.layers.LSTM(64, return_sequences=True),
-            tf.keras.layers.LSTM(64, return_sequences=True),
-            tf.keras.layers.Dense(output_shape, activation='linear')
-        ])
-        return model
-
-
-    def transform_input(self, instrument_paths, T_minus_t):
-        """
-        Transforms the input by concatenating instrument paths and time to maturity.
-
-        Arguments:
-        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
-                                        Shape: (batch_size, input_shape)
-        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
-                                Shape: (batch_size,)
-
-        Returns:
-        - input_data (tf.Tensor): The transformed input data.
-                                Shape: (batch_size, input_shape + 1)
-        """
-        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_type, K = self.K)
-
-        # Ensure both tensors have the same rank by expanding dimensions of instrument_paths
-        instrument_paths = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (batch_size, input_shape, 1)
-        T_minus_t = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, 1)
-        
-        # Concatenate along the last axis
-        input_data = tf.concat([instrument_paths, T_minus_t], axis=-1)  # Shape: (batch_size, input_shape + 1)
-        return input_data
-    
-
-
-
-    def act(self, instrument_paths, T_minus_t):
-        """
-        Act based on the entire sequence of inputs.
-
-        Arguments:
-        - instrument_paths (tf.Tensor): Tensor containing the instrument paths for all timesteps.
-        - T_minus_t (tf.Tensor): Tensor representing the time to maturity for all timesteps.
-
-        Returns:
-        - actions (tf.Tensor): The actions chosen by the model.
-        """
-        input_data = self.transform_input(instrument_paths, T_minus_t)
-        actions = self.model(input_data)
-        return actions
-
-    def process_batch(self, batch_paths, batch_T_minus_t):
-
-        all_actions = self.act(batch_paths[:, :-1], batch_T_minus_t)
-
-        zero_action = tf.zeros((batch_paths.shape[0], 1, all_actions.shape[2]))
-        all_actions = tf.concat([all_actions, zero_action], axis=1)
-        all_actions = all_actions[:, :, 0] # temporary, only one instrument
-
-        return all_actions
-
-
-    def train_batch(self, batch_paths, batch_T_minus_t, optimizer, loss_function):
-        """
-        Train the model on a batch of data using the entire sequence at once.
-
-        Arguments:
-        - batch_paths (tf.Tensor): Tensor containing a batch of instrument paths. Shape: (batch_size, timesteps, input_shape)
-        - batch_T_minus_t (tf.Tensor): Tensor containing the time to maturity at each timestep.
-        - optimizer (tf.optimizers.Optimizer): The optimizer to use for training.
-
-        Returns:
-        - loss (tf.Tensor): The loss value after training on the batch.
-        """
-        with tf.GradientTape() as tape:
-            actions = self.process_batch(batch_paths, batch_T_minus_t)
-            loss = loss_function(batch_paths, actions) 
-            # Compute gradients based on the loss
-            grads = tape.gradient(loss, self.model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-
-        return loss
     
 class SimpleAgent(BaseAgent):
     """
@@ -302,9 +215,10 @@ class SimpleAgent(BaseAgent):
         input_shape = (2,)
         output_shape = 1
         self.model = self.build_model(input_shape, output_shape)
-        self.name = 'simple'
         self.path_transformation_type = path_transformation_type
         self.K = K
+        self.name = 'simple'
+        self.plot_name = 'Simple'
 
     def build_model(self, input_shape, output_shape):
         """
@@ -319,6 +233,7 @@ class SimpleAgent(BaseAgent):
         """
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=input_shape),
+            tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])
@@ -414,9 +329,10 @@ class RecurrentAgent(SimpleAgent):
         output_shape = 1
         self.model = self.build_model(input_shape, output_shape)
         self.accumulated_position = None  # Initialize accumulated position
-        self.name = 'recurrent'
         self.path_transformation_type = path_transformation_type
         self.K = K
+        self.name = 'recurrent'
+        self.plot_name = 'Recurrent'
 
     def build_model(self, input_shape, output_shape):
         """
@@ -500,6 +416,205 @@ class RecurrentAgent(SimpleAgent):
         # Reset accumulated position at the start of processing each batch
         self.reset_accumulated_position(batch_paths.shape[0])
         return super().process_batch(batch_paths, batch_T_minus_t)
+
+class LSTMAgent(BaseAgent):
+    """
+    An LSTM agent that processes the entire sequence of inputs at once.
+
+    Arguments:
+    - input_shape (tuple): Shape of the input.
+    - output_shape (int): Shape of the output.
+    """
+
+    def __init__(self, n_hedging_timesteps, path_transformation_type = None, K = None):
+        input_shape = (n_hedging_timesteps, 2)
+        output_shape = 1
+        self.model = self.build_model(input_shape, output_shape)
+        self.path_transformation_type = path_transformation_type
+        self.K = K
+        self.name = 'lstm'
+        self.plot_name = 'LSTM'
+
+    def build_model(self, input_shape, output_shape):
+        """
+        Builds an LSTM model.
+
+        Arguments:
+        - input_shape (tuple): Shape of the input.
+        - output_shape (int): Shape of the output.
+
+        Returns:
+        - model (tf.keras.Model): The built model.
+        """
+        model = tf.keras.Sequential([
+            tf.keras.layers.InputLayer(input_shape=input_shape),
+            tf.keras.layers.LSTM(30, return_sequences=True),
+            tf.keras.layers.LSTM(30, return_sequences=True, activation = 'relu'),
+            tf.keras.layers.Dense(output_shape, activation='linear')
+        ])
+        return model
+
+
+    def transform_input(self, instrument_paths, T_minus_t):
+        """
+        Transforms the input by concatenating instrument paths and time to maturity.
+
+        Arguments:
+        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
+                                        Shape: (batch_size, input_shape)
+        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
+                                Shape: (batch_size,)
+
+        Returns:
+        - input_data (tf.Tensor): The transformed input data.
+                                Shape: (batch_size, input_shape + 1)
+        """
+        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_type, K = self.K)
+
+        # Ensure both tensors have the same rank by expanding dimensions of instrument_paths
+        instrument_paths = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (batch_size, input_shape, 1)
+        T_minus_t = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, 1)
+        
+        # Concatenate along the last axis
+        input_data = tf.concat([instrument_paths, T_minus_t], axis=-1)  # Shape: (batch_size, input_shape + 1)
+        return input_data
+    
+
+
+
+    def act(self, instrument_paths, T_minus_t):
+        """
+        Act based on the entire sequence of inputs.
+
+        Arguments:
+        - instrument_paths (tf.Tensor): Tensor containing the instrument paths for all timesteps.
+        - T_minus_t (tf.Tensor): Tensor representing the time to maturity for all timesteps.
+
+        Returns:
+        - actions (tf.Tensor): The actions chosen by the model.
+        """
+        input_data = self.transform_input(instrument_paths, T_minus_t)
+        actions = self.model(input_data)
+        return actions
+
+    def process_batch(self, batch_paths, batch_T_minus_t):
+
+        all_actions = self.act(batch_paths[:, :-1], batch_T_minus_t)
+
+        zero_action = tf.zeros((batch_paths.shape[0], 1, all_actions.shape[2]))
+        all_actions = tf.concat([all_actions, zero_action], axis=1)
+        all_actions = all_actions[:, :, 0] # temporary, only one instrument
+
+        return all_actions
+
+
+    def train_batch(self, batch_paths, batch_T_minus_t, optimizer, loss_function):
+        """
+        Train the model on a batch of data using the entire sequence at once.
+
+        Arguments:
+        - batch_paths (tf.Tensor): Tensor containing a batch of instrument paths. Shape: (batch_size, timesteps, input_shape)
+        - batch_T_minus_t (tf.Tensor): Tensor containing the time to maturity at each timestep.
+        - optimizer (tf.optimizers.Optimizer): The optimizer to use for training.
+
+        Returns:
+        - loss (tf.Tensor): The loss value after training on the batch.
+        """
+        with tf.GradientTape() as tape:
+            actions = self.process_batch(batch_paths, batch_T_minus_t)
+            loss = loss_function(batch_paths, actions) 
+            # Compute gradients based on the loss
+            grads = tape.gradient(loss, self.model.trainable_variables)
+            optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+
+        return loss
+    
+class GRUAgent(LSTMAgent):
+    """
+    A GRU agent that processes the entire sequence of inputs at once.
+
+    Arguments:
+    - input_shape (tuple): Shape of the input.
+    - output_shape (int): Shape of the output.
+    """
+
+    def __init__(self, n_hedging_timesteps, path_transformation_type=None, K=None):
+        super().__init__(n_hedging_timesteps, path_transformation_type, K)
+        self.name = 'gru'
+        self.plot_name = 'GRU'
+
+    def build_model(self, input_shape, output_shape):
+        """
+        Builds a GRU model.
+
+        Arguments:
+        - input_shape (tuple): Shape of the input.
+        - output_shape (int): Shape of the output.
+
+        Returns:
+        - model (tf.keras.Model): The built model.
+        """
+        model = tf.keras.Sequential([
+            tf.keras.layers.InputLayer(input_shape=input_shape),
+            tf.keras.layers.GRU(30, return_sequences=True),
+            tf.keras.layers.GRU(30, return_sequences=True, activation = 'relu'),
+            tf.keras.layers.Dense(output_shape, activation='linear')
+        ])
+        return model
+
+class WaveNetAgent(LSTMAgent):
+    """
+    A WaveNet agent that processes the entire sequence of inputs using a causal WaveNet-like architecture.
+
+    Arguments:
+    - n_hedging_timesteps (int): Number of timesteps in the hedging sequence.
+    - path_transformation_type (str or None): Type of transformation applied to the instrument paths.
+    - K (float or None): Strike price or other parameter for path transformation.
+    - num_filters (int): Number of filters in the convolutional layers.
+    - num_residual_blocks (int): Number of residual blocks in the WaveNet model.
+    """
+
+    def __init__(self, n_hedging_timesteps, path_transformation_type=None, K=None, num_filters=32, num_residual_blocks=3):
+        input_shape = (n_hedging_timesteps, 2)
+        output_shape = 1
+        self.num_filters = num_filters
+        self.num_residual_blocks = num_residual_blocks
+        self.model = self.build_model(input_shape, output_shape)
+        self.path_transformation_type = path_transformation_type
+        self.K = K
+        self.name = 'wavenet'
+        self.plot_name = 'WaveNet'
+
+    def build_model(self, input_shape, output_shape):
+        """
+        Builds a causal WaveNet-like model.
+
+        Arguments:
+        - input_shape (tuple): Shape of the input.
+        - output_shape (int): Shape of the output.
+
+        Returns:
+        - model (tf.keras.Model): The built model.
+        """
+        inputs = tf.keras.Input(shape=input_shape)
+        x = inputs
+
+        # Initial causal convolutional layer
+        x = tf.keras.layers.Conv1D(filters=self.num_filters, kernel_size=1, padding='causal', activation='relu')(x)
+
+        # Residual blocks with dilated causal convolutions
+        for i in range(self.num_residual_blocks):
+            dilation_rate = 2 ** i
+            residual = x
+            x = tf.keras.layers.Conv1D(filters=self.num_filters, kernel_size=2, padding='causal', dilation_rate=dilation_rate, activation='relu')(x)
+            x = tf.keras.layers.Conv1D(filters=self.num_filters, kernel_size=1, padding='causal', activation='relu')(x)
+            x = tf.keras.layers.add([x, residual])  # Residual connection
+
+        # Final convolutional layer to produce the output
+        x = tf.keras.layers.Conv1D(filters=output_shape, kernel_size=1, padding='causal', activation='linear')(x)
+        
+        model = tf.keras.Model(inputs=inputs, outputs=x)
+        return model
 
 class ContingentClaim:
     """
@@ -618,7 +733,7 @@ class CostFunction:
 
     def __call__(self, actions, paths):
         return self.calculate(actions, paths) 
-
+    
 class ProportionalCost(CostFunction):
     """
     A class representing a proportional transaction cost function.
@@ -838,37 +953,107 @@ class Environment:
                 
         return mean_error
 
-    def plot_losses(self, losses, title = 'Training Losses'):
-        plt.figure(figsize=(10, 6))
-        plt.plot(losses)
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title(title)
-        plt.legend()
-        plt.show()
-
-    def save_model(self, model_path):
+    def terminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
+                                                fixed_price=None, plot_error=False, 
+                                                plot_title='Terminal Hedging Error', save_plot_path=None, 
+                                                colors=None, save_stats_path=None, loss_functions=None):
         """
-        Save the model to the specified path.
+        Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
 
         Arguments:
-        - model_path (str): File path where the model will be saved.
-        """
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        self.agent.model.save(model_path)
+        - agents (list): List of agent instances to evaluate.
+        - n_paths (int): Number of paths to generate for evaluation.
+        - random_seed (int or None): Random seed for path generation.
+        - fixed_price (float): The fixed price to use in calculating the hedging error.
+        - plot_error (bool): Whether to plot the error histograms.
+        - plot_title (str): Title of the plot.
+        - save_plot_path (str or None): Path to save the plot image. If None, plot is shown.
+        - colors (list or None): List of colors for the plot. If None, default colors are used.
+        - save_stats_path (str or None): Path to save the statistics as an Excel file.
+        - loss_functions (list of callables or None): List of loss functions to evaluate on the PnL.
 
-    def load_model(self, model_path):
+        Returns:
+        - mean_errors (list): List of mean errors for each agent.
+        - std_errors (list): List of standard deviations of errors for each agent.
+        - losses (list of lists): List of loss values for each agent and loss function.
         """
-        Load the model from the specified path.
+        
+        paths = self.instrument.generate_paths(n_paths, random_seed=random_seed)
 
-        Arguments:
-        - model_path (str): File path from which the model will be loaded.
-        """
-        if not os.path.exists(model_path):
-            warnings.warn(f"Model path '{model_path}' does not exist. Exiting the load function.")
-            return
+        if fixed_price is not None:
+            price = fixed_price
+        else:
+            raise ValueError('Insert fixed_price.')
 
-        self.agent.model = tf.keras.models.load_model(model_path)
+        errors = []
+        mean_errors = []
+        std_errors = []
+
+        # Initialize a dictionary to store losses for each loss function and agent
+        loss_results = {loss_fn.name: [] for loss_fn in loss_functions} if loss_functions else {}
+
+        for agent in agents:
+            T_minus_t = self.get_T_minus_t(paths.shape[0])
+            val_actions = agent.process_batch(paths, T_minus_t)
+            pnl = self.calculate_pnl(paths, val_actions)
+            error = price + pnl * np.exp(-self.instrument.r * self.instrument.T)
+            
+            errors.append(error)
+            mean_errors.append(tf.reduce_mean(error).numpy())
+            std_errors.append(tf.math.reduce_std(error).numpy())
+
+            # Compute additional loss functions if provided
+            if loss_functions:
+                for loss_fn in loss_functions:
+                    loss_value = loss_fn(pnl)
+                    loss_results[loss_fn.name].append(tf.reduce_mean(loss_value).numpy())
+
+        if plot_error:
+            plt.figure(figsize=(10, 6))
+
+            # Calculate combined bin edges to ensure consistent bins across all histograms
+            min_error = -4.  # Fixed minimum error range for bins
+            max_error = 4.   # Fixed maximum error range for bins
+            bins = np.linspace(min_error, max_error, 60)  # 60 bins across the range of all errors
+
+            if colors is None:
+                cmap = plt.cm.get_cmap('tab10', len(agents))
+                colors = [cmap(i) for i in range(len(agents))]
+
+            for i, error in enumerate(errors):
+                plt.hist(error, bins=bins, color=colors[i], alpha=0.8, edgecolor='black', 
+                        label=f'{agents[i].plot_name} Agent')
+
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.title(f'{plot_title}', fontsize=14)
+            plt.xlabel('Error', fontsize=12)
+            plt.ylabel('Frequency', fontsize=12)
+            plt.legend()
+
+            if save_plot_path:
+                plt.savefig(save_plot_path)
+                print(f"Plot saved to {save_plot_path}")
+            else:
+                plt.show()
+
+        # Save statistics to Excel if save_stats_path is provided
+        if save_stats_path:
+            data = {
+                'Agent': [agent.plot_name for agent in agents],
+                'Mean Error': mean_errors,
+                'Standard Deviation': std_errors,
+            }
+            # Add additional loss functions to the data dictionary
+            if loss_functions:
+                for loss_fn_name, results in loss_results.items():
+                    data[loss_fn_name] = results
+
+            df = pd.DataFrame(data)
+            df.to_excel(save_stats_path, index=False)
+            print(f"Statistics saved to {save_stats_path}")
+            return df
+
+        return mean_errors, std_errors, loss_results
 
     def save_optimizer(self, optimizer_path):
         """
@@ -1155,6 +1340,8 @@ class RiskMeasure:
     Methods:
     - calculate(self, pnl): Abstract method that must be implemented by subclasses to calculate the risk measure.
     """
+    def __init__(self):
+        self.name = 'unknown'
 
     def calculate(self, pnl):
         """
@@ -1168,6 +1355,9 @@ class RiskMeasure:
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def __call__(self, pnl):
+        return self.calculate(pnl)
+    
 class MSE(RiskMeasure):
     """
     A class representing the Mean Squared Error (MSE) risk measure.
@@ -1179,6 +1369,8 @@ class MSE(RiskMeasure):
       - Returns:
         - mse (tf.Tensor): Scalar tensor containing the calculated MSE.
     """
+    def __init__(self):
+        self.name = 'MSE'
 
     def calculate(self, pnl):
         """
@@ -1205,6 +1397,8 @@ class SMSE(RiskMeasure):
       - Returns:
         - smse (tf.Tensor): Scalar tensor containing the calculated SMSE.
     """
+    def __init__(self):
+        self.name = 'SMSE'
 
     def calculate(self, pnl):
         """
@@ -1231,6 +1425,8 @@ class MAE(RiskMeasure):
       - Returns:
         - mae (tf.Tensor): Scalar tensor containing the calculated MAE.
     """
+    def __init__(self):
+        self.name = 'MAE'
 
     def calculate(self, pnl):
         """
@@ -1262,6 +1458,7 @@ class VaR(RiskMeasure):
 
     def __init__(self, alpha=0.95):
         self.alpha = alpha
+        self.name = f'VaR_{int(alpha*100)}'
 
     def calculate(self, pnl):
         """
@@ -1293,6 +1490,7 @@ class CVaR(RiskMeasure):
 
     def __init__(self, alpha=0.95):
         self.alpha = alpha
+        self.name = f'CVaR_{int(alpha*100)}'
 
     def calculate(self, pnl):
         """
@@ -1312,23 +1510,83 @@ class CVaR(RiskMeasure):
 
         return -cvar
 
-instrument = GBMStock(S0=100, T=50/252, N=50, r=0.05, sigma=0.2)
+class WorstCase(RiskMeasure):
+    """
+    A class representing the Worst Case risk measure, 
+    which returns the minimum value of the PnL (worst-case scenario).
+
+    Methods:
+    - calculate(self, pnl): Calculates the worst-case scenario of the given PnL.
+      - Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+      - Returns:
+        - worst_case (tf.Tensor): Scalar tensor containing the calculated worst-case scenario.
+    """
+    def __init__(self):
+        self.name = 'WorstCase'
+
+    def calculate(self, pnl):
+        """
+        Calculates the Worst Case scenario of the given PnL.
+
+        Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+
+        Returns:
+        - worst_case (tf.Tensor): Scalar tensor containing the calculated worst-case scenario.
+        """
+        worst_case = tf.reduce_min(pnl)
+        return -worst_case
+
+class Entropy(RiskMeasure):
+    """
+    A class representing the Entropy risk measure, 
+    which quantifies the uncertainty in the PnL distribution.
+
+    Methods:
+    - calculate(self, pnl): Calculates the entropy of the given PnL.
+      - Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+      - Returns:
+        - entropy (tf.Tensor): Scalar tensor containing the calculated entropy.
+    """
+    def __init__(self):
+        self.name = 'Entropy'
+
+    def calculate(self, pnl):
+        """
+        Calculates the entropy of the given PnL.
+
+        Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+
+        Returns:
+        - entropy (tf.Tensor): Scalar tensor containing the calculated entropy.
+        """
+        # Normalize the PnL values to obtain a probability distribution
+        normalized_pnl = pnl - tf.reduce_min(pnl) + 1e-9  # Shift to positive values to avoid log(0)
+        probabilities = normalized_pnl / tf.reduce_sum(normalized_pnl)
+
+        # Compute the entropy
+        entropy = -tf.reduce_sum(probabilities * tf.math.log(probabilities))
+        return entropy
+
+instrument = GBMStock(S0=100, T=63/252, N=63, r=0.05, sigma=0.2)
 contingent_claim = EuropeanCall(strike=100)
-cost_function = ProportionalCost(proportion=0.01)
+cost_function = ProportionalCost(proportion=0.0)
 risk_measure = CVaR(alpha=0.5)
-#risk_measure = MAE()
-#agent = LSTMAgent(instrument.N)
-#agent = RecurrentAgent()
-delta_agent = DeltaHedgingAgent(instrument, contingent_claim)
-bs_price = delta_agent.get_model_price()
-agent = delta_agent
+
 #agent = RecurrentAgent(path_transformation_type='log_moneyness', K = contingent_claim.strike)
 #agent = LSTMAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
+#agent = GRUAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
+agent = WaveNetAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
 
-model_path = os.path.join(os.getcwd(), 'models', agent.name, 'logm_2c_cvar50_double.keras')
-optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, 'logm_2c_cvar50_double')
+model_name = '1'
+model_path = os.path.join(os.getcwd(), 'models', agent.name, f'{model_name}.keras')
+optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, model_name)
 
 
+print(agent.name, model_name)
 initial_learning_rate = 0.001
 decay_steps = 10 
 decay_rate = 0.99  
@@ -1345,29 +1603,21 @@ env = Environment(
     contingent_claim=contingent_claim,
     cost_function=cost_function,
     risk_measure=risk_measure,
-    n_epochs=200,
-    batch_size=2_000,
+    n_epochs=50,
+    batch_size=1_000,
     learning_rate=learning_rate_schedule,
     optimizer=tf.keras.optimizers.Adam
 )
 
 print(time.ctime())
 
-env.load_model(model_path)
+agent.load_model(model_path)
 env.load_optimizer(optimizer_path, only_weights=True)
 
-#env.train(train_paths=20_000, val_paths=2000)
+env.train(train_paths=10_000)
 
-#env.save_model(model_path)
-#env.save_optimizer(optimizer_path)
-
-env.terminal_hedging_error(n_paths=5000, random_seed=33, plot_error=True, fixed_price = bs_price, n_paths_for_pricing = 50_000, 
-         save_plot_path=os.path.join(os.getcwd(), 'assets', 'plots', agent.name, 'hedge_error_cv50_double_1c_bsprice.pdf'))
-
-#for i in range(10,20):
-#   env.plot_hedging_strategy(os.path.join(os.getcwd(), 'assets', 'plots', agent.name, f'plot_{i+1}.pdf'), random_seed = i + 1)
+agent.save_model(model_path)
+env.save_optimizer(optimizer_path)
 
 print(time.ctime())
-
-
 
