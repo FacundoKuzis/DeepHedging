@@ -417,7 +417,6 @@ class RecurrentAgent(SimpleAgent):
         self.reset_accumulated_position(batch_paths.shape[0])
         return super().process_batch(batch_paths, batch_T_minus_t)
 
-
 class LSTMAgent(BaseAgent):
     """
     An LSTM agent that processes the entire sequence of inputs at once.
@@ -734,7 +733,7 @@ class CostFunction:
 
     def __call__(self, actions, paths):
         return self.calculate(actions, paths) 
-
+    
 class ProportionalCost(CostFunction):
     """
     A class representing a proportional transaction cost function.
@@ -957,7 +956,27 @@ class Environment:
     def terminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
                                                 fixed_price=None, plot_error=False, 
                                                 plot_title='Terminal Hedging Error', save_plot_path=None, 
-                                                colors=None, save_stats_path=None):
+                                                colors=None, save_stats_path=None, loss_functions=None):
+        """
+        Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
+
+        Arguments:
+        - agents (list): List of agent instances to evaluate.
+        - n_paths (int): Number of paths to generate for evaluation.
+        - random_seed (int or None): Random seed for path generation.
+        - fixed_price (float): The fixed price to use in calculating the hedging error.
+        - plot_error (bool): Whether to plot the error histograms.
+        - plot_title (str): Title of the plot.
+        - save_plot_path (str or None): Path to save the plot image. If None, plot is shown.
+        - colors (list or None): List of colors for the plot. If None, default colors are used.
+        - save_stats_path (str or None): Path to save the statistics as an Excel file.
+        - loss_functions (list of callables or None): List of loss functions to evaluate on the PnL.
+
+        Returns:
+        - mean_errors (list): List of mean errors for each agent.
+        - std_errors (list): List of standard deviations of errors for each agent.
+        - losses (list of lists): List of loss values for each agent and loss function.
+        """
         
         paths = self.instrument.generate_paths(n_paths, random_seed=random_seed)
 
@@ -969,30 +988,33 @@ class Environment:
         errors = []
         mean_errors = []
         std_errors = []
-        losses = []
+
+        # Initialize a dictionary to store losses for each loss function and agent
+        loss_results = {loss_fn.name: [] for loss_fn in loss_functions} if loss_functions else {}
 
         for agent in agents:
             T_minus_t = self.get_T_minus_t(paths.shape[0])
             val_actions = agent.process_batch(paths, T_minus_t)
-            loss = self.loss_function(paths, val_actions)
             pnl = self.calculate_pnl(paths, val_actions)
             error = price + pnl * np.exp(-self.instrument.r * self.instrument.T)
             
             errors.append(error)
             mean_errors.append(tf.reduce_mean(error).numpy())
             std_errors.append(tf.math.reduce_std(error).numpy())
-            losses.append(tf.reduce_mean(loss).numpy())
+
+            # Compute additional loss functions if provided
+            if loss_functions:
+                for loss_fn in loss_functions:
+                    loss_value = loss_fn(pnl)
+                    loss_results[loss_fn.name].append(tf.reduce_mean(loss_value).numpy())
 
         if plot_error:
             plt.figure(figsize=(10, 6))
 
             # Calculate combined bin edges to ensure consistent bins across all histograms
-            all_errors = np.concatenate(errors)
-            min_error = np.min(all_errors)
-            max_error = np.max(all_errors)
-            min_error = -4.
-            max_error = 4.
-            bins = np.linspace(min_error, max_error, 60)  # 50 bins across the range of all errors
+            min_error = -4.  # Fixed minimum error range for bins
+            max_error = 4.   # Fixed maximum error range for bins
+            bins = np.linspace(min_error, max_error, 60)  # 60 bins across the range of all errors
 
             if colors is None:
                 cmap = plt.cm.get_cmap('tab10', len(agents))
@@ -1014,27 +1036,24 @@ class Environment:
             else:
                 plt.show()
 
-        # Save statistics to CSV if save_stats_path is provided
+        # Save statistics to Excel if save_stats_path is provided
         if save_stats_path:
-            df = pd.DataFrame({
+            data = {
                 'Agent': [agent.plot_name for agent in agents],
                 'Mean Error': mean_errors,
                 'Standard Deviation': std_errors,
-                'CVaR50': losses
-            })
-            df.to_csv(save_stats_path, index=False)
+            }
+            # Add additional loss functions to the data dictionary
+            if loss_functions:
+                for loss_fn_name, results in loss_results.items():
+                    data[loss_fn_name] = results
+
+            df = pd.DataFrame(data)
+            df.to_excel(save_stats_path, index=False)
             print(f"Statistics saved to {save_stats_path}")
+            return df
 
-        return mean_errors, std_errors, losses
-
-    def plot_losses(self, losses, title = 'Training Losses'):
-        plt.figure(figsize=(10, 6))
-        plt.plot(losses)
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title(title)
-        plt.legend()
-        plt.show()
+        return mean_errors, std_errors, loss_results
 
     def save_optimizer(self, optimizer_path):
         """
@@ -1321,6 +1340,8 @@ class RiskMeasure:
     Methods:
     - calculate(self, pnl): Abstract method that must be implemented by subclasses to calculate the risk measure.
     """
+    def __init__(self):
+        self.name = 'unknown'
 
     def calculate(self, pnl):
         """
@@ -1334,6 +1355,9 @@ class RiskMeasure:
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def __call__(self, pnl):
+        return self.calculate(pnl)
+    
 class MSE(RiskMeasure):
     """
     A class representing the Mean Squared Error (MSE) risk measure.
@@ -1345,6 +1369,8 @@ class MSE(RiskMeasure):
       - Returns:
         - mse (tf.Tensor): Scalar tensor containing the calculated MSE.
     """
+    def __init__(self):
+        self.name = 'MSE'
 
     def calculate(self, pnl):
         """
@@ -1371,6 +1397,8 @@ class SMSE(RiskMeasure):
       - Returns:
         - smse (tf.Tensor): Scalar tensor containing the calculated SMSE.
     """
+    def __init__(self):
+        self.name = 'SMSE'
 
     def calculate(self, pnl):
         """
@@ -1386,7 +1414,6 @@ class SMSE(RiskMeasure):
         smse = tf.reduce_mean(tf.square(negative_pnl))
         return smse
 
-
 class MAE(RiskMeasure):
     """
     A class representing the Mean Absolute Error (MAE) risk measure.
@@ -1398,6 +1425,8 @@ class MAE(RiskMeasure):
       - Returns:
         - mae (tf.Tensor): Scalar tensor containing the calculated MAE.
     """
+    def __init__(self):
+        self.name = 'MAE'
 
     def calculate(self, pnl):
         """
@@ -1411,7 +1440,6 @@ class MAE(RiskMeasure):
         """
         mae = tf.reduce_mean(tf.abs(pnl))
         return mae
-
 
 class VaR(RiskMeasure):
     """
@@ -1430,6 +1458,7 @@ class VaR(RiskMeasure):
 
     def __init__(self, alpha=0.95):
         self.alpha = alpha
+        self.name = f'VaR_{int(alpha*100)}'
 
     def calculate(self, pnl):
         """
@@ -1461,6 +1490,7 @@ class CVaR(RiskMeasure):
 
     def __init__(self, alpha=0.95):
         self.alpha = alpha
+        self.name = f'CVaR_{int(alpha*100)}'
 
     def calculate(self, pnl):
         """
@@ -1480,6 +1510,67 @@ class CVaR(RiskMeasure):
 
         return -cvar
 
+class WorstCase(RiskMeasure):
+    """
+    A class representing the Worst Case risk measure, 
+    which returns the minimum value of the PnL (worst-case scenario).
+
+    Methods:
+    - calculate(self, pnl): Calculates the worst-case scenario of the given PnL.
+      - Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+      - Returns:
+        - worst_case (tf.Tensor): Scalar tensor containing the calculated worst-case scenario.
+    """
+    def __init__(self):
+        self.name = 'WorstCase'
+
+    def calculate(self, pnl):
+        """
+        Calculates the Worst Case scenario of the given PnL.
+
+        Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+
+        Returns:
+        - worst_case (tf.Tensor): Scalar tensor containing the calculated worst-case scenario.
+        """
+        worst_case = tf.reduce_min(pnl)
+        return -worst_case
+
+class Entropy(RiskMeasure):
+    """
+    A class representing the Entropy risk measure, 
+    which quantifies the uncertainty in the PnL distribution.
+
+    Methods:
+    - calculate(self, pnl): Calculates the entropy of the given PnL.
+      - Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+      - Returns:
+        - entropy (tf.Tensor): Scalar tensor containing the calculated entropy.
+    """
+    def __init__(self):
+        self.name = 'Entropy'
+
+    def calculate(self, pnl):
+        """
+        Calculates the entropy of the given PnL.
+
+        Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+
+        Returns:
+        - entropy (tf.Tensor): Scalar tensor containing the calculated entropy.
+        """
+        # Normalize the PnL values to obtain a probability distribution
+        normalized_pnl = pnl - tf.reduce_min(pnl) + 1e-9  # Shift to positive values to avoid log(0)
+        probabilities = normalized_pnl / tf.reduce_sum(normalized_pnl)
+
+        # Compute the entropy
+        entropy = -tf.reduce_sum(probabilities * tf.math.log(probabilities))
+        return entropy
+
 instrument = GBMStock(S0=100, T=63/252, N=63, r=0.05, sigma=0.2)
 contingent_claim = EuropeanCall(strike=100)
 cost_function = ProportionalCost(proportion=0.0)
@@ -1490,7 +1581,7 @@ risk_measure = CVaR(alpha=0.5)
 #agent = GRUAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
 agent = WaveNetAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
 
-model_name = 'logm_0c_cvar50_correct'
+model_name = '1'
 model_path = os.path.join(os.getcwd(), 'models', agent.name, f'{model_name}.keras')
 optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, model_name)
 
