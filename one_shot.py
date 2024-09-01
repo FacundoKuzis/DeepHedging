@@ -563,6 +563,60 @@ class GRUAgent(LSTMAgent):
         ])
         return model
 
+class WaveNetAgent(LSTMAgent):
+    """
+    A WaveNet agent that processes the entire sequence of inputs using a causal WaveNet-like architecture.
+
+    Arguments:
+    - n_hedging_timesteps (int): Number of timesteps in the hedging sequence.
+    - path_transformation_type (str or None): Type of transformation applied to the instrument paths.
+    - K (float or None): Strike price or other parameter for path transformation.
+    - num_filters (int): Number of filters in the convolutional layers.
+    - num_residual_blocks (int): Number of residual blocks in the WaveNet model.
+    """
+
+    def __init__(self, n_hedging_timesteps, path_transformation_type=None, K=None, num_filters=32, num_residual_blocks=3):
+        input_shape = (n_hedging_timesteps, 2)
+        output_shape = 1
+        self.num_filters = num_filters
+        self.num_residual_blocks = num_residual_blocks
+        self.model = self.build_model(input_shape, output_shape)
+        self.path_transformation_type = path_transformation_type
+        self.K = K
+        self.name = 'wavenet'
+        self.plot_name = 'WaveNet'
+
+    def build_model(self, input_shape, output_shape):
+        """
+        Builds a causal WaveNet-like model.
+
+        Arguments:
+        - input_shape (tuple): Shape of the input.
+        - output_shape (int): Shape of the output.
+
+        Returns:
+        - model (tf.keras.Model): The built model.
+        """
+        inputs = tf.keras.Input(shape=input_shape)
+        x = inputs
+
+        # Initial causal convolutional layer
+        x = tf.keras.layers.Conv1D(filters=self.num_filters, kernel_size=1, padding='causal', activation='relu')(x)
+
+        # Residual blocks with dilated causal convolutions
+        for i in range(self.num_residual_blocks):
+            dilation_rate = 2 ** i
+            residual = x
+            x = tf.keras.layers.Conv1D(filters=self.num_filters, kernel_size=2, padding='causal', dilation_rate=dilation_rate, activation='relu')(x)
+            x = tf.keras.layers.Conv1D(filters=self.num_filters, kernel_size=1, padding='causal', activation='relu')(x)
+            x = tf.keras.layers.add([x, residual])  # Residual connection
+
+        # Final convolutional layer to produce the output
+        x = tf.keras.layers.Conv1D(filters=output_shape, kernel_size=1, padding='causal', activation='linear')(x)
+        
+        model = tf.keras.Model(inputs=inputs, outputs=x)
+        return model
+
 class ContingentClaim:
     """
     The base class for a financial contingent claim, such as options or other derivatives.
@@ -1426,16 +1480,17 @@ class CVaR(RiskMeasure):
 
         return -cvar
 
-instrument = GBMStock(S0=100, T=1, N=252, r=0.05, sigma=0.2)
+instrument = GBMStock(S0=100, T=63/252, N=63, r=0.05, sigma=0.2)
 contingent_claim = EuropeanCall(strike=100)
 cost_function = ProportionalCost(proportion=0.0)
 risk_measure = CVaR(alpha=0.5)
 
-agent = RecurrentAgent(path_transformation_type='log_moneyness', K = contingent_claim.strike)
+#agent = RecurrentAgent(path_transformation_type='log_moneyness', K = contingent_claim.strike)
 #agent = LSTMAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
 #agent = GRUAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
+agent = WaveNetAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
 
-model_name = 'logm_0c_cvar50'
+model_name = 'logm_0c_cvar50_correct'
 model_path = os.path.join(os.getcwd(), 'models', agent.name, f'{model_name}.keras')
 optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, model_name)
 
@@ -1457,8 +1512,8 @@ env = Environment(
     contingent_claim=contingent_claim,
     cost_function=cost_function,
     risk_measure=risk_measure,
-    n_epochs=200,
-    batch_size=2_000,
+    n_epochs=50,
+    batch_size=1_000,
     learning_rate=learning_rate_schedule,
     optimizer=tf.keras.optimizers.Adam
 )
@@ -1468,7 +1523,7 @@ print(time.ctime())
 agent.load_model(model_path)
 env.load_optimizer(optimizer_path, only_weights=True)
 
-env.train(train_paths=300_000)
+env.train(train_paths=10_000)
 
 agent.save_model(model_path)
 env.save_optimizer(optimizer_path)
