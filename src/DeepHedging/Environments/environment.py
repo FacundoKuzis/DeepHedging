@@ -7,10 +7,15 @@ import warnings
 import pandas as pd
 
 class Environment:
-    def __init__(self, agent, instrument, contingent_claim, cost_function, risk_measure,
+    def __init__(self, agent, T, N, r, instrument_list, n_instruments, contingent_claim, cost_function, risk_measure,
                  n_epochs, batch_size, learning_rate, optimizer):
         self.agent = agent
-        self.instrument = instrument
+        self.T = T # Maturity (in years)
+        self.N = N # Number of hedging steps
+        self.dt = self.T / self.N # Time increment
+        self.r = r # Risk Free yearly rate
+        self.instrument_list = instrument_list
+        self.n_instruments = n_instruments # It may not be the same as len of instrument_list (e.g. HestonStock with return_variance)
         self.contingent_claim = contingent_claim
         self.cost_function = cost_function
         self.risk_measure = risk_measure
@@ -21,37 +26,57 @@ class Environment:
         self.train_losses = []
         self.val_losses = []
 
-    def generate_data(self, train_paths, val_paths):
-        train_data = self.instrument.generate_paths(train_paths)
-        val_data = self.instrument.generate_paths(val_paths)
-        return train_data, val_data
+    def generate_data(self, n_paths, random_seed=None):
+
+        data = tf.TensorArray(dtype=tf.float32, size=self.n_instruments)
+        
+        i = 0
+        for instrument in self.instrument_list:
+            instrument_data = instrument.generate_paths(n_paths, random_seed=random_seed)
+            if isinstance(instrument_data, tuple):
+                for individual_data in instrument_data:
+                    data = data.write(i, individual_data)
+                    i += 1
+            else:
+                data = data.write(i, instrument_data)
+                i += 1
+        
+        # Stack all the instrument data into a single tensor
+        data = data.stack()
+
+        data_transposed = tf.transpose(data, perm=[1, 2, 0])
+        
+        return data_transposed # (n_paths, N+1, n_instruments)
+
 
     def calculate_pnl(self, paths, actions, include_decomposition = False):
         # Calculate the portfolio value at each time step
-        portfolio_values = tf.cumsum(actions, axis=1) * paths        
-        final_portfolio_value = portfolio_values[:, -1]
+        portfolio_values = tf.cumsum(actions, axis=1) * paths # (batch_size, N+1, n_instruments)        
+        final_portfolio_value = portfolio_values[:, -1, :] # (batch_size, n_instruments)
+        final_portfolio_value = tf.reduce_sum(final_portfolio_value, axis = 1) # (batch_size)
 
         # Calculate the total transaction costs
         costs = self.cost_function(actions, paths)
 
         # Calculate the cash flows from purchases and transaction costs
         purchases_cashflows = -actions * paths - costs
+        purchases_cashflows = tf.reduce_sum(purchases_cashflows, axis = 2)
 
         # Calculate the factor for compounding cash positions
-        factor = (1 + self.instrument.r) ** self.instrument.dt - 1
+        factor = (1 + self.r) ** self.dt - 1
 
         # Initialize the cash tensor with the first cash flow
         cash = purchases_cashflows[:, 0:1]
 
         # Iterate over the remaining time steps to accumulate cash values
-        for t in range(1, tf.shape(purchases_cashflows)[1]):
+        for t in range(1, purchases_cashflows.shape[1]):
             current_cash = cash[:, -1:] * (1 + factor) + purchases_cashflows[:, t:t+1]
             cash = tf.concat([cash, current_cash], axis=1)
 
-        final_cash_positions = cash[:, -1]
+        final_cash_positions = cash[:, -1] # (batch_size)
 
         # Calculate the payoff of the contingent claim
-        payoff = self.contingent_claim.calculate_payoff(paths)
+        payoff = self.contingent_claim.calculate_payoff(paths[:, :, 0]) # ASSUMPTION: The CC is calculated based on the first instrument
         
         # Calculate the PnL
         pnl = final_portfolio_value + final_cash_positions - payoff
@@ -67,15 +92,17 @@ class Environment:
 
     def train(self, train_paths, val_paths = 0):
 
-        train_data, val_data = self.generate_data(train_paths, val_paths)
-        T_minus_t_single = tf.range(self.instrument.N, 0, -1, dtype=tf.float32) * self.instrument.dt
-        T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [self.batch_size, 1])
-        T_minus_t_val =  tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [val_paths, 1])
+        train_data = self.generate_data(train_paths) # (n_paths, N+1, n_instruments)
+        T_minus_t = self.get_T_minus_t(self.batch_size) # (n_paths, N)
+    
+        if val_paths > 0:
+            val_data = self.generate_data(val_paths)
+            T_minus_t_val =  self.get_T_minus_t(val_paths)
 
         for epoch in range(self.n_epochs):
             # Training
             epoch_losses = []
-            for i in range(0, train_data.shape[0], self.batch_size):
+            for i in range(0, train_paths, self.batch_size):
                 batch_paths = train_data[i:i+self.batch_size]
                 loss = self.agent.train_batch(batch_paths, T_minus_t, self.optimizer, self.loss_function)
                 epoch_losses.append(loss.numpy())
@@ -103,11 +130,11 @@ class Environment:
         if paths_to_test:
             paths = paths_to_test
         elif n_paths:
-            paths = self.instrument.generate_paths(n_paths, random_seed = random_seed)
+            paths = self.generate_paths(n_paths, random_seed = random_seed)
         else:
             raise ValueError('Insert either paths_to_test or n_paths.')
         
-        T_minus_t_single = tf.range(self.instrument.N, 0, -1, dtype=tf.float32) * self.instrument.dt
+        T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [paths.shape[0], 1])
 
         val_actions = self.agent.process_batch(paths, T_minus_t)
@@ -133,7 +160,7 @@ class Environment:
         return loss
 
     def get_T_minus_t(self, shape):
-        T_minus_t_single = tf.range(self.instrument.N, 0, -1, dtype=tf.float32) * self.instrument.dt
+        T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [shape, 1])
         return T_minus_t
 
@@ -144,18 +171,18 @@ class Environment:
         if paths_to_test:
             paths = paths_to_test
         elif n_paths:
-            paths = self.instrument.generate_paths(n_paths, random_seed = random_seed)
+            paths = self.generate_data(n_paths, random_seed = random_seed)
         else:
             raise ValueError('Insert either paths_to_test or n_paths.')
         
         if fixed_price:
             price = fixed_price
         elif n_paths_for_pricing:
-            price_paths = self.instrument.generate_paths(n_paths)
+            price_paths = self.generate_data(n_paths)
             T_minus_t = self.get_T_minus_t(price_paths.shape[0])
             actions = self.agent.process_batch(paths, T_minus_t)
             loss = self.loss_function(paths, actions)
-            price = loss * np.exp(-self.instrument.r * self.instrument.T)
+            price = loss * np.exp(-self.r * self.T)
             print(price)
         else:
             raise ValueError('Insert either fixed_price or n_paths_for_pricing.')
@@ -165,7 +192,7 @@ class Environment:
         loss = self.loss_function(paths, val_actions)
 
         pnl = self.calculate_pnl(paths, val_actions)
-        error = price + pnl * np.exp(-self.instrument.r * self.instrument.T)
+        error = price + pnl * np.exp(-self.r * self.T)
         mean_error = tf.reduce_mean(error)        
 
         if plot_error:
@@ -209,7 +236,7 @@ class Environment:
         - losses (list of lists): List of loss values for each agent and loss function.
         """
         
-        paths = self.instrument.generate_paths(n_paths, random_seed=random_seed)
+        paths = self.generate_data(n_paths, random_seed=random_seed)
 
         if fixed_price is not None:
             price = fixed_price
@@ -227,7 +254,7 @@ class Environment:
             T_minus_t = self.get_T_minus_t(paths.shape[0])
             val_actions = agent.process_batch(paths, T_minus_t)
             pnl = self.calculate_pnl(paths, val_actions)
-            error = price + pnl * np.exp(-self.instrument.r * self.instrument.T)
+            error = price + pnl * np.exp(-self.r * self.T)
             
             errors.append(error)
             mean_errors.append(tf.reduce_mean(error).numpy())
@@ -243,7 +270,7 @@ class Environment:
             plt.figure(figsize=(10, 6))
 
             # Calculate combined bin edges to ensure consistent bins across all histograms
-            min_error = -4.  # Fixed minimum error range for bins
+            min_error = -19.  # Fixed minimum error range for bins
             max_error = 4.   # Fixed maximum error range for bins
             bins = np.linspace(min_error, max_error, 60)  # 60 bins across the range of all errors
 
@@ -350,8 +377,8 @@ class Environment:
         """
 
         # Generate a single path
-        single_path = self.instrument.generate_paths(1, random_seed = random_seed)  # Shape: (1, N+1)
-        T_minus_t_single = tf.range(self.instrument.N, 0, -1, dtype=tf.float32) * self.instrument.dt
+        single_path = self.generate_paths(1, random_seed = random_seed)  # Shape: (1, N+1)
+        T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t_single = tf.expand_dims(T_minus_t_single, axis=0)  # Shape: (1, N)
 
         # Get the hedging actions
@@ -363,12 +390,12 @@ class Environment:
         net_portfolio_values = net_portfolio_values.numpy()[0]
 
         # Plot the portfolio value over time
-        timesteps = np.arange(self.instrument.N + 1)
+        timesteps = np.arange(self.N + 1)
         fig, ax1 = plt.figure(figsize=(10, 6)), plt.gca()
         ax1.bar(timesteps, net_portfolio_values, label="Net Portfolio Values", color='b', alpha=0.6)
 
         # Plot the contingent claim payoff at the final timestep as a bar
-        ax1.bar(self.instrument.N, payoff, color='r', alpha=0.6, label="Contingent Claim Payoff")
+        ax1.bar(self.N, payoff, color='r', alpha=0.6, label="Contingent Claim Payoff")
 
         ax1.set_xlabel("Timestep")
         ax1.set_ylabel("Portfolio Value", color='b')

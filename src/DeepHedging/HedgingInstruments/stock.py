@@ -103,20 +103,21 @@ class HestonStock(Stock):
     - theta (float): Long-term variance (mean level).
     - xi (float): Volatility of variance (volatility of volatility).
     - rho (float): Correlation between the Brownian motions driving the stock price and variance.
-
+    - return_variance(bool): True
     Methods:
-    - generate_paths(self, num_paths, return_variance=False): Generates stock price paths using the Heston model,
+    - generate_paths(self, num_paths): Generates stock price paths using the Heston model,
       with an option to return the variance paths.
     """
-    def __init__(self, S0, T, N, r, v0, kappa, theta, xi, rho):
+    def __init__(self, S0, T, N, r, v0, kappa, theta, xi, rho, return_variance=True):
         super().__init__(S0, T, N, r)
         self.v0 = v0        # Initial variance
         self.kappa = kappa  # Rate of reversion
         self.theta = theta  # Long-term variance
         self.xi = xi        # Volatility of variance
         self.rho = rho      # Correlation between Brownian motions
+        self.return_variance = return_variance
 
-    def generate_paths(self, num_paths, return_variance=False, random_seed = None):
+    def generate_paths(self, num_paths, random_seed = None):
         """
         Generates stock price paths using the Heston model, with an option to return the variance paths.
 
@@ -164,7 +165,7 @@ class HestonStock(Stock):
         S_paths = tf.convert_to_tensor(S, dtype=tf.float32)
         v_paths = tf.convert_to_tensor(v, dtype=tf.float32)
 
-        if return_variance:
+        if self.return_variance:
             return S_paths, v_paths
         else:
             return S_paths
