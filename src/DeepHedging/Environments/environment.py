@@ -270,7 +270,7 @@ class Environment:
             plt.figure(figsize=(10, 6))
 
             # Calculate combined bin edges to ensure consistent bins across all histograms
-            min_error = -4.  # Fixed minimum error range for bins
+            min_error = -19.  # Fixed minimum error range for bins
             max_error = 4.   # Fixed maximum error range for bins
             bins = np.linspace(min_error, max_error, 60)  # 60 bins across the range of all errors
 
