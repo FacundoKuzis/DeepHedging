@@ -22,41 +22,129 @@ class BaseAgent(ABC):
     def build_model(self):
         pass
 
-    @abstractmethod
-    def act(self, instrument_paths, T_minus_t):
-        pass
-
-    def transform_input(self, *args):
-        return args 
-
-    def transform_paths(self, instrument_paths, transformation_type=None, K=None):
+    def transform_paths(self, instrument_paths, transformation_configs=None):
         """
-        Transforms the instrument paths based on the specified transformation type.
+        Transforms the instrument paths based on the specified transformation configurations.
+
+        Arguments:
+        - instrument_paths (tf.Tensor): The paths of the instrument. Shape: (batch_size, n_timesteps, n_instruments)
+        - transformation_configs (list of dict, optional): List of dictionaries, each containing:
+        - 'transformation_type' (str): The type of transformation ('log', 'log_moneyness').
+        - 'K' (float, optional): The strike price, required if transformation_type is 'log_moneyness'.
+
+        Returns:
+        - transformed_paths (tf.Tensor): The transformed instrument paths. Shape: (batch_size, n_timesteps, n_instruments)
+        """
+
+        if transformation_configs is None:
+            # No transformation, return the paths as-is
+            return instrument_paths
+
+        # Ensure the length of the list matches the number of instruments
+        if len(transformation_configs) != instrument_paths.shape[-1]:
+            raise ValueError("Length of transformation_configs list must match the number of instruments.")
+
+        transformed_paths_list = []
+        for i, config in enumerate(transformation_configs):
+            if len(instrument_paths.shape) == 3:
+                path_i = instrument_paths[:, :, i]  # Extract the path for the i-th instrument
+            else:
+                path_i = instrument_paths[:, i]  # Extract the path for the i-th instrument
+
+            t_type = config.get('transformation_type')
+            K = config.get('K')
+            transformed_path_i = self._apply_transformation(path_i, t_type, K)
+            transformed_paths_list.append(transformed_path_i)
+
+        # Stack the transformed paths back into a single tensor
+        transformed_paths = tf.stack(transformed_paths_list, axis=-1)
+        return transformed_paths
+
+    def _apply_transformation(self, instrument_paths, transformation_type, K=None):
+        """
+        Apply the specified transformation to the given instrument paths.
 
         Arguments:
         - instrument_paths (tf.Tensor): The paths of the instrument.
-        - transformation_type (str, optional): The type of transformation ('log', 'log_moneyness'). Default is None.
+        - transformation_type (str or None): The type of transformation ('log', 'log_moneyness').
         - K (float, optional): The strike price, required if transformation_type is 'log_moneyness'.
 
         Returns:
         - transformed_paths (tf.Tensor): The transformed instrument paths.
         """
-
         if transformation_type is None:
-            # No transformation, return the paths as-is
             return instrument_paths
-
         elif transformation_type == 'log':
-            # Apply log transformation
             return tf.math.log(instrument_paths)
-
         elif transformation_type == 'log_moneyness':
             if K is None:
                 raise ValueError("Strike price K must be provided for 'log moneyness' transformation.")
             return tf.math.log(instrument_paths / K)
-
         else:
             raise ValueError(f"Unsupported transformation type: {transformation_type}")
+
+    def transform_input(self, instrument_paths, T_minus_t):
+        """
+        Transforms the input by concatenating instrument paths and time to maturity.
+
+        Arguments:
+        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
+                                        Shape: (batch_size, input_shape)
+        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
+                                Shape: (batch_size,)
+
+        Returns:
+        - input_data (tf.Tensor): The transformed input data.
+                                Shape: (batch_size, input_shape + 1)
+        """
+        #instrument_paths = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (n_instruments, batch_size, n_timesteps, 1)
+        #T_minus_t = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, n_timesteps, 1)
+
+        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_configs) # Shape: (batch_size, n_timesteps, n_instruments) or (batch_size, n_instruments)
+        # T_minus_t  # Shape: (batch_size, n_timesteps)
+        T_minus_t_expanded = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, n_timesteps, 1) or (batch_size, 1)
+
+        # Concatenate along the last axis
+        input_data = tf.concat([instrument_paths, T_minus_t_expanded], axis=-1) # Shape (batch_size, n_timesteps, n_instruments+1) or (batch_size, n_instruments+1)
+
+        return input_data
+    
+    def act(self, instrument_paths, T_minus_t):
+        """
+        Act based on the input.
+
+        Arguments:
+        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
+        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
+
+        Returns:
+        - action (tf.Tensor): The action chosen by the model.
+        """
+        input_data = self.transform_input(instrument_paths, T_minus_t)
+        action = self.model(input_data)
+        return action
+
+    def train_batch(self, batch_paths, batch_T_minus_t, optimizer, loss_function):
+        """
+        Train the model on a batch of data, processing timestep by timestep.
+
+        Arguments:
+        - batch_paths (tf.Tensor): Tensor containing a batch of instrument paths. Shape: (batch_size, timesteps, input_shape)
+        - batch_T_minus_t (tf.Tensor): Tensor containing the time to maturity at each timestep.
+        - optimizer (tf.optimizers.Optimizer): The optimizer to use for training.
+
+        Returns:
+        - loss (tf.Tensor): The loss value after training on the batch.
+        """
+        with tf.GradientTape() as tape:
+            actions = self.process_batch(batch_paths, batch_T_minus_t) # (batch_size, N+1, n_instruments)
+            loss = loss_function(batch_paths, actions)
+
+            # Compute gradients based on the total loss
+            grads = tape.gradient(loss, self.model.trainable_variables)
+            optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+
+        return loss
 
     def load_model(self, model_path):
         """
@@ -156,11 +244,15 @@ class DeltaHedgingAgent(BaseAgent):
         - action (tf.Tensor): The delta value used as the hedging action.
         """
 
-        delta = self.delta(instrument_paths, T_minus_t)
+        delta = self.delta(instrument_paths[:, 0], T_minus_t) # ASSUMPTION: Stock is the first instrument
         action = delta - self.last_delta
         self.last_delta = delta
-
-        return tf.expand_dims(action, axis=-1)
+        #actions_expanded = tf.expand_dims(action, axis=-1)
+        #zeros = tf.zeros_like(instrument_paths)
+        action =  tf.expand_dims(action, axis=-1)
+        zeros = tf.zeros((instrument_paths.shape[0], instrument_paths.shape[1]-1))
+        actions = tf.concat([action, zeros], axis=1)
+        return actions
 
     def reset_last_delta(self, batch_size):
         self.last_delta = tf.zeros((batch_size,), dtype=tf.float32)
@@ -169,16 +261,16 @@ class DeltaHedgingAgent(BaseAgent):
         self.reset_last_delta(batch_paths.shape[0])
         all_actions = []
         for t in range(batch_paths.shape[1] -1):  # timesteps until T-1
-            current_paths = batch_paths[:, t]
-            current_T_minus_t = batch_T_minus_t[:, t]
+            current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
+            current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
             action = self.act(current_paths, current_T_minus_t)
             all_actions.append(action)
 
-        all_actions = tf.concat(all_actions, axis=1)
-        zero_action = tf.zeros((batch_paths.shape[0], 1))
+        all_actions = tf.stack(all_actions, axis=1)
+        zero_action = tf.zeros((batch_paths.shape[0], 1, all_actions.shape[-1]))
         all_actions = tf.concat([all_actions, zero_action], axis=1)
 
-        return all_actions
+        return all_actions # (n_simulations, n_timesteps, n_instruments)
 
     def get_model_price(self):
         """
@@ -211,12 +303,11 @@ class SimpleAgent(BaseAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, path_transformation_type = None, K = None):
-        input_shape = (2,)
-        output_shape = 1
-        self.model = self.build_model(input_shape, output_shape)
-        self.path_transformation_type = path_transformation_type
-        self.K = K
+    def __init__(self, path_transformation_configs = None, n_instruments = 1):
+        self.input_shape = (n_instruments + 1,) # +1 for T-t
+        self.n_instruments = n_instruments
+        self.model = self.build_model(self.input_shape, self.n_instruments)
+        self.path_transformation_configs = path_transformation_configs
         self.name = 'simple'
         self.plot_name = 'Simple'
 
@@ -233,87 +324,25 @@ class SimpleAgent(BaseAgent):
         """
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=input_shape),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dense(30, activation='relu'),
+            tf.keras.layers.Dense(30, activation='relu'),
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])
         return model
 
-    def transform_input(self, instrument_paths, T_minus_t):
-        """
-        Transforms the input by concatenating instrument paths and time to maturity.
-
-        Arguments:
-        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
-                                        Shape: (batch_size, input_shape)
-        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
-                                Shape: (batch_size,)
-
-        Returns:
-        - input_data (tf.Tensor): The transformed input data.
-                                Shape: (batch_size, input_shape + 1)
-        """
-        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_type, K = self.K)
-
-        # Ensure both tensors have the same rank by expanding dimensions of instrument_paths
-        instrument_paths = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (batch_size, input_shape, 1)
-        T_minus_t = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, 1)
-        
-        # Concatenate along the last axis
-        input_data = tf.concat([instrument_paths, T_minus_t], axis=-1)  # Shape: (batch_size, input_shape + 1)
-        return input_data
-    
-    def act(self, instrument_paths, T_minus_t):
-        """
-        Act based on the input.
-
-        Arguments:
-        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
-        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
-
-        Returns:
-        - action (tf.Tensor): The action chosen by the model.
-        """
-        input_data = self.transform_input(instrument_paths, T_minus_t)
-        action = self.model(input_data)
-        return action
-
-
     def process_batch(self, batch_paths, batch_T_minus_t):
         all_actions = []
         for t in range(batch_paths.shape[1] -1):  # timesteps until T-1
-            current_paths = batch_paths[:, t]
-            current_T_minus_t = batch_T_minus_t[:, t]
+            current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
+            current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
             action = self.act(current_paths, current_T_minus_t)
             all_actions.append(action)
 
-        all_actions = tf.concat(all_actions, axis=1)
-        zero_action = tf.zeros((batch_paths.shape[0], 1))
+        all_actions = tf.stack(all_actions, axis=1)
+        zero_action = tf.zeros((batch_paths.shape[0], 1, all_actions.shape[-1]))
         all_actions = tf.concat([all_actions, zero_action], axis=1)
 
-        return all_actions
-
-    def train_batch(self, batch_paths, batch_T_minus_t, optimizer, loss_function):
-        """
-        Train the model on a batch of data, processing timestep by timestep.
-
-        Arguments:
-        - batch_paths (tf.Tensor): Tensor containing a batch of instrument paths. Shape: (batch_size, timesteps, input_shape)
-        - batch_T_minus_t (tf.Tensor): Tensor containing the time to maturity at each timestep.
-        - optimizer (tf.optimizers.Optimizer): The optimizer to use for training.
-
-        Returns:
-        - loss (tf.Tensor): The loss value after training on the batch.
-        """
-        with tf.GradientTape() as tape:
-            actions = self.process_batch(batch_paths, batch_T_minus_t) 
-            loss = loss_function(batch_paths, actions)
-
-            # Compute gradients based on the total loss
-            grads = tape.gradient(loss, self.model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-
-        return loss
+        return all_actions # (n_simulations, n_timesteps, n_instruments)
 
 class RecurrentAgent(SimpleAgent):
     """
@@ -324,13 +353,12 @@ class RecurrentAgent(SimpleAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, path_transformation_type = None, K = None):
-        input_shape = (3,)
-        output_shape = 1
-        self.model = self.build_model(input_shape, output_shape)
+    def __init__(self, path_transformation_configs = None, n_instruments = 1):
+        self.input_shape = (n_instruments + 1 + n_instruments,) # +1 for T-t and + n_instruments for accumulated position
+        self.n_instruments = n_instruments
+        self.model = self.build_model(self.input_shape, self.n_instruments)
         self.accumulated_position = None  # Initialize accumulated position
-        self.path_transformation_type = path_transformation_type
-        self.K = K
+        self.path_transformation_configs = path_transformation_configs
         self.name = 'recurrent'
         self.plot_name = 'Recurrent'
 
@@ -360,7 +388,7 @@ class RecurrentAgent(SimpleAgent):
         Arguments:
         - batch_size (int): The size of the batch being processed.
         """
-        self.accumulated_position = tf.zeros((batch_size,), dtype=tf.float32)
+        self.accumulated_position = tf.zeros((batch_size, self.n_instruments), dtype=tf.float32)
 
     def transform_input(self, instrument_paths, T_minus_t):
         """
@@ -373,14 +401,11 @@ class RecurrentAgent(SimpleAgent):
         Returns:
         - transformed_input (tf.Tensor): The transformed input, including accumulated position and T_minus_t.
         """
-        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_type, K = self.K)
-
         # Concatenate the instrument paths, accumulated position, and T_minus_t
-        instrument_paths_expanded = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (batch_size, input_shape, 1)
-        accumulated_position_expanded = tf.expand_dims(self.accumulated_position, axis=-1)
-        T_minus_t_expanded = tf.expand_dims(T_minus_t, axis=-1)
-        transformed_input = tf.concat([instrument_paths_expanded, accumulated_position_expanded, T_minus_t_expanded], axis=-1)
-        return transformed_input
+        input_data = super().transform_input(instrument_paths, T_minus_t) 
+        transformed_input = tf.concat([input_data, self.accumulated_position], axis=-1)
+
+        return transformed_input # (batch_size, n_instruments + 1 + n_instruments)
 
 
     def act(self, instrument_paths, T_minus_t):
@@ -398,7 +423,7 @@ class RecurrentAgent(SimpleAgent):
         action = self.model(input_data)
 
         # Update accumulated position by summing actions
-        self.accumulated_position += tf.reduce_sum(action, axis=-1)  # Accumulate positions across timesteps
+        self.accumulated_position += action  # Accumulate positions across timesteps
 
         return action
 
@@ -426,12 +451,13 @@ class LSTMAgent(BaseAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, n_hedging_timesteps, path_transformation_type = None, K = None):
-        input_shape = (n_hedging_timesteps, 2)
-        output_shape = 1
-        self.model = self.build_model(input_shape, output_shape)
-        self.path_transformation_type = path_transformation_type
-        self.K = K
+    def __init__(self, n_hedging_timesteps, path_transformation_configs = None,
+                 n_instruments = 1):
+
+        self.input_shape = (n_hedging_timesteps, n_instruments + 1) # +1 for T-t
+        self.n_instruments = n_instruments
+        self.model = self.build_model(self.input_shape, self.n_instruments)
+        self.path_transformation_configs = path_transformation_configs
         self.name = 'lstm'
         self.plot_name = 'LSTM'
 
@@ -449,86 +475,21 @@ class LSTMAgent(BaseAgent):
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=input_shape),
             tf.keras.layers.LSTM(30, return_sequences=True),
-            tf.keras.layers.LSTM(30, return_sequences=True, activation = 'relu'),
+            tf.keras.layers.LSTM(30, return_sequences=True),
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])
         return model
 
-
-    def transform_input(self, instrument_paths, T_minus_t):
-        """
-        Transforms the input by concatenating instrument paths and time to maturity.
-
-        Arguments:
-        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
-                                        Shape: (batch_size, input_shape)
-        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
-                                Shape: (batch_size,)
-
-        Returns:
-        - input_data (tf.Tensor): The transformed input data.
-                                Shape: (batch_size, input_shape + 1)
-        """
-        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_type, K = self.K)
-
-        # Ensure both tensors have the same rank by expanding dimensions of instrument_paths
-        instrument_paths = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (batch_size, input_shape, 1)
-        T_minus_t = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, 1)
-        
-        # Concatenate along the last axis
-        input_data = tf.concat([instrument_paths, T_minus_t], axis=-1)  # Shape: (batch_size, input_shape + 1)
-        return input_data
-    
-
-
-
-    def act(self, instrument_paths, T_minus_t):
-        """
-        Act based on the entire sequence of inputs.
-
-        Arguments:
-        - instrument_paths (tf.Tensor): Tensor containing the instrument paths for all timesteps.
-        - T_minus_t (tf.Tensor): Tensor representing the time to maturity for all timesteps.
-
-        Returns:
-        - actions (tf.Tensor): The actions chosen by the model.
-        """
-        input_data = self.transform_input(instrument_paths, T_minus_t)
-        actions = self.model(input_data)
-        return actions
-
     def process_batch(self, batch_paths, batch_T_minus_t):
 
-        all_actions = self.act(batch_paths[:, :-1], batch_T_minus_t)
+        all_actions = self.act(batch_paths[:, :-1, :], batch_T_minus_t) # (batch_size, N, n_instruments)
 
         zero_action = tf.zeros((batch_paths.shape[0], 1, all_actions.shape[2]))
         all_actions = tf.concat([all_actions, zero_action], axis=1)
-        all_actions = all_actions[:, :, 0] # temporary, only one instrument
+        #all_actions = all_actions[:, :, 0] # temporary, only one instrument
 
         return all_actions
 
-
-    def train_batch(self, batch_paths, batch_T_minus_t, optimizer, loss_function):
-        """
-        Train the model on a batch of data using the entire sequence at once.
-
-        Arguments:
-        - batch_paths (tf.Tensor): Tensor containing a batch of instrument paths. Shape: (batch_size, timesteps, input_shape)
-        - batch_T_minus_t (tf.Tensor): Tensor containing the time to maturity at each timestep.
-        - optimizer (tf.optimizers.Optimizer): The optimizer to use for training.
-
-        Returns:
-        - loss (tf.Tensor): The loss value after training on the batch.
-        """
-        with tf.GradientTape() as tape:
-            actions = self.process_batch(batch_paths, batch_T_minus_t)
-            loss = loss_function(batch_paths, actions) 
-            # Compute gradients based on the loss
-            grads = tape.gradient(loss, self.model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-
-        return loss
-    
 class GRUAgent(LSTMAgent):
     """
     A GRU agent that processes the entire sequence of inputs at once.
@@ -538,8 +499,11 @@ class GRUAgent(LSTMAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, n_hedging_timesteps, path_transformation_type=None, K=None):
-        super().__init__(n_hedging_timesteps, path_transformation_type, K)
+    def __init__(self, n_hedging_timesteps, path_transformation_configs = None,
+                 n_instruments = 1):
+        
+        super().__init__(n_hedging_timesteps, path_transformation_configs, 
+                 n_instruments)
         self.name = 'gru'
         self.plot_name = 'GRU'
 
@@ -574,14 +538,15 @@ class WaveNetAgent(LSTMAgent):
     - num_residual_blocks (int): Number of residual blocks in the WaveNet model.
     """
 
-    def __init__(self, n_hedging_timesteps, path_transformation_type=None, K=None, num_filters=32, num_residual_blocks=3):
-        input_shape = (n_hedging_timesteps, 2)
-        output_shape = 1
+    def __init__(self, n_hedging_timesteps, path_transformation_configs = None, num_filters=32, num_residual_blocks=3,
+                 n_instruments = 1):
+        
+        self.input_shape = (n_instruments + 1, n_hedging_timesteps) # +1 for T-t
+        self.n_instruments = n_instruments
         self.num_filters = num_filters
         self.num_residual_blocks = num_residual_blocks
-        self.model = self.build_model(input_shape, output_shape)
-        self.path_transformation_type = path_transformation_type
-        self.K = K
+        self.model = self.build_model(self.input_shape, self.n_instruments)
+        self.path_transformation_configs = path_transformation_configs
         self.name = 'wavenet'
         self.plot_name = 'WaveNet'
 
@@ -776,10 +741,15 @@ class ProportionalCost(CostFunction):
         return cost
 
 class Environment:
-    def __init__(self, agent, instrument, contingent_claim, cost_function, risk_measure,
+    def __init__(self, agent, T, N, r, instrument_list, n_instruments, contingent_claim, cost_function, risk_measure,
                  n_epochs, batch_size, learning_rate, optimizer):
         self.agent = agent
-        self.instrument = instrument
+        self.T = T # Maturity (in years)
+        self.N = N # Number of hedging steps
+        self.dt = self.T / self.N # Time increment
+        self.r = r # Risk Free yearly rate
+        self.instrument_list = instrument_list
+        self.n_instruments = n_instruments # It may not be the same as len of instrument_list (e.g. HestonStock with return_variance)
         self.contingent_claim = contingent_claim
         self.cost_function = cost_function
         self.risk_measure = risk_measure
@@ -790,37 +760,57 @@ class Environment:
         self.train_losses = []
         self.val_losses = []
 
-    def generate_data(self, train_paths, val_paths):
-        train_data = self.instrument.generate_paths(train_paths)
-        val_data = self.instrument.generate_paths(val_paths)
-        return train_data, val_data
+    def generate_data(self, n_paths, random_seed=None):
+
+        data = tf.TensorArray(dtype=tf.float32, size=self.n_instruments)
+        
+        i = 0
+        for instrument in self.instrument_list:
+            instrument_data = instrument.generate_paths(n_paths, random_seed=random_seed)
+            if isinstance(instrument_data, tuple):
+                for individual_data in instrument_data:
+                    data = data.write(i, individual_data)
+                    i += 1
+            else:
+                data = data.write(i, instrument_data)
+                i += 1
+        
+        # Stack all the instrument data into a single tensor
+        data = data.stack()
+
+        data_transposed = tf.transpose(data, perm=[1, 2, 0])
+        
+        return data_transposed # (n_paths, N+1, n_instruments)
+
 
     def calculate_pnl(self, paths, actions, include_decomposition = False):
         # Calculate the portfolio value at each time step
-        portfolio_values = tf.cumsum(actions, axis=1) * paths        
-        final_portfolio_value = portfolio_values[:, -1]
+        portfolio_values = tf.cumsum(actions, axis=1) * paths # (batch_size, N+1, n_instruments)        
+        final_portfolio_value = portfolio_values[:, -1, :] # (batch_size, n_instruments)
+        final_portfolio_value = tf.reduce_sum(final_portfolio_value, axis = 1) # (batch_size)
 
         # Calculate the total transaction costs
         costs = self.cost_function(actions, paths)
 
         # Calculate the cash flows from purchases and transaction costs
         purchases_cashflows = -actions * paths - costs
+        purchases_cashflows = tf.reduce_sum(purchases_cashflows, axis = 2)
 
         # Calculate the factor for compounding cash positions
-        factor = (1 + self.instrument.r) ** self.instrument.dt - 1
+        factor = (1 + self.r) ** self.dt - 1
 
         # Initialize the cash tensor with the first cash flow
         cash = purchases_cashflows[:, 0:1]
 
         # Iterate over the remaining time steps to accumulate cash values
-        for t in range(1, tf.shape(purchases_cashflows)[1]):
+        for t in range(1, purchases_cashflows.shape[1]):
             current_cash = cash[:, -1:] * (1 + factor) + purchases_cashflows[:, t:t+1]
             cash = tf.concat([cash, current_cash], axis=1)
 
-        final_cash_positions = cash[:, -1]
+        final_cash_positions = cash[:, -1] # (batch_size)
 
         # Calculate the payoff of the contingent claim
-        payoff = self.contingent_claim.calculate_payoff(paths)
+        payoff = self.contingent_claim.calculate_payoff(paths[:, :, 0]) # ASSUMPTION: The CC is calculated based on the first instrument
         
         # Calculate the PnL
         pnl = final_portfolio_value + final_cash_positions - payoff
@@ -836,15 +826,17 @@ class Environment:
 
     def train(self, train_paths, val_paths = 0):
 
-        train_data, val_data = self.generate_data(train_paths, val_paths)
-        T_minus_t_single = tf.range(self.instrument.N, 0, -1, dtype=tf.float32) * self.instrument.dt
-        T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [self.batch_size, 1])
-        T_minus_t_val =  tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [val_paths, 1])
+        train_data = self.generate_data(train_paths) # (n_paths, N+1, n_instruments)
+        T_minus_t = self.get_T_minus_t(self.batch_size) # (n_paths, N)
+    
+        if val_paths > 0:
+            val_data = self.generate_data(val_paths)
+            T_minus_t_val =  self.get_T_minus_t(val_paths)
 
         for epoch in range(self.n_epochs):
             # Training
             epoch_losses = []
-            for i in range(0, train_data.shape[0], self.batch_size):
+            for i in range(0, train_paths, self.batch_size):
                 batch_paths = train_data[i:i+self.batch_size]
                 loss = self.agent.train_batch(batch_paths, T_minus_t, self.optimizer, self.loss_function)
                 epoch_losses.append(loss.numpy())
@@ -872,11 +864,11 @@ class Environment:
         if paths_to_test:
             paths = paths_to_test
         elif n_paths:
-            paths = self.instrument.generate_paths(n_paths, random_seed = random_seed)
+            paths = self.generate_paths(n_paths, random_seed = random_seed)
         else:
             raise ValueError('Insert either paths_to_test or n_paths.')
         
-        T_minus_t_single = tf.range(self.instrument.N, 0, -1, dtype=tf.float32) * self.instrument.dt
+        T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [paths.shape[0], 1])
 
         val_actions = self.agent.process_batch(paths, T_minus_t)
@@ -902,7 +894,7 @@ class Environment:
         return loss
 
     def get_T_minus_t(self, shape):
-        T_minus_t_single = tf.range(self.instrument.N, 0, -1, dtype=tf.float32) * self.instrument.dt
+        T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [shape, 1])
         return T_minus_t
 
@@ -913,18 +905,18 @@ class Environment:
         if paths_to_test:
             paths = paths_to_test
         elif n_paths:
-            paths = self.instrument.generate_paths(n_paths, random_seed = random_seed)
+            paths = self.generate_data(n_paths, random_seed = random_seed)
         else:
             raise ValueError('Insert either paths_to_test or n_paths.')
         
         if fixed_price:
             price = fixed_price
         elif n_paths_for_pricing:
-            price_paths = self.instrument.generate_paths(n_paths)
+            price_paths = self.generate_data(n_paths)
             T_minus_t = self.get_T_minus_t(price_paths.shape[0])
             actions = self.agent.process_batch(paths, T_minus_t)
             loss = self.loss_function(paths, actions)
-            price = loss * np.exp(-self.instrument.r * self.instrument.T)
+            price = loss * np.exp(-self.r * self.T)
             print(price)
         else:
             raise ValueError('Insert either fixed_price or n_paths_for_pricing.')
@@ -934,7 +926,7 @@ class Environment:
         loss = self.loss_function(paths, val_actions)
 
         pnl = self.calculate_pnl(paths, val_actions)
-        error = price + pnl * np.exp(-self.instrument.r * self.instrument.T)
+        error = price + pnl * np.exp(-self.r * self.T)
         mean_error = tf.reduce_mean(error)        
 
         if plot_error:
@@ -978,7 +970,7 @@ class Environment:
         - losses (list of lists): List of loss values for each agent and loss function.
         """
         
-        paths = self.instrument.generate_paths(n_paths, random_seed=random_seed)
+        paths = self.generate_data(n_paths, random_seed=random_seed)
 
         if fixed_price is not None:
             price = fixed_price
@@ -996,7 +988,7 @@ class Environment:
             T_minus_t = self.get_T_minus_t(paths.shape[0])
             val_actions = agent.process_batch(paths, T_minus_t)
             pnl = self.calculate_pnl(paths, val_actions)
-            error = price + pnl * np.exp(-self.instrument.r * self.instrument.T)
+            error = price + pnl * np.exp(-self.r * self.T)
             
             errors.append(error)
             mean_errors.append(tf.reduce_mean(error).numpy())
@@ -1119,8 +1111,8 @@ class Environment:
         """
 
         # Generate a single path
-        single_path = self.instrument.generate_paths(1, random_seed = random_seed)  # Shape: (1, N+1)
-        T_minus_t_single = tf.range(self.instrument.N, 0, -1, dtype=tf.float32) * self.instrument.dt
+        single_path = self.generate_paths(1, random_seed = random_seed)  # Shape: (1, N+1)
+        T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t_single = tf.expand_dims(T_minus_t_single, axis=0)  # Shape: (1, N)
 
         # Get the hedging actions
@@ -1132,12 +1124,12 @@ class Environment:
         net_portfolio_values = net_portfolio_values.numpy()[0]
 
         # Plot the portfolio value over time
-        timesteps = np.arange(self.instrument.N + 1)
+        timesteps = np.arange(self.N + 1)
         fig, ax1 = plt.figure(figsize=(10, 6)), plt.gca()
         ax1.bar(timesteps, net_portfolio_values, label="Net Portfolio Values", color='b', alpha=0.6)
 
         # Plot the contingent claim payoff at the final timestep as a bar
-        ax1.bar(self.instrument.N, payoff, color='r', alpha=0.6, label="Contingent Claim Payoff")
+        ax1.bar(self.N, payoff, color='r', alpha=0.6, label="Contingent Claim Payoff")
 
         ax1.set_xlabel("Timestep")
         ax1.set_ylabel("Portfolio Value", color='b')
@@ -1267,20 +1259,21 @@ class HestonStock(Stock):
     - theta (float): Long-term variance (mean level).
     - xi (float): Volatility of variance (volatility of volatility).
     - rho (float): Correlation between the Brownian motions driving the stock price and variance.
-
+    - return_variance(bool): True
     Methods:
-    - generate_paths(self, num_paths, return_variance=False): Generates stock price paths using the Heston model,
+    - generate_paths(self, num_paths): Generates stock price paths using the Heston model,
       with an option to return the variance paths.
     """
-    def __init__(self, S0, T, N, r, v0, kappa, theta, xi, rho):
+    def __init__(self, S0, T, N, r, v0, kappa, theta, xi, rho, return_variance=True):
         super().__init__(S0, T, N, r)
         self.v0 = v0        # Initial variance
         self.kappa = kappa  # Rate of reversion
         self.theta = theta  # Long-term variance
         self.xi = xi        # Volatility of variance
         self.rho = rho      # Correlation between Brownian motions
+        self.return_variance = return_variance
 
-    def generate_paths(self, num_paths, return_variance=False, random_seed = None):
+    def generate_paths(self, num_paths, random_seed = None):
         """
         Generates stock price paths using the Heston model, with an option to return the variance paths.
 
@@ -1328,7 +1321,7 @@ class HestonStock(Stock):
         S_paths = tf.convert_to_tensor(S, dtype=tf.float32)
         v_paths = tf.convert_to_tensor(v, dtype=tf.float32)
 
-        if return_variance:
+        if self.return_variance:
             return S_paths, v_paths
         else:
             return S_paths
@@ -1571,17 +1564,33 @@ class Entropy(RiskMeasure):
         entropy = -tf.reduce_sum(probabilities * tf.math.log(probabilities))
         return entropy
 
-instrument = GBMStock(S0=100, T=63/252, N=63, r=0.05, sigma=0.2)
+
+
+T = 63/252
+N = 63
+r = 0.05
+n_instruments = 1
+
+instrument1 = GBMStock(S0=100, T=T, N=N, r=r, sigma=0.2)
+instrument2 = HestonStock(S0=100, T=T, N=N, r=r, v0=0.04, kappa=2.0, theta=0.04, xi=0.3, rho=-0.7, return_variance=True)
+
+instruments = [instrument1] #instrument1
 contingent_claim = EuropeanCall(strike=100)
-cost_function = ProportionalCost(proportion=0.0)
+
+path_transformation_configs = [
+    {'transformation_type': 'log_moneyness', 'K': contingent_claim.strike},
+    {'transformation_type': None}
+]
+
+cost_function = ProportionalCost(proportion=0.02)
 risk_measure = CVaR(alpha=0.5)
 
-#agent = RecurrentAgent(path_transformation_type='log_moneyness', K = contingent_claim.strike)
-#agent = LSTMAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
-#agent = GRUAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
-agent = WaveNetAgent(instrument.N, path_transformation_type='log_moneyness', K = contingent_claim.strike)
+agent = RecurrentAgent(path_transformation_configs=path_transformation_configs)
+#agent = LSTMAgent(N, path_transformation_configs=path_transformation_configs)
+#agent = GRUAgent(N, path_transformation_configs=path_transformation_configs)
+#agent = WaveNetAgent(N, path_transformation_configs=path_transformation_configs)
 
-model_name = '1'
+model_name = '3'
 model_path = os.path.join(os.getcwd(), 'models', agent.name, f'{model_name}.keras')
 optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, model_name)
 
@@ -1599,12 +1608,16 @@ learning_rate_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
 
 env = Environment(
     agent=agent,
-    instrument=instrument,
+    T = T,
+    N = N,
+    r = r,
+    instrument_list=instruments,
+    n_instruments = n_instruments,
     contingent_claim=contingent_claim,
     cost_function=cost_function,
     risk_measure=risk_measure,
-    n_epochs=50,
-    batch_size=1_000,
+    n_epochs=100,
+    batch_size=10_000,
     learning_rate=learning_rate_schedule,
     optimizer=tf.keras.optimizers.Adam
 )
@@ -1614,7 +1627,7 @@ print(time.ctime())
 agent.load_model(model_path)
 env.load_optimizer(optimizer_path, only_weights=True)
 
-env.train(train_paths=10_000)
+env.train(train_paths=100_000)
 
 agent.save_model(model_path)
 env.save_optimizer(optimizer_path)

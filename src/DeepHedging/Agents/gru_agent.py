@@ -10,8 +10,11 @@ class GRUAgent(LSTMAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, n_hedging_timesteps, path_transformation_type=None, K=None):
-        super().__init__(n_hedging_timesteps, path_transformation_type, K)
+    def __init__(self, n_hedging_timesteps, path_transformation_configs = None,
+                 n_instruments = 1):
+        
+        super().__init__(n_hedging_timesteps, path_transformation_configs, 
+                 n_instruments)
         self.name = 'gru'
         self.plot_name = 'GRU'
 

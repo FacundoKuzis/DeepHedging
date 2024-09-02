@@ -10,12 +10,11 @@ class SimpleAgent(BaseAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, path_transformation_type = None, K = None):
-        input_shape = (2,)
-        output_shape = 1
-        self.model = self.build_model(input_shape, output_shape)
-        self.path_transformation_type = path_transformation_type
-        self.K = K
+    def __init__(self, path_transformation_configs = None, n_instruments = 1):
+        self.input_shape = (n_instruments + 1,) # +1 for T-t
+        self.n_instruments = n_instruments
+        self.model = self.build_model(self.input_shape, self.n_instruments)
+        self.path_transformation_configs = path_transformation_configs
         self.name = 'simple'
         self.plot_name = 'Simple'
 
@@ -32,84 +31,22 @@ class SimpleAgent(BaseAgent):
         """
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=input_shape),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dense(30, activation='relu'),
+            tf.keras.layers.Dense(30, activation='relu'),
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])
         return model
 
-    def transform_input(self, instrument_paths, T_minus_t):
-        """
-        Transforms the input by concatenating instrument paths and time to maturity.
-
-        Arguments:
-        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
-                                        Shape: (batch_size, input_shape)
-        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
-                                Shape: (batch_size,)
-
-        Returns:
-        - input_data (tf.Tensor): The transformed input data.
-                                Shape: (batch_size, input_shape + 1)
-        """
-        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_type, K = self.K)
-
-        # Ensure both tensors have the same rank by expanding dimensions of instrument_paths
-        instrument_paths = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (batch_size, input_shape, 1)
-        T_minus_t = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, 1)
-        
-        # Concatenate along the last axis
-        input_data = tf.concat([instrument_paths, T_minus_t], axis=-1)  # Shape: (batch_size, input_shape + 1)
-        return input_data
-    
-    def act(self, instrument_paths, T_minus_t):
-        """
-        Act based on the input.
-
-        Arguments:
-        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
-        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
-
-        Returns:
-        - action (tf.Tensor): The action chosen by the model.
-        """
-        input_data = self.transform_input(instrument_paths, T_minus_t)
-        action = self.model(input_data)
-        return action
-
-
     def process_batch(self, batch_paths, batch_T_minus_t):
         all_actions = []
         for t in range(batch_paths.shape[1] -1):  # timesteps until T-1
-            current_paths = batch_paths[:, t]
-            current_T_minus_t = batch_T_minus_t[:, t]
+            current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
+            current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
             action = self.act(current_paths, current_T_minus_t)
             all_actions.append(action)
 
-        all_actions = tf.concat(all_actions, axis=1)
-        zero_action = tf.zeros((batch_paths.shape[0], 1))
+        all_actions = tf.stack(all_actions, axis=1)
+        zero_action = tf.zeros((batch_paths.shape[0], 1, all_actions.shape[-1]))
         all_actions = tf.concat([all_actions, zero_action], axis=1)
 
-        return all_actions
-
-    def train_batch(self, batch_paths, batch_T_minus_t, optimizer, loss_function):
-        """
-        Train the model on a batch of data, processing timestep by timestep.
-
-        Arguments:
-        - batch_paths (tf.Tensor): Tensor containing a batch of instrument paths. Shape: (batch_size, timesteps, input_shape)
-        - batch_T_minus_t (tf.Tensor): Tensor containing the time to maturity at each timestep.
-        - optimizer (tf.optimizers.Optimizer): The optimizer to use for training.
-
-        Returns:
-        - loss (tf.Tensor): The loss value after training on the batch.
-        """
-        with tf.GradientTape() as tape:
-            actions = self.process_batch(batch_paths, batch_T_minus_t) 
-            loss = loss_function(batch_paths, actions)
-
-            # Compute gradients based on the total loss
-            grads = tape.gradient(loss, self.model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-
-        return loss
+        return all_actions # (n_simulations, n_timesteps, n_instruments)

@@ -10,13 +10,12 @@ class RecurrentAgent(SimpleAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, path_transformation_type = None, K = None):
-        input_shape = (3,)
-        output_shape = 1
-        self.model = self.build_model(input_shape, output_shape)
+    def __init__(self, path_transformation_configs = None, n_instruments = 1):
+        self.input_shape = (n_instruments + 1 + n_instruments,) # +1 for T-t and + n_instruments for accumulated position
+        self.n_instruments = n_instruments
+        self.model = self.build_model(self.input_shape, self.n_instruments)
         self.accumulated_position = None  # Initialize accumulated position
-        self.path_transformation_type = path_transformation_type
-        self.K = K
+        self.path_transformation_configs = path_transformation_configs
         self.name = 'recurrent'
         self.plot_name = 'Recurrent'
 
@@ -46,7 +45,7 @@ class RecurrentAgent(SimpleAgent):
         Arguments:
         - batch_size (int): The size of the batch being processed.
         """
-        self.accumulated_position = tf.zeros((batch_size,), dtype=tf.float32)
+        self.accumulated_position = tf.zeros((batch_size, self.n_instruments), dtype=tf.float32)
 
     def transform_input(self, instrument_paths, T_minus_t):
         """
@@ -59,14 +58,11 @@ class RecurrentAgent(SimpleAgent):
         Returns:
         - transformed_input (tf.Tensor): The transformed input, including accumulated position and T_minus_t.
         """
-        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_type, K = self.K)
-
         # Concatenate the instrument paths, accumulated position, and T_minus_t
-        instrument_paths_expanded = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (batch_size, input_shape, 1)
-        accumulated_position_expanded = tf.expand_dims(self.accumulated_position, axis=-1)
-        T_minus_t_expanded = tf.expand_dims(T_minus_t, axis=-1)
-        transformed_input = tf.concat([instrument_paths_expanded, accumulated_position_expanded, T_minus_t_expanded], axis=-1)
-        return transformed_input
+        input_data = super().transform_input(instrument_paths, T_minus_t) 
+        transformed_input = tf.concat([input_data, self.accumulated_position], axis=-1)
+
+        return transformed_input # (batch_size, n_instruments + 1 + n_instruments)
 
 
     def act(self, instrument_paths, T_minus_t):
@@ -84,7 +80,7 @@ class RecurrentAgent(SimpleAgent):
         action = self.model(input_data)
 
         # Update accumulated position by summing actions
-        self.accumulated_position += tf.reduce_sum(action, axis=-1)  # Accumulate positions across timesteps
+        self.accumulated_position += action  # Accumulate positions across timesteps
 
         return action
 

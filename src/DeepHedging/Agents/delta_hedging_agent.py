@@ -77,11 +77,15 @@ class DeltaHedgingAgent(BaseAgent):
         - action (tf.Tensor): The delta value used as the hedging action.
         """
 
-        delta = self.delta(instrument_paths, T_minus_t)
+        delta = self.delta(instrument_paths[:, 0], T_minus_t) # ASSUMPTION: Stock is the first instrument
         action = delta - self.last_delta
         self.last_delta = delta
-
-        return tf.expand_dims(action, axis=-1)
+        #actions_expanded = tf.expand_dims(action, axis=-1)
+        #zeros = tf.zeros_like(instrument_paths)
+        action =  tf.expand_dims(action, axis=-1)
+        zeros = tf.zeros((instrument_paths.shape[0], instrument_paths.shape[1]-1))
+        actions = tf.concat([action, zeros], axis=1)
+        return actions
 
     def reset_last_delta(self, batch_size):
         self.last_delta = tf.zeros((batch_size,), dtype=tf.float32)
@@ -90,16 +94,16 @@ class DeltaHedgingAgent(BaseAgent):
         self.reset_last_delta(batch_paths.shape[0])
         all_actions = []
         for t in range(batch_paths.shape[1] -1):  # timesteps until T-1
-            current_paths = batch_paths[:, t]
-            current_T_minus_t = batch_T_minus_t[:, t]
+            current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
+            current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
             action = self.act(current_paths, current_T_minus_t)
             all_actions.append(action)
 
-        all_actions = tf.concat(all_actions, axis=1)
-        zero_action = tf.zeros((batch_paths.shape[0], 1))
+        all_actions = tf.stack(all_actions, axis=1)
+        zero_action = tf.zeros((batch_paths.shape[0], 1, all_actions.shape[-1]))
         all_actions = tf.concat([all_actions, zero_action], axis=1)
 
-        return all_actions
+        return all_actions # (n_simulations, n_timesteps, n_instruments)
 
     def get_model_price(self):
         """
