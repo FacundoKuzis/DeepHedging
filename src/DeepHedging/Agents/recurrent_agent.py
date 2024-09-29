@@ -10,8 +10,8 @@ class RecurrentAgent(SimpleAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, path_transformation_configs = None, n_instruments = 1):
-        self.input_shape = (n_instruments + 1 + n_instruments,) # +1 for T-t and + n_instruments for accumulated position
+    def __init__(self, path_transformation_configs = None, n_instruments = 1, n_additional_features = 0):
+        self.input_shape = (n_instruments + 1 + n_instruments + n_additional_features,) # +1 for T-t and + n_instruments for accumulated position
         self.n_instruments = n_instruments
         self.model = self.build_model(self.input_shape, self.n_instruments)
         self.accumulated_position = None  # Initialize accumulated position

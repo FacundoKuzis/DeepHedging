@@ -14,9 +14,9 @@ class WaveNetAgent(LSTMAgent):
     """
 
     def __init__(self, n_hedging_timesteps, path_transformation_configs = None, num_filters=32, num_residual_blocks=3,
-                 n_instruments = 1):
+                 n_instruments = 1, n_additional_features = 0):
         
-        self.input_shape = (n_hedging_timesteps, n_instruments + 1) # +1 for T-t
+        self.input_shape = (n_hedging_timesteps, n_instruments + 1 + n_additional_features) # +1 for T-t
         self.n_instruments = n_instruments
         self.num_filters = num_filters
         self.num_residual_blocks = num_residual_blocks

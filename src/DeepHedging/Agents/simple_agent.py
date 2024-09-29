@@ -10,8 +10,9 @@ class SimpleAgent(BaseAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, path_transformation_configs = None, n_instruments = 1):
-        self.input_shape = (n_instruments + 1,) # +1 for T-t
+    def __init__(self, path_transformation_configs = None, n_instruments = 1,
+                 n_additional_features=0):
+        self.input_shape = (n_instruments + 1 + n_additional_features,) # +1 for T-t
         self.n_instruments = n_instruments
         self.model = self.build_model(self.input_shape, self.n_instruments)
         self.path_transformation_configs = path_transformation_configs
@@ -37,12 +38,12 @@ class SimpleAgent(BaseAgent):
         ])
         return model
 
-    def process_batch(self, batch_paths, batch_T_minus_t):
+    def process_batch(self, batch_paths, batch_T_minus_t, additional_information = None):
         all_actions = []
         for t in range(batch_paths.shape[1] -1):  # timesteps until T-1
             current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
             current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
-            action = self.act(current_paths, current_T_minus_t)
+            action = self.act(current_paths, current_T_minus_t, additional_information)
             all_actions.append(action)
 
         all_actions = tf.stack(all_actions, axis=1)

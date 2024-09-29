@@ -77,67 +77,54 @@ class BaseAgent(ABC):
         else:
             raise ValueError(f"Unsupported transformation type: {transformation_type}")
 
-    def transform_input(self, instrument_paths, T_minus_t):
+    def transform_input(self, instrument_paths, T_minus_t, additional_info=None):
         """
-        Transforms the input by concatenating instrument paths and time to maturity.
+        Transforms the input by concatenating instrument paths, time to maturity, and additional information.
 
         Arguments:
         - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
-                                        Shape: (batch_size, input_shape)
         - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
-                                Shape: (batch_size,)
+        - additional_info (tf.Tensor, optional): Additional information not related to tradable assets.
 
         Returns:
         - input_data (tf.Tensor): The transformed input data.
-                                Shape: (batch_size, input_shape + 1)
         """
-        #instrument_paths = tf.expand_dims(instrument_paths, axis=-1)  # Shape: (n_instruments, batch_size, n_timesteps, 1)
-        #T_minus_t = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, n_timesteps, 1)
-
-        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_configs) # Shape: (batch_size, n_timesteps, n_instruments) or (batch_size, n_instruments)
-        # T_minus_t  # Shape: (batch_size, n_timesteps)
-        T_minus_t_expanded = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, n_timesteps, 1) or (batch_size, 1)
-
-        # Concatenate along the last axis
-        input_data = tf.concat([instrument_paths, T_minus_t_expanded], axis=-1) # Shape (batch_size, n_timesteps, n_instruments+1) or (batch_size, n_instruments+1)
-
+        instrument_paths = self.transform_paths(instrument_paths, self.path_transformation_configs)
+        T_minus_t_expanded = tf.expand_dims(T_minus_t, axis=-1)
+        input_data = tf.concat([instrument_paths, T_minus_t_expanded], axis=-1)
+        if additional_info is not None:
+            # Ensure additional_info has the correct shape
+            if len(additional_info.shape) == 2:
+                additional_info_expanded = tf.expand_dims(additional_info, axis=1)
+                # Tile along time dimension
+                additional_info_expanded = tf.tile(additional_info_expanded, [1, input_data.shape[1], 1])
+            else:
+                additional_info_expanded = additional_info
+            input_data = tf.concat([input_data, additional_info_expanded], axis=-1)
         return input_data
-    
-    def act(self, instrument_paths, T_minus_t):
+
+    def act(self, instrument_paths, T_minus_t, additional_info=None):
         """
         Act based on the input.
 
         Arguments:
         - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
         - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
+        - additional_info (tf.Tensor, optional): Additional information not related to tradable assets.
 
         Returns:
         - action (tf.Tensor): The action chosen by the model.
         """
-        input_data = self.transform_input(instrument_paths, T_minus_t)
+        input_data = self.transform_input(instrument_paths, T_minus_t, additional_info)
         action = self.model(input_data)
         return action
 
-    def train_batch(self, batch_paths, batch_T_minus_t, optimizer, loss_function):
-        """
-        Train the model on a batch of data, processing timestep by timestep.
-
-        Arguments:
-        - batch_paths (tf.Tensor): Tensor containing a batch of instrument paths. Shape: (batch_size, timesteps, input_shape)
-        - batch_T_minus_t (tf.Tensor): Tensor containing the time to maturity at each timestep.
-        - optimizer (tf.optimizers.Optimizer): The optimizer to use for training.
-
-        Returns:
-        - loss (tf.Tensor): The loss value after training on the batch.
-        """
+    def train_batch(self, batch_paths, batch_T_minus_t, optimizer, loss_function, additional_info=None):
         with tf.GradientTape() as tape:
-            actions = self.process_batch(batch_paths, batch_T_minus_t) # (batch_size, N+1, n_instruments)
+            actions = self.process_batch(batch_paths, batch_T_minus_t, additional_info)
             loss = loss_function(batch_paths, actions)
-
-            # Compute gradients based on the total loss
             grads = tape.gradient(loss, self.model.trainable_variables)
             optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-
         return loss
 
     def load_model(self, model_path):

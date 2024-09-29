@@ -48,7 +48,6 @@ class Environment:
         
         return data_transposed # (n_paths, N+1, n_instruments)
 
-
     def calculate_pnl(self, paths, actions, include_decomposition = False):
         # Calculate the portfolio value at each time step
         portfolio_values = tf.cumsum(actions, axis=1) * paths # (batch_size, N+1, n_instruments)        
@@ -90,7 +89,7 @@ class Environment:
         pnl = self.calculate_pnl(paths, actions)
         return self.risk_measure.calculate(pnl)
 
-    def train(self, train_paths, val_paths = 0):
+    def train(self, train_paths, val_paths = 0, additional_info = None):
 
         train_data = self.generate_data(train_paths) # (n_paths, N+1, n_instruments)
         T_minus_t = self.get_T_minus_t(self.batch_size) # (n_paths, N)

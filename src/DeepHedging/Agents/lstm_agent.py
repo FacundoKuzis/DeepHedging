@@ -10,10 +10,9 @@ class LSTMAgent(BaseAgent):
     - output_shape (int): Shape of the output.
     """
 
-    def __init__(self, n_hedging_timesteps, path_transformation_configs = None,
-                 n_instruments = 1):
-
-        self.input_shape = (n_hedging_timesteps, n_instruments + 1) # +1 for T-t
+    def __init__(self, n_hedging_timesteps, path_transformation_configs=None,
+                 n_instruments=1, n_additional_features=0):
+        self.input_shape = (n_hedging_timesteps, n_instruments + 1 + n_additional_features)
         self.n_instruments = n_instruments
         self.model = self.build_model(self.input_shape, self.n_instruments)
         self.path_transformation_configs = path_transformation_configs
@@ -39,13 +38,8 @@ class LSTMAgent(BaseAgent):
         ])
         return model
 
-    def process_batch(self, batch_paths, batch_T_minus_t):
-
-        all_actions = self.act(batch_paths[:, :-1, :], batch_T_minus_t) # (batch_size, N, n_instruments)
-
+    def process_batch(self, batch_paths, batch_T_minus_t, additional_info=None):
+        all_actions = self.act(batch_paths[:, :-1, :], batch_T_minus_t, additional_info)
         zero_action = tf.zeros((batch_paths.shape[0], 1, all_actions.shape[2]))
         all_actions = tf.concat([all_actions, zero_action], axis=1)
-        #all_actions = all_actions[:, :, 0] # temporary, only one instrument
-
         return all_actions
-
