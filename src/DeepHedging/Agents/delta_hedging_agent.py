@@ -116,7 +116,7 @@ class DeltaHedgingAgent(BaseAgent):
         d2 = d1 - self.sigma * tf.sqrt(self.T)
         
         normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
-        if self.option_type == 'call':
+        if self.option_type in 'call':
             price = (self.S0 * normal_dist.cdf(d1) - 
                      self.strike * tf.exp(-self.r * self.T) * normal_dist.cdf(d2))
         elif self.option_type == 'put':
@@ -125,4 +125,40 @@ class DeltaHedgingAgent(BaseAgent):
         else:
             raise ValueError("Option type must be either 'call' or 'put'.")
         
+        return price
+
+    def get_model_price(self, S=None, T_minus_t=None):
+        """
+        Calculate the Black-Scholes price for the option.
+
+        Arguments:
+        - S (tf.Tensor, optional): The current stock prices (batch_size,). If None, use self.S0.
+        - T_minus_t (tf.Tensor, optional): The time to maturity at current time t (batch_size,). If None, use self.T.
+
+        Returns:
+        - price (tf.Tensor): The Black-Scholes price of the option (batch_size,).
+        """
+
+        if S is None:
+            S = self.S0
+        if T_minus_t is None:
+            T = self.T
+        else:
+            T = T_minus_t  # Shape: (batch_size,)
+
+        # Compute d1 and d2 using the Black-Scholes formula
+        d1 = self.d1(S, T)  # Should handle tensor inputs
+        d2 = d1 - self.sigma * tf.sqrt(T)
+
+        # Define the standard normal distribution
+        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
+
+        # Calculate the option price based on the option type
+        if self.option_type == 'call':
+            price = (S * normal_dist.cdf(d1)) - (self.strike * tf.exp(-self.r * T) * normal_dist.cdf(d2))
+        elif self.option_type == 'put':
+            price = (self.strike * tf.exp(-self.r * T) *  normal_dist.cdf(-d2)) - (S * normal_dist.cdf(-d1))
+        else:
+            raise ValueError("Option type must be either 'call' or 'put'.")
+
         return price

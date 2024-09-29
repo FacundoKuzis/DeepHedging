@@ -3,5 +3,6 @@ from DeepHedging.Agents.simple_agent import SimpleAgent
 from DeepHedging.Agents.recurrent_agent import RecurrentAgent
 from DeepHedging.Agents.lstm_agent import LSTMAgent
 from DeepHedging.Agents.gru_agent import GRUAgent
-from DeepHedging.Agents.delta_hedging_agent import DeltaHedgingAgent
 from DeepHedging.Agents.wavenet_agent import WaveNetAgent
+from DeepHedging.Agents.delta_hedging_agent import DeltaHedgingAgent
+from DeepHedging.Agents.chooser_delta_hedging_agent import ChooserDeltaHedgingAgent
