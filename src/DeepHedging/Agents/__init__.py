@@ -3,5 +3,9 @@ from DeepHedging.Agents.simple_agent import SimpleAgent
 from DeepHedging.Agents.recurrent_agent import RecurrentAgent
 from DeepHedging.Agents.lstm_agent import LSTMAgent
 from DeepHedging.Agents.gru_agent import GRUAgent
-from DeepHedging.Agents.delta_hedging_agent import DeltaHedgingAgent
 from DeepHedging.Agents.wavenet_agent import WaveNetAgent
+from DeepHedging.Agents.delta_hedging_agent import DeltaHedgingAgent
+from DeepHedging.Agents.asian_delta_hedging_agent import AsianDeltaHedgingAgent
+from DeepHedging.Agents.asian_delta_hedging_agent_2 import AsianDeltaHedgingAgent2
+from DeepHedging.Agents.quantlib_asian_geometric_agent import QuantlibAsianGeometricAgent
+from DeepHedging.Agents.quantlib_asian_arithmetic_agent import QuantlibAsianArithmeticAgent

@@ -294,6 +294,100 @@ class DeltaHedgingAgent(BaseAgent):
         
         return price
     
+class AsianDeltaHedgingAgent(DeltaHedgingAgent):
+    """
+    A delta hedging agent for geometric Asian options.
+    """
+
+    def __init__(self, gbm_stock, option_class):
+        super().__init__(gbm_stock, option_class)
+        self.name = 'asian_delta_hedging'
+        self.plot_name = 'Geometric Asian Delta'
+
+    def d1(self, S, T_minus_t):
+        """
+        Calculate the d1 component used in the geometric Asian option formula.
+        """
+        eps = 1e-4
+        T_tilde = T_minus_t + eps  # To prevent division by zero
+
+        numerator = tf.math.log(S / self.strike) + (T_tilde / 2) * (self.r + (self.sigma ** 2) / 6)
+        denominator = self.sigma * tf.sqrt(T_tilde / 3)
+        return numerator / denominator
+
+    def d2(self, S, T_minus_t):
+        """
+        Calculate the d2 component used in the geometric Asian option formula.
+        """
+        eps = 1e-4
+        T_tilde = T_minus_t + eps  # To prevent division by zero
+
+        numerator = tf.math.log(S / self.strike) + (T_tilde / 2) * (self.r - (self.sigma ** 2) / 2)
+        denominator = self.sigma * tf.sqrt(T_tilde / 3)
+        return numerator / denominator
+
+    def delta(self, S, T_minus_t):
+        """
+        Calculate the delta of the geometric Asian option.
+        """
+        eps = 1e-4
+        T_tilde = T_minus_t + eps  # To prevent division by zero
+
+        d1 = self.d1(S, T_minus_t)
+        d2 = self.d2(S, T_minus_t)
+
+        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
+        Nd1 = normal_dist.cdf(d1)
+        N_minus_d1 = normal_dist.cdf(-d1)
+
+        exp_term1 = tf.exp(-((self.r + (self.sigma ** 2) / 6) * (T_tilde / 2)))
+        exp_term2 = tf.exp(-((self.r * (T_tilde / 2)) + (T_tilde * (self.sigma ** 2) / 12) + (d1 ** 2) / 2))
+        exp_term3 = tf.exp(-((self.r * T_tilde) + (d2 ** 2) / 2))
+
+        if self.option_type == 'call':
+            first_term = exp_term1 * Nd1
+            second_term = (1 / (self.sigma * tf.sqrt(2 * np.pi * T_tilde / 3))) * (
+                exp_term2 - (self.strike / S) * exp_term3
+            )
+            delta = first_term + second_term
+        elif self.option_type == 'put':
+            first_term = -exp_term1 * N_minus_d1
+            second_term = (1 / (self.sigma * tf.sqrt(2 * np.pi * T_tilde / 3))) * (
+                -exp_term2 + (self.strike / S) * exp_term3
+            )
+            delta = first_term + second_term
+        else:
+            raise ValueError("Option type must be either 'call' or 'put'.")
+
+        return delta
+
+    def get_model_price(self):
+        """
+        Calculate the price for the geometric Asian option.
+        """
+        eps = 1e-4
+        T_tilde = self.T + eps  # Total time to maturity
+
+        d1 = self.d1(self.S0, T_tilde)
+        d2 = self.d2(self.S0, T_tilde)
+
+        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
+        Nd1 = normal_dist.cdf(d1)
+        Nd2 = normal_dist.cdf(d2)
+        N_minus_d1 = normal_dist.cdf(-d1)
+        N_minus_d2 = normal_dist.cdf(-d2)
+
+        exp_term1 = tf.exp(-((self.r + (self.sigma ** 2) / 6) * (T_tilde / 2)))
+
+        if self.option_type == 'call':
+            price = self.S0 * exp_term1 * Nd1 - self.strike * tf.exp(-self.r * T_tilde) * Nd2
+        elif self.option_type == 'put':
+            price = self.strike * tf.exp(-self.r * T_tilde) * N_minus_d2 - self.S0 * exp_term1 * N_minus_d1
+        else:
+            raise ValueError("Option type must be either 'call' or 'put'.")
+
+        return price
+
 class SimpleAgent(BaseAgent):
     """
     A simple agent that processes inputs timestep by timestep.
@@ -673,6 +767,154 @@ class EuropeanPut(ContingentClaim):
         """
         # The payoff is max(K - S(T), 0) for a European put option
         payoff = tf.maximum(self.strike - paths[:, -1], 0) * self.amount
+        return payoff
+
+class AsianArithmeticCall(ContingentClaim):
+    """
+    A class representing an Asian arithmetic average call option.
+
+    Arguments:
+    - strike (float): The strike price of the option.
+    - amount (float, optional): The amount of the option. Default is 1.0.
+
+    Methods:
+    - calculate_payoff(self, paths): Calculates the payoff of the Asian arithmetic average call option.
+    """
+
+    def __init__(self, strike, amount=1.0):
+        super().__init__(amount)
+        self.strike = strike
+        self.option_type = 'call'
+
+    def calculate_payoff(self, paths):
+        """
+        Calculates the payoff of the Asian arithmetic average call option.
+
+        Arguments:
+        - paths (tf.Tensor): Tensor containing the simulated paths of the underlying asset.
+                             Shape is (num_paths, N+1).
+
+        Returns:
+        - payoff (tf.Tensor): Tensor containing the payoff of the Asian arithmetic average call option.
+                              Shape is (num_paths,).
+        """
+        # Calculate the arithmetic average of the underlying asset prices over time
+        average_price = tf.reduce_mean(paths, axis=1)  # Shape: (num_paths,)
+
+        payoff = tf.maximum(average_price - self.strike, 0) * self.amount
+        return payoff
+
+class AsianArithmeticPut(ContingentClaim):
+    """
+    A class representing an Asian arithmetic average put option.
+
+    Arguments:
+    - strike (float): The strike price of the option.
+    - amount (float, optional): The amount of the option. Default is 1.0.
+
+    Methods:
+    - calculate_payoff(self, paths): Calculates the payoff of the Asian arithmetic average put option.
+    """
+
+    def __init__(self, strike, amount=1.0):
+        super().__init__(amount)
+        self.strike = strike
+        self.option_type = 'put'
+
+    def calculate_payoff(self, paths):
+        """
+        Calculates the payoff of the Asian arithmetic average put option.
+
+        Arguments:
+        - paths (tf.Tensor): Tensor containing the simulated paths of the underlying asset.
+                             Shape is (num_paths, N+1).
+
+        Returns:
+        - payoff (tf.Tensor): Tensor containing the payoff of the Asian arithmetic average put option.
+                              Shape is (num_paths,).
+        """
+        # Calculate the arithmetic average of the underlying asset prices over time
+        average_price = tf.reduce_mean(paths, axis=1)  # Shape: (num_paths,)
+
+        payoff = tf.maximum(self.strike - average_price, 0) * self.amount
+        return payoff
+
+class AsianGeometricCall(ContingentClaim):
+    """
+    A class representing an Asian geometric average call option.
+
+    Arguments:
+    - strike (float): The strike price of the option.
+    - amount (float, optional): The amount of the option. Default is 1.0.
+
+    Methods:
+    - calculate_payoff(self, paths): Calculates the payoff of the Asian geometric average call option.
+    """
+
+    def __init__(self, strike, amount=1.0):
+        super().__init__(amount)
+        self.strike = strike
+        self.option_type = 'call'
+
+    def calculate_payoff(self, paths):
+        """
+        Calculates the payoff of the Asian geometric average call option.
+
+        Arguments:
+        - paths (tf.Tensor): Tensor containing the simulated paths of the underlying asset.
+                             Shape is (num_paths, N+1).
+
+        Returns:
+        - payoff (tf.Tensor): Tensor containing the payoff of the Asian geometric average call option.
+                              Shape is (num_paths,).
+        """
+        # Calculate the geometric average of the underlying asset prices over time
+        # Add a small epsilon to prevent log(0)
+        eps = 1e-8
+        log_paths = tf.math.log(paths + eps)
+        average_log_price = tf.reduce_mean(log_paths, axis=1)
+        geometric_average_price = tf.exp(average_log_price)
+
+        payoff = tf.maximum(geometric_average_price - self.strike, 0) * self.amount
+        return payoff
+
+class AsianGeometricPut(ContingentClaim):
+    """
+    A class representing an Asian geometric average put option.
+
+    Arguments:
+    - strike (float): The strike price of the option.
+    - amount (float, optional): The amount of the option. Default is 1.0.
+
+    Methods:
+    - calculate_payoff(self, paths): Calculates the payoff of the Asian geometric average put option.
+    """
+
+    def __init__(self, strike, amount=1.0):
+        super().__init__(amount)
+        self.strike = strike
+        self.option_type = 'put'
+
+    def calculate_payoff(self, paths):
+        """
+        Calculates the payoff of the Asian geometric average put option.
+
+        Arguments:
+        - paths (tf.Tensor): Tensor containing the simulated paths of the underlying asset.
+                             Shape is (num_paths, N+1).
+
+        Returns:
+        - payoff (tf.Tensor): Tensor containing the payoff of the Asian geometric average put option.
+                              Shape is (num_paths,).
+        """
+        # Calculate the geometric average of the underlying asset prices over time
+        # Add a small epsilon to prevent log(0)
+        eps = 1e-8
+        log_paths = tf.math.log(paths + eps)
+        average_log_price = tf.reduce_mean(log_paths, axis=1)
+        geometric_average_price = tf.exp(average_log_price)
+
+        payoff = tf.maximum(self.strike - geometric_average_price, 0) * self.amount
         return payoff
 
 class CostFunction:
@@ -1565,7 +1807,6 @@ class Entropy(RiskMeasure):
         return entropy
 
 
-
 T = 63/252
 N = 63
 r = 0.05
@@ -1575,14 +1816,14 @@ instrument1 = GBMStock(S0=100, T=T, N=N, r=r, sigma=0.2)
 instrument2 = HestonStock(S0=100, T=T, N=N, r=r, v0=0.04, kappa=2.0, theta=0.04, xi=0.3, rho=-0.7, return_variance=True)
 
 instruments = [instrument1] #instrument1
-contingent_claim = EuropeanCall(strike=100)
+contingent_claim = AsianGeometricCall(strike=100)
 
 path_transformation_configs = [
     {'transformation_type': 'log_moneyness', 'K': contingent_claim.strike},
     #{'transformation_type': None}
 ]
 
-cost_function = ProportionalCost(proportion=0.02)
+cost_function = ProportionalCost(proportion=0.0)
 risk_measure = CVaR(alpha=0.5)
 
 agent = RecurrentAgent(path_transformation_configs=path_transformation_configs)
@@ -1590,7 +1831,7 @@ agent = RecurrentAgent(path_transformation_configs=path_transformation_configs)
 #agent = GRUAgent(N, path_transformation_configs=path_transformation_configs)
 #agent = WaveNetAgent(N, path_transformation_configs=path_transformation_configs)
 
-model_name = '3'
+model_name = 'asian_1'
 model_path = os.path.join(os.getcwd(), 'models', agent.name, f'{model_name}.keras')
 optimizer_path = os.path.join(os.getcwd(), 'optimizers', agent.name, model_name)
 

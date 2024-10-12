@@ -270,8 +270,8 @@ class Environment:
             plt.figure(figsize=(10, 6))
 
             # Calculate combined bin edges to ensure consistent bins across all histograms
-            min_error = -19.  # Fixed minimum error range for bins
-            max_error = 4.   # Fixed maximum error range for bins
+            min_error = -0.3  # Fixed minimum error range for bins
+            max_error = 0.3   # Fixed maximum error range for bins
             bins = np.linspace(min_error, max_error, 60)  # 60 bins across the range of all errors
 
             if colors is None:
@@ -289,6 +289,7 @@ class Environment:
             plt.legend()
 
             if save_plot_path:
+                os.makedirs(os.path.dirname(save_plot_path), exist_ok=True)
                 plt.savefig(save_plot_path)
                 print(f"Plot saved to {save_plot_path}")
             else:
@@ -296,6 +297,7 @@ class Environment:
 
         # Save statistics to Excel if save_stats_path is provided
         if save_stats_path:
+            os.makedirs(os.path.dirname(save_stats_path), exist_ok=True)
             data = {
                 'Agent': [agent.plot_name for agent in agents],
                 'Mean Error': mean_errors,
