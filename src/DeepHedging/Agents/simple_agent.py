@@ -10,13 +10,19 @@ class SimpleAgent(BaseAgent):
     - output_shape (int): Shape of the output.
     """
 
+    plot_color = 'gold' 
+    name = 'simple'
+    is_trainable = True
+    plot_name = {
+        'en': 'Simple Agent',
+        'es': 'Agente Simple'
+    }
+
     def __init__(self, path_transformation_configs = None, n_instruments = 1):
         self.input_shape = (n_instruments + 1,) # +1 for T-t
         self.n_instruments = n_instruments
         self.model = self.build_model(self.input_shape, self.n_instruments)
         self.path_transformation_configs = path_transformation_configs
-        self.name = 'simple'
-        self.plot_name = 'Simple'
 
     def build_model(self, input_shape, output_shape):
         """

@@ -3,7 +3,7 @@ import tensorflow_probability as tfp
 import numpy as np  # For pi
 from DeepHedging.Agents import DeltaHedgingAgent
 
-class AsianDeltaHedgingAgent2(DeltaHedgingAgent):
+class GeometricAsianDeltaHedgingAgent2(DeltaHedgingAgent):
     """
     A delta hedging agent for geometric Asian options, using the provided option pricing formula.
     """

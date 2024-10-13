@@ -10,6 +10,14 @@ class LSTMAgent(BaseAgent):
     - output_shape (int): Shape of the output.
     """
 
+    plot_color = 'forestgreen' 
+    name = 'lstm'
+    is_trainable = True
+    plot_name = {
+        'en': 'LSTM Agent',
+        'es': 'Agente LSTM'
+    }
+
     def __init__(self, n_hedging_timesteps, path_transformation_configs = None,
                  n_instruments = 1):
 
@@ -17,8 +25,6 @@ class LSTMAgent(BaseAgent):
         self.n_instruments = n_instruments
         self.model = self.build_model(self.input_shape, self.n_instruments)
         self.path_transformation_configs = path_transformation_configs
-        self.name = 'lstm'
-        self.plot_name = 'LSTM'
 
     def build_model(self, input_shape, output_shape):
         """

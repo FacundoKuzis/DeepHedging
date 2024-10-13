@@ -3,15 +3,20 @@ import tensorflow_probability as tfp
 import numpy as np  # For pi
 from DeepHedging.Agents import DeltaHedgingAgent
 
-class AsianDeltaHedgingAgent(DeltaHedgingAgent):
+class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
     """
     A delta hedging agent for geometric Asian options.
     """
+    plot_color = 'orange' 
+    name = 'asian_delta_hedging'
+    is_trainable = False
+    plot_name = {
+        'en': 'Geometric Asian Delta',
+        'es': 'Delta de Opción Asiática Geométrica'
+    }
 
     def __init__(self, gbm_stock, option_class):
         super().__init__(gbm_stock, option_class)
-        self.name = 'asian_delta_hedging'
-        self.plot_name = 'Geometric Asian Delta'
 
     def d1(self, S, T_minus_t):
         """

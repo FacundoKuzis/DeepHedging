@@ -215,7 +215,8 @@ class Environment:
                                                 fixed_price=None, plot_error=False, 
                                                 plot_title='Terminal Hedging Error', save_plot_path=None, 
                                                 colors=None, save_stats_path=None, loss_functions=None,
-                                                min_x = -0.3, max_x = 0.3):
+                                                min_x=-0.3, max_x=0.3, language='en',
+                                                save_actions_path=None, fixed_actions_paths=None):
         """
         Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
 
@@ -230,15 +231,23 @@ class Environment:
         - colors (list or None): List of colors for the plot. If None, default colors are used.
         - save_stats_path (str or None): Path to save the statistics as an Excel file.
         - loss_functions (list of callables or None): List of loss functions to evaluate on the PnL.
+        - min_x (float): Minimum x-axis value for the histogram.
+        - max_x (float): Maximum x-axis value for the histogram.
+        - language (str): Language for labels ('en' for English, 'es' for Spanish).
+        - save_actions_path (str or None): Directory path to save each agent's val_actions as CSV files.
+        - fixed_actions_paths (dict or None): Dictionary mapping agent names to fixed actions CSV file paths.
+                                            Example: {'agent1': 'path/to/agent1_actions.csv', ...}
 
         Returns:
         - mean_errors (list): List of mean errors for each agent.
         - std_errors (list): List of standard deviations of errors for each agent.
-        - losses (list of lists): List of loss values for each agent and loss function.
+        - losses (list of lists or None): List of loss values for each agent and loss function.
         """
-        
+
+        # Generate the data paths
         paths = self.generate_data(n_paths, random_seed=random_seed)
 
+        # Validate fixed_price
         if fixed_price is not None:
             price = fixed_price
         else:
@@ -251,12 +260,45 @@ class Environment:
         # Initialize a dictionary to store losses for each loss function and agent
         loss_results = {loss_fn.name: [] for loss_fn in loss_functions} if loss_functions else {}
 
+        # Ensure save_actions_path exists if provided
+        if save_actions_path:
+            os.makedirs(save_actions_path, exist_ok=True)
+
         for agent in agents:
-            T_minus_t = self.get_T_minus_t(paths.shape[0])
-            val_actions = agent.process_batch(paths, T_minus_t)
+            agent_name = agent.name
+
+            # Check if actions are fixed for this agent
+            if fixed_actions_paths and agent_name in fixed_actions_paths:
+                fixed_path = fixed_actions_paths[agent_name]
+                if not os.path.isfile(fixed_path):
+                    raise FileNotFoundError(f"Fixed actions file for agent '{agent_name}' not found at '{fixed_path}'.")
+                # Load val_actions from CSV
+                print(f"Loading fixed actions for agent '{agent_name}' from '{fixed_path}'.")
+                val_actions_df = pd.read_csv(fixed_path)
+                # Convert DataFrame to TensorFlow tensor
+                val_actions = tf.convert_to_tensor(val_actions_df.values, dtype=tf.float32)
+            else:
+                # Process batch to get val_actions
+                T_minus_t = self.get_T_minus_t(paths.shape[0])
+                val_actions = agent.process_batch(paths, T_minus_t)
+
+                # Save val_actions if save_actions_path is provided
+                if save_actions_path:
+                    agent_actions_filename = f"{agent_name}_actions.csv"
+                    agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
+                    # Convert TensorFlow tensor to NumPy array
+                    val_actions_np = val_actions.numpy()
+                    n_simulations, n_timesteps, n_instruments = val_actions_np.shape
+                    val_actions_flat = val_actions_np.reshape(n_simulations, n_timesteps * n_instruments)
+                    # Create a DataFrame
+                    val_actions_df = pd.DataFrame(val_actions_flat)
+                    # Save to CSV
+                    val_actions_df.to_csv(agent_actions_path, index=False)
+                    print(f"Saved val_actions for agent '{agent_name}' to '{agent_actions_path}'.")
+
             pnl = self.calculate_pnl(paths, val_actions)
             error = price + pnl * np.exp(-self.r * self.T)
-            
+
             errors.append(error)
             mean_errors.append(tf.reduce_mean(error).numpy())
             std_errors.append(tf.math.reduce_std(error).numpy())
@@ -270,25 +312,32 @@ class Environment:
         if plot_error:
             plt.figure(figsize=(10, 6))
 
-            # Calculate combined bin edges to ensure consistent bins across all histograms
-            min_error = min_x  # Fixed minimum error range for bins
-            max_error = max_x   # Fixed maximum error range for bins
-            bins = np.linspace(min_error, max_error, 60)  # 60 bins across the range of all errors
+            # Define the bins for the histogram
+            bins = np.linspace(min_x, max_x, 60)  # 60 bins across the specified range
 
+            # Set default colors if not provided
             if colors is None:
                 cmap = plt.cm.get_cmap('tab10', len(agents))
                 colors = [cmap(i) for i in range(len(agents))]
 
+            # Plot each agent's error histogram
             for i, error in enumerate(errors):
-                plt.hist(error, bins=bins, color=colors[i], alpha=0.8, edgecolor='black', 
-                        label=f'{agents[i].plot_name} Agent')
+                plt.hist(error, bins=bins, density=True, color=colors[i], alpha=0.6, edgecolor='black', 
+                        label=f'{agents[i].plot_name.get(language)}')
 
             plt.grid(True, linestyle='--', alpha=0.7)
-            plt.title(f'{plot_title}', fontsize=14)
+            plt.title(plot_title, fontsize=14)
             plt.xlabel('Error', fontsize=12)
-            plt.ylabel('Frequency', fontsize=12)
+
+            # Set y-axis label based on language
+            if language == 'es':
+                plt.ylabel('Densidad', fontsize=12)
+            else:
+                plt.ylabel('Density', fontsize=12)
+
             plt.legend()
 
+            # Save or show the plot
             if save_plot_path:
                 os.makedirs(os.path.dirname(save_plot_path), exist_ok=True)
                 plt.savefig(save_plot_path)
@@ -300,7 +349,7 @@ class Environment:
         if save_stats_path:
             os.makedirs(os.path.dirname(save_stats_path), exist_ok=True)
             data = {
-                'Agent': [agent.plot_name for agent in agents],
+                'Agent': [agent.plot_name.get(language) for agent in agents],
                 'Mean Error': mean_errors,
                 'Standard Deviation': std_errors,
             }
@@ -314,7 +363,7 @@ class Environment:
             print(f"Statistics saved to {save_stats_path}")
             return df
 
-        return mean_errors, std_errors, loss_results
+        return mean_errors, std_errors, loss_results if loss_functions else None
 
     def save_optimizer(self, optimizer_path):
         """

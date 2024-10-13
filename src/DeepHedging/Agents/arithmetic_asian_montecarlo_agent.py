@@ -3,11 +3,19 @@ import QuantLib as ql
 import numpy as np
 from DeepHedging.Agents import BaseAgent
 
-class QuantlibAsianArithmeticAgent(BaseAgent):
+class ArithmeticAsianMonteCarloAgent(BaseAgent):
     """
     An agent that uses QuantLib to compute the delta hedging strategy for arithmetic Asian options using numerical methods.
     """
 
+    plot_color = 'grey' 
+    name = 'asian_arithmetic_monte_carlo'
+    is_trainable = False
+    plot_name = {
+        'en': 'Asian Arithmetic Monte Carlo Delta',
+        'es': 'Delta de Opción Asiática Aritmética - Monte Carlo'
+    }
+    
     def __init__(self, gbm_stock, option_class):
         """
         Initialize the agent with market and option parameters.
@@ -24,8 +32,6 @@ class QuantlibAsianArithmeticAgent(BaseAgent):
         self.strike = option_class.strike
         self.option_type = option_class.option_type
         self.dt = gbm_stock.dt
-        self.name = 'quantlib_asian_arithmetic_monte_carlo'
-        self.plot_name = 'QuantLib Asian Arithmetic Monte Carlo Delta'
 
         # Initialize last delta for delta hedging
         self.last_delta = None

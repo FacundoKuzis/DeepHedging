@@ -12,6 +12,14 @@ class DeltaHedgingAgent(BaseAgent):
     - option_type (str): Type of the option ('call' or 'put').
     """
 
+    plot_color = 'orange' 
+    name = 'bs_delta_hedging'
+    is_trainable = False
+    plot_name = {
+        'en': 'BS European Vanilla Delta',
+        'es': 'Delta de Opción Europea Vanilla'
+    }
+
     def __init__(self, gbm_stock, option_class):
         self.S0 = gbm_stock.S0
         self.T = gbm_stock.T
@@ -21,8 +29,6 @@ class DeltaHedgingAgent(BaseAgent):
         self.strike = option_class.strike
         self.option_type = option_class.option_type
         self.dt = gbm_stock.dt
-        self.name = 'delta_hedging'
-        self.plot_name = 'BS Delta'
 
     def build_model(self):
         """

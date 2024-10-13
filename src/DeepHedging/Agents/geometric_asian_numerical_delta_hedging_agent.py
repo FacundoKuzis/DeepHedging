@@ -2,11 +2,18 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 from DeepHedging.Agents import DeltaHedgingAgent
 
-class AsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
+class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
     """
     A delta hedging agent for geometric Asian options that computes delta numerically
     using finite differences by bumping the stock price.
     """
+    plot_color = 'firebrick' 
+    name = 'geometric_asian_numerical_delta_hedging'
+    is_trainable = False
+    plot_name = {
+        'en': 'Geometric Asian Numerical Delta',
+        'es': 'Delta de Opción Asiática Geométrica - Diferencias Finitas'
+    }
 
     def __init__(self, gbm_stock, option_class, bump_size=0.01):
         """

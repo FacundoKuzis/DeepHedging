@@ -13,6 +13,14 @@ class WaveNetAgent(LSTMAgent):
     - num_residual_blocks (int): Number of residual blocks in the WaveNet model.
     """
 
+    plot_color = 'pink' 
+    name = 'wavenet'
+    is_trainable = True
+    plot_name = {
+        'en': 'WaveNet Agent',
+        'es': 'Agente WaveNet'
+    }
+    
     def __init__(self, n_hedging_timesteps, path_transformation_configs = None, num_filters=32, num_residual_blocks=3,
                  n_instruments = 1):
         
@@ -22,8 +30,6 @@ class WaveNetAgent(LSTMAgent):
         self.num_residual_blocks = num_residual_blocks
         self.model = self.build_model(self.input_shape, self.n_instruments)
         self.path_transformation_configs = path_transformation_configs
-        self.name = 'wavenet'
-        self.plot_name = 'WaveNet'
 
     def build_model(self, input_shape, output_shape):
         """
