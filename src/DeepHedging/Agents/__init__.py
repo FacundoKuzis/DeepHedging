@@ -7,5 +7,6 @@ from DeepHedging.Agents.wavenet_agent import WaveNetAgent
 from DeepHedging.Agents.delta_hedging_agent import DeltaHedgingAgent
 from DeepHedging.Agents.asian_delta_hedging_agent import AsianDeltaHedgingAgent
 from DeepHedging.Agents.asian_delta_hedging_agent_2 import AsianDeltaHedgingAgent2
+from DeepHedging.Agents.asian_numerical_delta_hedging_agent import AsianNumericalDeltaHedgingAgent
 from DeepHedging.Agents.quantlib_asian_geometric_agent import QuantlibAsianGeometricAgent
 from DeepHedging.Agents.quantlib_asian_arithmetic_agent import QuantlibAsianArithmeticAgent

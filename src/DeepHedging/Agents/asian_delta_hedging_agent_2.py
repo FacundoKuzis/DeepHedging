@@ -1,98 +1,115 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
+import numpy as np  # For pi
 from DeepHedging.Agents import DeltaHedgingAgent
 
 class AsianDeltaHedgingAgent2(DeltaHedgingAgent):
     """
-    A delta hedging agent for geometric Asian options using the new delta and price calculation without dividend yield.
+    A delta hedging agent for geometric Asian options, using the provided option pricing formula.
     """
 
     def __init__(self, gbm_stock, option_class):
         super().__init__(gbm_stock, option_class)
-        self.name = 'asian_delta_hedging'
-        self.plot_name = 'Geometric Asian Delta'
+        self.name = 'asian_delta_hedging_custom_formula'
+        self.plot_name = 'Geometric Asian Delta (Custom Formula)'
 
-    def delta(self, S, T_minus_t):
+    def compute_z(self, S, T_minus_t):
         """
-        Calculate the delta of the geometric Asian option.
-        """
+        Compute z as per the provided formula.
 
-        # Parameters
-        N = self.N
+        z = [ sqrt(3) * (4 * ln(S/K) + T * (2r - sigma^2)) ] / [4 * sqrt(T) * sigma]
+        """
         sigma = self.sigma
         r = self.r
         K = self.strike
-        T = T_minus_t  # Remaining time to maturity
+        T = T_minus_t  # Time to maturity
 
-        # Compute mu
-        mu = r + 0.5 * sigma ** 2
+        sqrt_3 = tf.sqrt(3.0)
+        ln_S_over_K = tf.math.log(S / K)
+        numerator = sqrt_3 * (4 * ln_S_over_K + T * (2 * r - sigma ** 2))
+        denominator = 4 * tf.sqrt(T) * sigma
 
-        # Compute a
-        a = N * (N + 1) * (2 * N + 1) / 6
-
-        # Compute sigma_avg
-        sigma_avg = sigma * tf.sqrt((2 * N + 1) / (6 * (N + 1)))
-
-        # Compute V
-        exponent = ((N + 1) * mu * T) / 2 + (a * sigma ** 2 * T) / (2 * N ** 3)
-        V = tf.exp(-r * T) * S * tf.exp(exponent)
-
-        # Compute D1
-        D1 = (tf.math.log(V / K) + (r + 0.5 * sigma_avg ** 2) * T) / (sigma_avg * tf.sqrt(T))
-
-        # Compute delta
-        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
-        Nd1 = normal_dist.cdf(D1)
-
-        if self.option_type == 'call':
-            delta = V * Nd1
-        elif self.option_type == 'put':
-            delta = V * (Nd1 - 1)
-        else:
-            raise ValueError("Option type must be either 'call' or 'put'.")
-
-        return delta
+        z = numerator / denominator
+        return z
 
     def get_model_price(self):
         """
-        Calculate the price for the geometric Asian option.
+        Calculate the price for the geometric Asian option using the provided formula.
         """
-        # Parameters
-        N = self.N
+        S0 = self.S0
         sigma = self.sigma
         r = self.r
         K = self.strike
         T = self.T
-        S = self.S0
 
-        # Compute mu
-        mu = r + 0.5 * sigma ** 2
+        sqrt_3 = tf.sqrt(3.0)
+        sqrt_T = tf.sqrt(T)
 
-        # Compute a
-        a = N * (N + 1) * (2 * N + 1) / 6
+        z = self.compute_z(S0, T)
 
-        # Compute sigma_avg
-        sigma_avg = sigma * tf.sqrt((2 * N + 1) / (6 * (N + 1)))
+        # Compute z1 = z + (sigma * sqrt(T)) / sqrt(3)
+        z1 = z + (sigma * sqrt_T) / sqrt_3
 
-        # Compute V
-        exponent = ((N + 1) * mu * T) / 2 + (a * sigma ** 2 * T) / (2 * N ** 3)
-        V = tf.exp(-r * T) * S * tf.exp(exponent)
+        # Compute the exponential terms
+        exp_term1 = tf.exp(- (6 * r * T + sigma ** 2 * T) / 12)
+        exp_term2 = tf.exp(- r * T)
 
-        # Compute D1 and D2
-        D1 = (tf.math.log(V / K) + (r + 0.5 * sigma_avg ** 2) * T) / (sigma_avg * tf.sqrt(T))
-        D2 = D1 - sigma_avg * tf.sqrt(T)
-
+        # Compute the cumulative distribution functions
         normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
-        Nd1 = normal_dist.cdf(D1)
-        Nd2 = normal_dist.cdf(D2)
-        N_minus_d1 = normal_dist.cdf(-D1)
-        N_minus_d2 = normal_dist.cdf(-D2)
+        Phi_z1 = normal_dist.cdf(z1)
+        Phi_z = normal_dist.cdf(z)
 
-        if self.option_type == 'call':
-            price = V * Nd1 - tf.exp(-r * T) * K * Nd2
-        elif self.option_type == 'put':
-            price = tf.exp(-r * T) * K * N_minus_d2 - V * N_minus_d1
+        # Compute the option price
+        if self.option_type.lower() == 'call':
+            price = S0 * Phi_z1 * exp_term1 - K * Phi_z * exp_term2
+        elif self.option_type.lower() == 'put':
+            price = K * (1 - Phi_z) * exp_term2 - S0 * (1 - Phi_z1) * exp_term1
         else:
             raise ValueError("Option type must be either 'call' or 'put'.")
 
         return price
+
+    def delta(self, S, T_minus_t):
+        """
+        Calculate the delta of the geometric Asian option using the derivative of the provided formula.
+        """
+        sigma = self.sigma
+        r = self.r
+        K = self.strike
+        T = T_minus_t
+
+        sqrt_3 = tf.sqrt(3.0)
+        sqrt_T = tf.sqrt(T)
+
+        z = self.compute_z(S, T)
+        z1 = z + (sigma * sqrt_T) / sqrt_3
+
+        # Compute the exponential terms
+        exp_term1 = tf.exp(- (6 * r * T + sigma ** 2 * T) / 12)
+        exp_term2 = tf.exp(- r * T)
+
+        # Compute A and B
+        A = S * exp_term1
+        B = K * exp_term2
+
+        # Compute the cumulative distribution functions and PDFs
+        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
+        Phi_z1 = normal_dist.cdf(z1)
+        Phi_z = normal_dist.cdf(z)
+        phi_z1 = normal_dist.prob(z1)  # PDF at z1
+        phi_z = normal_dist.prob(z)    # PDF at z
+
+        # Compute dz/dS
+        dz_dS = sqrt_3 / (S * sqrt_T * sigma)
+
+        # Compute delta
+        if self.option_type.lower() == 'call':
+            # For call options
+            delta = exp_term1 * Phi_z1 + dz_dS * (A * phi_z1 - B * phi_z)
+        elif self.option_type.lower() == 'put':
+            # For put options
+            delta = -exp_term1 * (1 - Phi_z1) + dz_dS * (-A * phi_z1 + B * phi_z)
+        else:
+            raise ValueError("Option type must be either 'call' or 'put'.")
+
+        return delta

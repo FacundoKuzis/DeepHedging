@@ -1,10 +1,10 @@
 import tensorflow as tf
 import os
 from DeepHedging.Agents import SimpleAgent, RecurrentAgent, LSTMAgent, DeltaHedgingAgent, WaveNetAgent, GRUAgent, \
-    AsianDeltaHedgingAgent, QuantlibAsianGeometricAgent, QuantlibAsianArithmeticAgent
+    AsianDeltaHedgingAgent, AsianDeltaHedgingAgent2, QuantlibAsianGeometricAgent, QuantlibAsianArithmeticAgent, \
+    AsianNumericalDeltaHedgingAgent
 from DeepHedging.HedgingInstruments import GBMStock, HestonStock
 from DeepHedging.ContingentClaims import EuropeanCall, AsianGeometricCall, AsianArithmeticCall, AsianArithmeticPut 
-#from DeepHedging.ContingentClaims.asian_options import FloatingStrikeAsianGeometricCall as AsianGeometricCall 
 
 from DeepHedging.CostFunctions import ProportionalCost
 from DeepHedging.RiskMeasures import MAE, CVaR, Entropy, WorstCase
@@ -13,13 +13,13 @@ import time
 
 T = 22/365
 N = 22
-r = 0.0
+r = 0.05 
 n_instruments = 1
 
-instrument1 = GBMStock(S0=1, T=T, N=N, r=r, sigma=0.2)
+instrument1 = GBMStock(S0=100, T=T, N=N, r=r, sigma=0.05)
 
 instruments = [instrument1] #instrument1
-contingent_claim = AsianArithmeticCall(strike=1)
+contingent_claim = AsianGeometricCall(strike=100)
 
 path_transformation_configs = [
     {'transformation_type': 'log_moneyness', 'K': contingent_claim.strike}#,
@@ -35,8 +35,11 @@ print('p:', bs_price)
 #bs_price = 0
 agent = delta_agent
 
-quantlib_agent = QuantlibAsianArithmeticAgent(instrument1, contingent_claim)
-print('p quant:', quantlib_agent.get_model_price())
+#quantlib_agent = QuantlibAsianArithmeticAgent(instrument1, contingent_claim)
+#print('p quant:', quantlib_agent.get_model_price())
+
+agent_delta = AsianNumericalDeltaHedgingAgent(instrument1, contingent_claim, bump_size=0.001)
+print(agent_delta.get_model_price(instrument1.S0, T))
 
 model_name = 'asian_1'
 
@@ -61,8 +64,6 @@ print(time.ctime())
 
 #env.load_optimizer(optimizer_path, only_weights=True)
 
-agent_delta = delta_agent
-
 #agent_simple = SimpleAgent(path_transformation_configs=path_transformation_configs)
 #agent_simple.load_model(os.path.join(os.getcwd(), 'models', agent_simple.name, f'{model_name}.keras'))
 
@@ -80,11 +81,12 @@ agent_delta = delta_agent
 
 measures = [CVaR(0.5), CVaR(0.95), CVaR(0.99), MAE(), WorstCase(), Entropy()]
 
-q = env.terminal_hedging_error_multiple_agents(agents=[agent_delta, quantlib_agent], 
-                                           n_paths=100, random_seed=33, plot_error=True, 
+q = env.terminal_hedging_error_multiple_agents(agents=[delta_agent, agent_delta], 
+                                           n_paths=100_000, random_seed=33, plot_error=True, 
                                            colors = ['orange', 'steelblue'], loss_functions = measures, plot_title='Terminal Hedging Error',
-                                           fixed_price = bs_price, save_plot_path=os.path.join(os.getcwd(), 'assets', 'plots', f'{model_name}f_{quantlib_agent.name}_comparision.pdf'),
-                                           save_stats_path=os.path.join(os.getcwd(), 'assets', 'csvs', f'{model_name}_{quantlib_agent.name}f_comparision.xlsx'))
+                                           fixed_price = bs_price, save_plot_path=os.path.join(os.getcwd(), 'assets', 'plots', f'{model_name}d_{delta_agent.name}_comparision.pdf'),
+                                           save_stats_path=os.path.join(os.getcwd(), 'assets', 'csvs', f'{model_name}_{delta_agent.name}d_comparision.xlsx'),
+                                           min_x = -2, max_x = 2)
 print(q)
 
 

@@ -214,7 +214,8 @@ class Environment:
     def terminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
                                                 fixed_price=None, plot_error=False, 
                                                 plot_title='Terminal Hedging Error', save_plot_path=None, 
-                                                colors=None, save_stats_path=None, loss_functions=None):
+                                                colors=None, save_stats_path=None, loss_functions=None,
+                                                min_x = -0.3, max_x = 0.3):
         """
         Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
 
@@ -270,8 +271,8 @@ class Environment:
             plt.figure(figsize=(10, 6))
 
             # Calculate combined bin edges to ensure consistent bins across all histograms
-            min_error = -0.3  # Fixed minimum error range for bins
-            max_error = 0.3   # Fixed maximum error range for bins
+            min_error = min_x  # Fixed minimum error range for bins
+            max_error = max_x   # Fixed maximum error range for bins
             bins = np.linspace(min_error, max_error, 60)  # 60 bins across the range of all errors
 
             if colors is None:
