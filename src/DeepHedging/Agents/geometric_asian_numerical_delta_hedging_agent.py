@@ -50,7 +50,7 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
         z = numerator / denominator
         return z
 
-    def get_model_price(self, S, T_minus_t):
+    def get_model_price(self, S = None, T_minus_t = None):
         """
         Calculate the price for the geometric Asian option using the provided formula.
 
@@ -68,7 +68,12 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
 
         sqrt_3 = tf.sqrt(3.0)
         sqrt_T = tf.sqrt(T)
-
+        
+        if S is None:
+            S = self.S0
+        if T is None:
+            T = self.T
+            
         z = self.compute_z(S, T)
 
         # Compute z1 = z + (sigma * sqrt(T)) / sqrt(3)
