@@ -77,10 +77,10 @@ def parse_arguments():
     # Agent parameters
     parser.add_argument('--agents', type=str, nargs='+', required=True,
                         choices=[
-                            'SimpleAgent', 'RecurrentAgent', 'LSTMAgent', 'DeltaHedgingAgent', 
-                            'WaveNetAgent', 'GRUAgent', 'AsianDeltaHedgingAgent', 
-                            'AsianDeltaHedgingAgent2', 'QuantlibAsianGeometricAgent', 
-                            'QuantlibAsianArithmeticAgent', 'AsianNumericalDeltaHedgingAgent'
+                            'SimpleAgent', 'RecurrentAgent', 'LSTMAgent', 'GRUAgent', 'WaveNetAgent', 
+                            'DeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent2', 
+                            'GeometricAsianNumericalDeltaHedgingAgent', 'QuantlibAsianGeometricAgent', 
+                            'ArithmeticAsianMonteCarloAgent'
                         ],
                         help='List of agents to evaluate')
     parser.add_argument('--bump_size', type=float, default=0.001, help='Bump size for numerical delta (default: 0.001)')
