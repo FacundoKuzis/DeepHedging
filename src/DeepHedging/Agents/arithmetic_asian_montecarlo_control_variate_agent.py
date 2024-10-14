@@ -15,7 +15,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
     is_trainable = False
     plot_name = {
         'en': 'Asian Arithmetic Delta with Control Variate',
-        'es': 'Delta de Asiática Aritmética con variable de control'
+        'es': 'Delta de Opción Asiática Aritmética con variable de control'
     }
 
     def __init__(self, gbm_stock, option_class, bump_size=0.01):
@@ -92,7 +92,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
         # Pricing engines
         self.mc_engine_params = {
             'process': self.bsm_process,
-            'sequenceGenerator': rng,
+            'sequenceType': rng,
             'brownianBridge': False,
             'antitheticVariate': antithetic,
             'controlVariate': False,
