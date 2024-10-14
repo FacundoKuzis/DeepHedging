@@ -230,15 +230,6 @@ def main():
 
     print(f"Environment initialized with primary agent: {primary_agent.name}")
     print(agents)
-    # Load optimizer states if they exist
-    for agent in agents:
-        if agent.is_trainable:
-            optimizer_path = optimizer_paths[agent.name]
-            if os.path.exists(optimizer_path):
-                env.load_optimizer(optimizer_path, only_weights=True)
-                print(f"Loaded optimizer for {agent.name} from {optimizer_path}")
-            else:
-                print(f"No existing optimizer found for {agent.name} at {optimizer_path}, starting fresh.")
 
     # Define measures
     measures = [CVaR(0.5), CVaR(0.95), CVaR(0.99), MAE(), WorstCase(), Entropy()]
