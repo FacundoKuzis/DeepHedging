@@ -143,15 +143,13 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
         return ql.MCDiscreteArithmeticAPEngine(
             self.bsm_process,
             self.rng,
-            timeSteps=None,
-            timeStepsPerYear=None,
-            brownianBridge=False,
-            antitheticVariate=self.antithetic,
-            controlVariate=False,
-            requiredSamples=self.required_samples,
-            requiredTolerance=None,
-            maxSamples=None,
-            seed=self.seed
+            False,  # brownianBridge
+            self.antithetic,  # antitheticVariate
+            False,  # controlVariate
+            self.required_samples,
+            None,  # requiredTolerance
+            None,  # maxSamples
+            self.seed
         )
 
     def build_model(self):
