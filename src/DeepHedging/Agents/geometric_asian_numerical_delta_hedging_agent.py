@@ -61,6 +61,11 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
         Returns:
         - price (tf.Tensor): Option prices. Shape: (...)
         """
+        if S is None:
+            S = self.S0
+        if T_minus_t is None:
+            T_minus_t = self.T
+
         sigma = self.sigma
         r = self.r
         K = self.strike
@@ -69,10 +74,6 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
         sqrt_3 = tf.sqrt(3.0)
         sqrt_T = tf.sqrt(T)
         
-        if S is None:
-            S = self.S0
-        if T is None:
-            T = self.T
             
         z = self.compute_z(S, T)
 
