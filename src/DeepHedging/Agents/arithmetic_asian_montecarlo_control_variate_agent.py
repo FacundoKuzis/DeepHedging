@@ -15,7 +15,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
     is_trainable = False
     plot_name = {
         'en': 'Asian Arithmetic Delta with Control Variate',
-        'es': 'Delta de Opción Asiática Aritmética con Variate de Control'
+        'es': 'Delta de Asiática Aritmética con variable de control'
     }
 
     def __init__(self, gbm_stock, option_class, bump_size=0.01):
@@ -219,6 +219,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
         self.reset_last_delta(batch_paths.shape[0])
         all_actions = []
         for t in range(batch_paths.shape[1] - 1):  # Exclude the terminal timestep
+            print(t)
             current_paths = batch_paths[:, t, :]       # Shape: (batch_size, n_instruments)
             current_T_minus_t = batch_T_minus_t[:, t]  # Shape: (batch_size,)
             action = self.act(current_paths, current_T_minus_t)
