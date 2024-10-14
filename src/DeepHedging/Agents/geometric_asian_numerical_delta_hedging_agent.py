@@ -27,7 +27,8 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
         """
         super().__init__(gbm_stock, option_class)
         self.name = f'asian_numerical_{bump_size}_delta_hedging'
-        self.plot_name = f'Geometric Asian Numerical Delta with {bump_size*100}% bump'
+        self.plot_name['en'] = f"{self.plot_name['en']} with {bump_size*100}% bump"
+        self.plot_name['es'] = f"{self.plot_name['es']} con incremento del {bump_size*100}%"
         self.bump_size = bump_size  # Relative bump size for finite differences
 
     def compute_z(self, S, T_minus_t):

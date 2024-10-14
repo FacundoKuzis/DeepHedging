@@ -147,7 +147,7 @@ def parse_fixed_actions_paths(arg_list):
 
 def load_agent(agent_name, model_name, models_dir, instrument, contingent_claim, bump_size, path_transformation_configs, n_hedging_timesteps):
     # Initialize agent with additional parameters if necessary
-    if agent_name == 'AsianNumericalDeltaHedgingAgent':
+    if agent_name in ['GeometricAsianNumericalDeltaHedgingAgent', 'ArithmeticAsianMonteCarloAgent']:
         agent = get_agent(agent_name, instrument, contingent_claim, bump_size=bump_size)
     else:
         agent = get_agent(agent_name, instrument, contingent_claim, path_transformation_configs=path_transformation_configs, n_hedging_timesteps=n_hedging_timesteps)

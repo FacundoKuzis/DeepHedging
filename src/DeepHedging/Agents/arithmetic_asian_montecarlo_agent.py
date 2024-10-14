@@ -16,13 +16,15 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         'es': 'Delta de Opción Asiática Aritmética - Monte Carlo'
     }
     
-    def __init__(self, gbm_stock, option_class):
+    def __init__(self, gbm_stock, option_class, bump_size=0.01):
         """
         Initialize the agent with market and option parameters.
 
         Arguments:
         - gbm_stock (GBMStock): An instance containing the stock parameters.
         - option_class: An instance of the option class containing option parameters.
+        - bump_size (float): The relative size of the bump to compute finite differences.
+                        Default is 0.01 (1%).
         """
         self.S0 = gbm_stock.S0
         self.T = gbm_stock.T
@@ -32,6 +34,8 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         self.strike = option_class.strike
         self.option_type = option_class.option_type
         self.dt = gbm_stock.dt
+
+        self.bump_size = bump_size # Relative bump size for finite differences
 
         # Initialize last delta for delta hedging
         self.last_delta = None
@@ -234,8 +238,7 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         # (Assuming constant rates and volatilities, so no need to adjust)
 
         # Recalculate the option price
-        epsilon = spot_price * 0.01  # Bump size (1% of spot price)
-
+        epsilon = spot_price * self.bump_size
         # Price at spot_price + epsilon
         self.spot_quote.setValue(spot_price + epsilon)
         up_price = self.option.NPV()
