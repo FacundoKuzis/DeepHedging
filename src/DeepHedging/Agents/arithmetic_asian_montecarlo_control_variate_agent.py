@@ -15,7 +15,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
     is_trainable = False
     plot_name = {
         'en': 'Asian Arithmetic Delta with Control Variate',
-        'es': 'Delta de Opción Asiática Aritmética con variable de control'
+        'es': 'Delta de Opción Asiática Aritmética con Variate de Control'
     }
 
     def __init__(self, gbm_stock, option_class, bump_size=0.01):
@@ -84,23 +84,10 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
             self.spot_handle, self.dividend_ts, self.flat_ts, self.vol_ts)
 
         # Monte Carlo engine parameters
-        rng = 'pseudorandom'
-        antithetic = True
-        required_samples = 10000
-        seed = 42
-
-        # Pricing engines
-        self.mc_engine_params = {
-            'process': self.bsm_process,
-            'sequenceType': rng,
-            'brownianBridge': False,
-            'antitheticVariate': antithetic,
-            'controlVariate': False,
-            'requiredSamples': required_samples,
-            'requiredTolerance': None,
-            'maxSamples': None,
-            'seed': seed
-        }
+        self.rng = 'pseudorandom'
+        self.antithetic = True
+        self.required_samples = 10000
+        self.seed = 42
 
         # Analytical engine for geometric Asian option
         self.analytic_engine_geom = ql.AnalyticDiscreteGeometricAveragePriceAsianEngine(self.bsm_process)
@@ -125,7 +112,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
             self.payoff,
             self.exercise
         )
-        self.arith_option.setPricingEngine(ql.MCDiscreteArithmeticAPEngine(**self.mc_engine_params))
+        self.arith_option.setPricingEngine(self.create_mc_engine())
 
         # Create geometric Asian option (Monte Carlo)
         self.geom_option_mc = ql.DiscreteAveragingAsianOption(
@@ -136,7 +123,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
             self.payoff,
             self.exercise
         )
-        self.geom_option_mc.setPricingEngine(ql.MCDiscreteArithmeticAPEngine(**self.mc_engine_params))
+        self.geom_option_mc.setPricingEngine(self.create_mc_engine())
 
         # Create geometric Asian option (Analytical)
         self.geom_option_analytic = ql.DiscreteAveragingAsianOption(
@@ -148,6 +135,24 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
             self.exercise
         )
         self.geom_option_analytic.setPricingEngine(self.analytic_engine_geom)
+
+    def create_mc_engine(self):
+        """
+        Create and return a Monte Carlo pricing engine with specified parameters.
+        """
+        return ql.MCDiscreteArithmeticAPEngine(
+            self.bsm_process,
+            self.rng,
+            timeSteps=None,
+            timeStepsPerYear=None,
+            brownianBridge=False,
+            antitheticVariate=self.antithetic,
+            controlVariate=False,
+            requiredSamples=self.required_samples,
+            requiredTolerance=None,
+            maxSamples=None,
+            seed=self.seed
+        )
 
     def build_model(self):
         """
@@ -319,7 +324,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
             self.payoff,
             self.exercise
         )
-        self.arith_option.setPricingEngine(ql.MCDiscreteArithmeticAPEngine(**self.mc_engine_params))
+        self.arith_option.setPricingEngine(self.create_mc_engine())
 
         # Update geometric Asian option (Monte Carlo)
         self.geom_option_mc = ql.DiscreteAveragingAsianOption(
@@ -330,7 +335,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
             self.payoff,
             self.exercise
         )
-        self.geom_option_mc.setPricingEngine(ql.MCDiscreteArithmeticAPEngine(**self.mc_engine_params))
+        self.geom_option_mc.setPricingEngine(self.create_mc_engine())
 
         # Update geometric Asian option (Analytical)
         self.geom_option_analytic = ql.DiscreteAveragingAsianOption(
