@@ -5,7 +5,7 @@ from DeepHedging.Agents import (BaseAgent, SimpleAgent, RecurrentAgent, LSTMAgen
                                 GRUAgent, WaveNetAgent, DeltaHedgingAgent, 
                                 GeometricAsianDeltaHedgingAgent, GeometricAsianDeltaHedgingAgent2, 
                                 GeometricAsianNumericalDeltaHedgingAgent, QuantlibAsianGeometricAgent, 
-                                ArithmeticAsianMonteCarloAgent)
+                                ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent)
 
 from DeepHedging.HedgingInstruments import GBMStock
 from DeepHedging.ContingentClaims import (
@@ -30,7 +30,8 @@ def get_agent(agent_name, instrument, contingent_claim, path_transformation_conf
         'GeometricAsianDeltaHedgingAgent2': GeometricAsianDeltaHedgingAgent2,
         'GeometricAsianNumericalDeltaHedgingAgent': GeometricAsianNumericalDeltaHedgingAgent,
         'QuantlibAsianGeometricAgent': QuantlibAsianGeometricAgent,
-        'ArithmeticAsianMonteCarloAgent': ArithmeticAsianMonteCarloAgent
+        'ArithmeticAsianMonteCarloAgent': ArithmeticAsianMonteCarloAgent,
+        'ArithmeticAsianControlVariateAgent': ArithmeticAsianControlVariateAgent
     }
 
     if agent_name not in agents:
@@ -80,7 +81,7 @@ def parse_arguments():
                             'SimpleAgent', 'RecurrentAgent', 'LSTMAgent', 'GRUAgent', 'WaveNetAgent', 
                             'DeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent2', 
                             'GeometricAsianNumericalDeltaHedgingAgent', 'QuantlibAsianGeometricAgent', 
-                            'ArithmeticAsianMonteCarloAgent'
+                            'ArithmeticAsianMonteCarloAgent', 'ArithmeticAsianControlVariateAgent'
                         ],
                         help='List of agents to evaluate')
     parser.add_argument('--bump_size', type=float, default=0.001, help='Bump size for numerical delta (default: 0.001)')
@@ -147,7 +148,7 @@ def parse_fixed_actions_paths(arg_list):
 
 def load_agent(agent_name, model_name, models_dir, instrument, contingent_claim, bump_size, path_transformation_configs, n_hedging_timesteps):
     # Initialize agent with additional parameters if necessary
-    if agent_name in ['GeometricAsianNumericalDeltaHedgingAgent', 'ArithmeticAsianMonteCarloAgent']:
+    if agent_name in ['GeometricAsianNumericalDeltaHedgingAgent', 'ArithmeticAsianMonteCarloAgent', 'ArithmeticAsianControlVariateAgent']:
         agent = get_agent(agent_name, instrument, contingent_claim, bump_size=bump_size)
     else:
         agent = get_agent(agent_name, instrument, contingent_claim, path_transformation_configs=path_transformation_configs, n_hedging_timesteps=n_hedging_timesteps)
