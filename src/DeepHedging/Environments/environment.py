@@ -212,11 +212,9 @@ class Environment:
         return mean_error
 
     def terminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
-                                                fixed_price=None, plot_error=False, 
-                                                plot_title='Terminal Hedging Error', save_plot_path=None, 
-                                                colors=None, save_stats_path=None, loss_functions=None,
-                                                min_x=-0.3, max_x=0.3, language='en',
-                                                save_actions_path=None, fixed_actions_paths=None):
+        fixed_price=None, plot_error=False, plot_title='Terminal Hedging Error', save_plot_path=None, 
+        colors=None, save_stats_path=None, loss_functions=None, min_x=-0.3, max_x=0.3, language='en',
+        save_actions_path=None, fixed_actions_paths=None):
         """
         Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
 
@@ -234,14 +232,14 @@ class Environment:
         - min_x (float): Minimum x-axis value for the histogram.
         - max_x (float): Maximum x-axis value for the histogram.
         - language (str): Language for labels ('en' for English, 'es' for Spanish).
-        - save_actions_path (str or None): Directory path to save each agent's val_actions as CSV files.
-        - fixed_actions_paths (dict or None): Dictionary mapping agent names to fixed actions CSV file paths.
-                                            Example: {'agent1': 'path/to/agent1_actions.csv', ...}
+        - save_actions_path (str or None): Directory path to save each agent's val_actions as `.npy` files.
+        - fixed_actions_paths (dict or None): Dictionary mapping agent names to fixed actions file paths.
+                                            Example: {'agent1': 'path/to/agent1_actions.npy', ...}
 
         Returns:
         - mean_errors (list): List of mean errors for each agent.
         - std_errors (list): List of standard deviations of errors for each agent.
-        - losses (list of lists or None): List of loss values for each agent and loss function.
+        - losses (dict or None): Dictionary of loss function results for each agent.
         """
 
         # Generate the data paths
@@ -265,18 +263,17 @@ class Environment:
             os.makedirs(save_actions_path, exist_ok=True)
 
         for agent in agents:
-            agent_name = agent.name
+            agent_name = agent.name  # Assuming each agent has a 'name' attribute
 
             # Check if actions are fixed for this agent
             if fixed_actions_paths and agent_name in fixed_actions_paths:
                 fixed_path = fixed_actions_paths[agent_name]
                 if not os.path.isfile(fixed_path):
                     raise FileNotFoundError(f"Fixed actions file for agent '{agent_name}' not found at '{fixed_path}'.")
-                # Load val_actions from CSV
+                # Load val_actions from .npy
                 print(f"Loading fixed actions for agent '{agent_name}' from '{fixed_path}'.")
-                val_actions_df = pd.read_csv(fixed_path)
-                # Convert DataFrame to TensorFlow tensor
-                val_actions = tf.convert_to_tensor(val_actions_df.values, dtype=tf.float32)
+                val_actions_np = np.load(fixed_path)
+                val_actions = tf.convert_to_tensor(val_actions_np, dtype=tf.float32)
             else:
                 # Process batch to get val_actions
                 T_minus_t = self.get_T_minus_t(paths.shape[0])
@@ -284,16 +281,12 @@ class Environment:
 
                 # Save val_actions if save_actions_path is provided
                 if save_actions_path:
-                    agent_actions_filename = f"{agent_name}_actions.csv"
+                    agent_actions_filename = f"{agent_name}_actions.npy"
                     agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
                     # Convert TensorFlow tensor to NumPy array
                     val_actions_np = val_actions.numpy()
-                    n_simulations, n_timesteps, n_instruments = val_actions_np.shape
-                    val_actions_flat = val_actions_np.reshape(n_simulations, n_timesteps * n_instruments)
-                    # Create a DataFrame
-                    val_actions_df = pd.DataFrame(val_actions_flat)
-                    # Save to CSV
-                    val_actions_df.to_csv(agent_actions_path, index=False)
+                    # Save as .npy
+                    np.save(agent_actions_path, val_actions_np)
                     print(f"Saved val_actions for agent '{agent_name}' to '{agent_actions_path}'.")
 
             pnl = self.calculate_pnl(paths, val_actions)
@@ -364,6 +357,7 @@ class Environment:
             return df
 
         return mean_errors, std_errors, loss_results if loss_functions else None
+
 
     def save_optimizer(self, optimizer_path):
         """
