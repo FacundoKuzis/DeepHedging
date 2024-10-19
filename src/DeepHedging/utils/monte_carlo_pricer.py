@@ -19,7 +19,7 @@ class MonteCarloPricer:
         seed (int, optional): Random seed for reproducibility.
     """
 
-    def __init__(self, stock_model, r, T, num_simulations=10000, seed=None):
+    def __init__(self, stock_model, r, T, num_simulations=10_000, seed=None):
         """
         Initializes the Monte Carlo pricer with a stock model and market parameters.
 
