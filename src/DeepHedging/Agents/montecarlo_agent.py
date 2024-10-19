@@ -1,8 +1,9 @@
 import tensorflow as tf
 import numpy as np
 from DeepHedging.Agents import BaseAgent
+from DeepHedging.utils import MonteCarloPricer
 
-class MonteCarloBaseAgent(BaseAgent):
+class MonteCarloAgent(BaseAgent):
     """
     A base agent for Asian options using Monte Carlo pricing.
 
@@ -12,8 +13,12 @@ class MonteCarloBaseAgent(BaseAgent):
 
     plot_color = 'grey' 
     is_trainable = False
+    plot_name = {
+        'en': 'Monte Carlo Delta',
+        'es': 'Delta calculada con Monte Carlo'
+    }
 
-    def __init__(self, stock_model, option_class, r, T, num_simulations=10000, bump_size=0.01, seed=42):
+    def __init__(self, stock_model, option_class, num_simulations=10000, bump_size=0.01, seed=33):
         """
         Initialize the agent with market and option parameters.
 
@@ -28,8 +33,8 @@ class MonteCarloBaseAgent(BaseAgent):
         """
         self.stock_model = stock_model
         self.option_class = option_class
-        self.r = r
-        self.T = T
+        self.r = self.stock_model.r
+        self.T = self.stock_model.T
         self.num_simulations = num_simulations
         self.bump_size = bump_size
         self.seed = seed
@@ -134,77 +139,4 @@ class MonteCarloBaseAgent(BaseAgent):
             self.pricer.T = original_T
 
         return np.array(deltas, dtype=np.float32)
-
-
-class ArithmeticAsianMonteCarloAgent(MonteCarloBaseAgent):
-    """
-    An agent that prices and hedges arithmetic Asian options using Monte Carlo simulation.
-    """
-
-    plot_color = 'grey' 
-    name = 'asian_arithmetic_monte_carlo'
-    plot_name = {
-        'en': 'Asian Arithmetic Monte Carlo Delta',
-        'es': 'Delta de Opción Asiática Aritmética - Monte Carlo'
-    }
-
-    def __init__(self, stock_model, option_class, r, T, num_simulations=10000, bump_size=0.01, seed=42):
-        """
-        Initialize the arithmetic Asian Monte Carlo agent.
-
-        Arguments:
-        - stock_model (Stock): An instance of a Stock subclass (e.g., GBMStock).
-        - option_class (AsianArithmeticCall or AsianArithmeticPut): An instance of the option class.
-        - r (float): Risk-free interest rate.
-        - T (float): Time to maturity in years.
-        - num_simulations (int): Number of Monte Carlo simulations.
-        - bump_size (float): Relative size of the bump for finite differences.
-        - seed (int): Random seed for reproducibility.
-        """
-        super().__init__(
-            stock_model=stock_model,
-            option_class=option_class,
-            r=r,
-            T=T,
-            num_simulations=num_simulations,
-            bump_size=bump_size,
-            seed=seed
-        )
-
-
-class GeometricAsianMonteCarloAgent(MonteCarloBaseAgent):
-    """
-    An agent that prices and hedges geometric Asian options using Monte Carlo simulation.
-    """
-
-    plot_color = 'grey' 
-    name = 'asian_geometric_monte_carlo'
-    plot_name = {
-        'en': 'Asian Geometric Monte Carlo Delta',
-        'es': 'Delta de Opción Asiática Geométrica - Monte Carlo'
-    }
-
-    def __init__(self, stock_model, option_class, r, T, num_simulations=10000, bump_size=0.01, seed=42):
-        """
-        Initialize the geometric Asian Monte Carlo agent.
-
-        Arguments:
-        - stock_model (Stock): An instance of a Stock subclass (e.g., GBMStock).
-        - option_class (AsianGeometricCall or AsianGeometricPut): An instance of the option class.
-        - r (float): Risk-free interest rate.
-        - T (float): Time to maturity in years.
-        - num_simulations (int): Number of Monte Carlo simulations.
-        - bump_size (float): Relative size of the bump for finite differences.
-        - seed (int): Random seed for reproducibility.
-        """
-        super().__init__(
-            stock_model=stock_model,
-            option_class=option_class,
-            r=r,
-            T=T,
-            num_simulations=num_simulations,
-            bump_size=bump_size,
-            seed=seed
-        )
-
 
