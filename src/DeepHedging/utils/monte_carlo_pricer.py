@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from DeepHedging.HedgingInstruments import GBMStock, HestonStock
+from DeepHedging.ContingentClaims import ContingentClaim
 
 class MonteCarloPricer:
     """
@@ -12,8 +13,8 @@ class MonteCarloPricer:
 
     Attributes:
         stock_model (Stock): An instance of a subclass of Stock for path simulation.
-        r (float): Risk-free interest rate.
-        T (float): Time to maturity in years.
+        r (tf.Tensor): Risk-free interest rate as a float32 tensor.
+        T (tf.Tensor): Time to maturity in years as a float32 tensor.
         num_simulations (int): Number of Monte Carlo simulations.
         seed (int, optional): Random seed for reproducibility.
     """
@@ -30,8 +31,8 @@ class MonteCarloPricer:
             seed (int, optional): Random seed for reproducibility. Default is None.
         """
         self.stock_model = stock_model  # Instance of Stock subclass (e.g., GBMStock, HestonStock)
-        self.r = r
-        self.T = T
+        self.r = tf.constant(r, dtype=tf.float32)
+        self.T = tf.constant(T, dtype=tf.float32)
         self.num_simulations = num_simulations
         self.seed = seed
 
@@ -73,6 +74,9 @@ class MonteCarloPricer:
 
         # Calculate payoffs using the contingent claim's calculate_payoff method
         payoffs = contingent_claim.calculate_payoff(paths)  # Shape: (num_simulations,)
+
+        # Ensure payoffs are float32
+        payoffs = tf.cast(payoffs, tf.float32)
 
         # Average the payoffs and discount to present value
         discounted_payoff = tf.exp(-self.r * self.T) * tf.reduce_mean(payoffs)
@@ -134,6 +138,9 @@ class MonteCarloPricer:
 
         # Calculate payoffs using the contingent claim's calculate_payoff method
         payoffs = contingent_claim.calculate_payoff(paths)  # Shape: (num_simulations,)
+
+        # Ensure payoffs are float32
+        payoffs = tf.cast(payoffs, tf.float32)
 
         # Average the payoffs and discount to present value
         discounted_payoff = tf.exp(-self.r * self.T) * tf.reduce_mean(payoffs)
