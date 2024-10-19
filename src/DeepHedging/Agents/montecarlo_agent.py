@@ -13,6 +13,7 @@ class MonteCarloAgent(BaseAgent):
 
     plot_color = 'grey' 
     is_trainable = False
+    name = 'montecarlo'
     plot_name = {
         'en': 'Monte Carlo Delta',
         'es': 'Delta calculada con Monte Carlo'
