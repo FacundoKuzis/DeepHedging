@@ -1,9 +1,9 @@
 import tensorflow as tf
 import numpy as np
-from DeepHedging.Agents import BaseAgent
+from DeepHedging.Agents import BaseAgent, DeltaHedgingAgent
 from DeepHedging.utils import MonteCarloPricer
 
-class MonteCarloAgent(BaseAgent):
+class MonteCarloAgent(DeltaHedgingAgent):
     """
     A base agent for Asian options using Monte Carlo pricing.
 
