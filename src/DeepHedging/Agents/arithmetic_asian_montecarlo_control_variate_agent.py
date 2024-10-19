@@ -29,13 +29,11 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
                              Default is 0.01 (1%).
         """
         self.S0 = gbm_stock.S0
-        self.T = gbm_stock.T
-        self.N = gbm_stock.N
+        self.T = gbm_stock.T  # T is passed as N/252
         self.r = gbm_stock.r
         self.sigma = gbm_stock.sigma
         self.strike = option_class.strike
         self.option_type = option_class.option_type
-        self.dt = gbm_stock.dt
 
         self.bump_size = bump_size  # Relative bump size for finite differences
 
@@ -43,10 +41,25 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
         self.last_delta = None
 
         # Pre-initialize QuantLib objects
-        self.day_count = ql.Actual365Fixed()
-        self.calendar = ql.NullCalendar()
-        self.settlement_date = ql.Date.todaysDate()
-        self.maturity_date = self.settlement_date + int(self.T * 365 + 0.5)
+        self.day_count = ql.Actual252()
+        self.calendar = ql.UnitedStates(ql.UnitedStates.Market.NYSE)
+        self.settlement_date = self.calendar.adjust(ql.Date.todaysDate())
+
+        # Calculate number of trading days (N)
+        self.N = int(self.T * 252 + 0.5)  # Since T = N/252, this retrieves N
+
+        # Generate averaging dates as the next N business days starting from settlement date
+        self.averaging_dates = []
+        current_date = self.settlement_date
+        trading_days_count = 0
+        while trading_days_count < self.N:
+            current_date = self.calendar.advance(current_date, ql.Period(1, ql.Days))
+            if self.calendar.isBusinessDay(current_date):
+                self.averaging_dates.append(current_date)
+                trading_days_count += 1
+
+        # Set maturity date as the last averaging date
+        self.maturity_date = self.averaging_dates[-1]
 
         # Option type
         if self.option_type.lower() == 'call':
@@ -58,16 +71,11 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
 
         # Payoff and exercise
         self.payoff = ql.PlainVanillaPayoff(self.ql_option_type, self.strike)
+        self.exercise = ql.EuropeanExercise(self.maturity_date)
 
         # Average types
         self.average_type_arith = ql.Average.Arithmetic
         self.average_type_geom = ql.Average.Geometric
-
-        # Averaging dates
-        self.N_time_steps = self.N
-        delta_time = self.T / self.N_time_steps
-        self.averaging_dates = [self.settlement_date + int((i + 1) * delta_time * 365 + 0.5) for i in range(self.N_time_steps)]
-        self.averaging_dates[-1] = self.maturity_date  # Ensure last date is maturity
 
         # Market data
         self.spot_quote = ql.SimpleQuote(self.S0)
@@ -100,9 +108,6 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
         Create and store the QuantLib option objects to reuse them for different spot prices
         and times to maturity.
         """
-        # Create exercise object
-        self.exercise = ql.EuropeanExercise(self.maturity_date)
-
         # Create arithmetic Asian option
         self.arith_option = ql.DiscreteAveragingAsianOption(
             self.average_type_arith,
@@ -271,21 +276,24 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
         # Update spot price
         self.spot_quote.setValue(spot_price)
 
-        # Update evaluation date and maturity date
-        evaluation_date = self.settlement_date
+        # Update evaluation date
+        time_to_maturity_days = int(time_to_maturity * 252 + 0.5)
+        evaluation_date = self.calendar.advance(
+            self.maturity_date,
+            -ql.Period(time_to_maturity_days, ql.Days),
+            ql.ModifiedFollowing
+        )
         ql.Settings.instance().evaluationDate = evaluation_date
-        maturity_date = evaluation_date + int(time_to_maturity * 365 + 0.5)
 
-        # If the time to maturity hasn't changed, reuse the existing options
-        # Otherwise, update the exercise and averaging dates
-        if maturity_date != self.maturity_date:
-            self.maturity_date = maturity_date
-
-            # Adjust averaging dates
-            N_remaining = max(1, int(time_to_maturity / self.dt + 0.5))
-            delta_time = time_to_maturity / N_remaining
-            self.averaging_dates = [evaluation_date + int((i + 1) * delta_time * 365 + 0.5) for i in range(N_remaining)]
-            self.averaging_dates[-1] = maturity_date  # Ensure last date is maturity
+        # Update maturity date and averaging dates if necessary
+        if evaluation_date != self.settlement_date:
+            # Recompute averaging dates from evaluation date to maturity date
+            self.averaging_dates = []
+            current_date = evaluation_date
+            while current_date <= self.maturity_date:
+                if self.calendar.isBusinessDay(current_date):
+                    self.averaging_dates.append(current_date)
+                current_date = self.calendar.advance(current_date, ql.Period(1, ql.Days))
 
             # Update exercise
             self.exercise = ql.EuropeanExercise(self.maturity_date)
@@ -312,9 +320,9 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
 
     def update_options(self):
         """
-        Update the options with new maturity and averaging dates.
+        Update the options with new evaluation date and averaging dates.
         """
-        # Update arithmetic Asian option
+        # Create arithmetic Asian option
         self.arith_option = ql.DiscreteAveragingAsianOption(
             self.average_type_arith,
             0.0,  # running sum
@@ -325,7 +333,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
         )
         self.arith_option.setPricingEngine(self.create_mc_engine())
 
-        # Update geometric Asian option (Monte Carlo)
+        # Create geometric Asian option (Monte Carlo)
         self.geom_option_mc = ql.DiscreteAveragingAsianOption(
             self.average_type_geom,
             0.0,  # running product
@@ -336,7 +344,7 @@ class ArithmeticAsianControlVariateAgent(BaseAgent):
         )
         self.geom_option_mc.setPricingEngine(self.create_mc_engine())
 
-        # Update geometric Asian option (Analytical)
+        # Create geometric Asian option (Analytical)
         self.geom_option_analytic = ql.DiscreteAveragingAsianOption(
             self.average_type_geom,
             0.0,  # running product
