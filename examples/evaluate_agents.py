@@ -142,6 +142,8 @@ def parse_fixed_actions_paths(arg_list):
                     f"Invalid format for fixed_actions_paths: '{item}'. "
                     "Expected format 'agent_name=path/to/actions.csv'"
                 )
+    if fixed_paths == {}:
+        fixed_paths = None
     return fixed_paths
 
 
