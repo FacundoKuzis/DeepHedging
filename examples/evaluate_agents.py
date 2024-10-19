@@ -5,7 +5,8 @@ from DeepHedging.Agents import (BaseAgent, SimpleAgent, RecurrentAgent, LSTMAgen
                                 GRUAgent, WaveNetAgent, DeltaHedgingAgent, 
                                 GeometricAsianDeltaHedgingAgent, GeometricAsianDeltaHedgingAgent2, 
                                 GeometricAsianNumericalDeltaHedgingAgent, QuantlibAsianGeometricAgent, 
-                                ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent)
+                                ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent, 
+                                GeometricAsianMonteCarloAgent)
 
 from DeepHedging.HedgingInstruments import GBMStock
 from DeepHedging.ContingentClaims import (
@@ -31,7 +32,8 @@ def get_agent(agent_name, instrument, contingent_claim, path_transformation_conf
         'GeometricAsianNumericalDeltaHedgingAgent': GeometricAsianNumericalDeltaHedgingAgent,
         'QuantlibAsianGeometricAgent': QuantlibAsianGeometricAgent,
         'ArithmeticAsianMonteCarloAgent': ArithmeticAsianMonteCarloAgent,
-        'ArithmeticAsianControlVariateAgent': ArithmeticAsianControlVariateAgent
+        'ArithmeticAsianControlVariateAgent': ArithmeticAsianControlVariateAgent,
+        'GeometricAsianMonteCarloAgent': GeometricAsianMonteCarloAgent
     }
 
     if agent_name not in agents:
@@ -81,7 +83,8 @@ def parse_arguments():
                             'SimpleAgent', 'RecurrentAgent', 'LSTMAgent', 'GRUAgent', 'WaveNetAgent', 
                             'DeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent2', 
                             'GeometricAsianNumericalDeltaHedgingAgent', 'QuantlibAsianGeometricAgent', 
-                            'ArithmeticAsianMonteCarloAgent', 'ArithmeticAsianControlVariateAgent'
+                            'ArithmeticAsianMonteCarloAgent', 'ArithmeticAsianControlVariateAgent',
+                            'GeometricAsianMonteCarloAgent'
                         ],
                         help='List of agents to evaluate')
     parser.add_argument('--bump_size', type=float, default=0.001, help='Bump size for numerical delta (default: 0.001)')
