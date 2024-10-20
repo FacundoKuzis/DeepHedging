@@ -21,6 +21,7 @@ class DeltaHedgingAgent(BaseAgent):
     }
 
     def __init__(self, stock_model, option_class):
+        self.stock_model = stock_model
         self.S0 = stock_model.S0
         self.T = stock_model.T
         self.N = stock_model.N
