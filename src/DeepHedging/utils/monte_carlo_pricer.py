@@ -58,7 +58,7 @@ class MonteCarloPricer:
             S_paths = self.stock_model.generate_paths(num_paths=self.num_simulations, random_seed=self.seed)
             return S_paths  # Shape: (num_simulations, N+1)
 
-    def price(self, contingent_claim):
+    def price(self, contingent_claim, paths = None):
         """
         Prices the option using Monte Carlo simulation.
 
@@ -69,8 +69,9 @@ class MonteCarloPricer:
         Returns:
             float: Estimated present value of the option.
         """
-        # Simulate asset paths
-        paths = self.simulate_paths()  # Shape: (num_simulations, N+1)
+        if paths is None:
+            # Simulate asset paths
+            paths = self.simulate_paths()  # Shape: (num_simulations, N+1)
 
         # Calculate payoffs using the contingent claim's calculate_payoff method
         payoffs = contingent_claim.calculate_payoff(paths)  # Shape: (num_simulations,)
