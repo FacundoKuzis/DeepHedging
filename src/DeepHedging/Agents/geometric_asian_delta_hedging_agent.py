@@ -81,7 +81,7 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
         T_tilde = self.T + eps  # Total time to maturity
 
         # Ensure S and T_tilde are tf.float32 tensors
-        S = tf.cast(S, tf.float32)
+        self.S0 = tf.cast(self.S0, tf.float32)
         T_tilde = tf.cast(T_tilde, tf.float32)
 
         d1 = self.d1(self.S0, T_tilde)
