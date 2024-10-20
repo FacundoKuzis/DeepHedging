@@ -34,12 +34,19 @@ class MonteCarloAgent(DeltaHedgingAgent):
         """
         self.stock_model = stock_model
         self.option_class = option_class
-        self.S0 = self.stock_model.S0
-        self.r = self.stock_model.r
-        self.T = self.stock_model.T
         self.num_simulations = num_simulations
         self.bump_size = bump_size
         self.seed = seed
+
+        self.S0 = stock_model.S0
+        self.T = stock_model.T
+        self.N = stock_model.N
+        self.r = stock_model.r
+        self.sigma = stock_model.sigma
+        self.strike = option_class.strike
+        self.option_type = option_class.option_type
+        self.dt = stock_model.dt
+
 
         # Initialize last delta for delta hedging
         self.last_delta = None
