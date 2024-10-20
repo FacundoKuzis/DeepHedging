@@ -15,17 +15,17 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
         'es': 'Delta de Opción Asiática Geométrica - Diferencias Finitas'
     }
 
-    def __init__(self, gbm_stock, option_class, bump_size=0.01):
+    def __init__(self, stock_model, option_class, bump_size=0.01):
         """
         Initialize the agent.
 
         Arguments:
-        - gbm_stock: An instance containing the stock parameters.
+        - stock_model: An instance containing the stock parameters.
         - option_class: An instance of the option class containing option parameters.
         - bump_size (float): The relative size of the bump to compute finite differences.
                              Default is 0.01 (1%).
         """
-        super().__init__(gbm_stock, option_class)
+        super().__init__(stock_model, option_class)
         self.name = f'asian_numerical_{bump_size}_delta_hedging'
         self.plot_name['en'] = f"{self.plot_name['en']} with {bump_size*100}% bump"
         self.plot_name['es'] = f"{self.plot_name['es']} con incremento del {bump_size*100}%"

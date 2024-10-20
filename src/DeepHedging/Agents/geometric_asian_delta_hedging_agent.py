@@ -15,8 +15,8 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
         'es': 'Delta de Opción Asiática Geométrica'
     }
 
-    def __init__(self, gbm_stock, option_class):
-        super().__init__(gbm_stock, option_class)
+    def __init__(self, stock_model, option_class):
+        super().__init__(stock_model, option_class)
 
     def d1(self, S, T_minus_t):
         """

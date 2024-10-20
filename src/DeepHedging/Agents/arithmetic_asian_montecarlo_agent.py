@@ -16,20 +16,20 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         'es': 'Delta de Opción Asiática Aritmética - Monte Carlo'
     }
     
-    def __init__(self, gbm_stock, option_class, bump_size=0.01):
+    def __init__(self, stock_model, option_class, bump_size=0.01):
         """
         Initialize the agent with market and option parameters.
 
         Arguments:
-        - gbm_stock (GBMStock): An instance containing the stock parameters.
+        - stock_model (GBMStock): An instance containing the stock parameters.
         - option_class: An instance of the option class containing option parameters.
         - bump_size (float): The relative size of the bump to compute finite differences.
                              Default is 0.01 (1%).
         """
-        self.S0 = gbm_stock.S0
-        self.T = gbm_stock.T  # T is passed as N/252
-        self.r = gbm_stock.r
-        self.sigma = gbm_stock.sigma
+        self.S0 = stock_model.S0
+        self.T = stock_model.T  # T is passed as N/252
+        self.r = stock_model.r
+        self.sigma = stock_model.sigma
         self.strike = option_class.strike
         self.option_type = option_class.option_type
 
