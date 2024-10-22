@@ -348,8 +348,8 @@ class Environment:
                 os.makedirs(os.path.dirname(save_plot_path), exist_ok=True)
                 plt.savefig(save_plot_path)
                 print(f"Plot saved to {save_plot_path}")
-            else:
-                plt.show()
+
+            plt.show()
 
         # Save statistics to Excel if save_stats_path is provided
         if save_stats_path:
