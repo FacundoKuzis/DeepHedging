@@ -2,12 +2,12 @@ import argparse
 import tensorflow as tf
 import os
 import time
-from DeepHedging.Agents import (
-    SimpleAgent, RecurrentAgent, LSTMAgent, DeltaHedgingAgent, WaveNetAgent, 
-    GRUAgent, AsianDeltaHedgingAgent, AsianDeltaHedgingAgent2, 
-    QuantlibAsianGeometricAgent, QuantlibAsianArithmeticAgent, 
-    AsianNumericalDeltaHedgingAgent
-)
+from DeepHedging.Agents import (BaseAgent, SimpleAgent, RecurrentAgent, LSTMAgent, 
+                                GRUAgent, WaveNetAgent, DeltaHedgingAgent, 
+                                GeometricAsianDeltaHedgingAgent, GeometricAsianDeltaHedgingAgent2, 
+                                GeometricAsianNumericalDeltaHedgingAgent, QuantlibAsianGeometricAgent, 
+                                ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent)
+
 from DeepHedging.HedgingInstruments import GBMStock, HestonStock
 from DeepHedging.ContingentClaims import (
     EuropeanCall, EuropeanPut, AsianGeometricCall, AsianGeometricPut,
@@ -22,14 +22,15 @@ def get_agent(agent_name, path_transformation_configs, n_hedging_timesteps):
         'SimpleAgent': SimpleAgent,
         'RecurrentAgent': RecurrentAgent,
         'LSTMAgent': LSTMAgent,
-        'DeltaHedgingAgent': DeltaHedgingAgent,
-        'WaveNetAgent': WaveNetAgent,
         'GRUAgent': GRUAgent,
-        'AsianDeltaHedgingAgent': AsianDeltaHedgingAgent,
-        'AsianDeltaHedgingAgent2': AsianDeltaHedgingAgent2,
+        'WaveNetAgent': WaveNetAgent,
+        'DeltaHedgingAgent': DeltaHedgingAgent,
+        'GeometricAsianDeltaHedgingAgent': GeometricAsianDeltaHedgingAgent,
+        'GeometricAsianDeltaHedgingAgent2': GeometricAsianDeltaHedgingAgent2,
+        'GeometricAsianNumericalDeltaHedgingAgent': GeometricAsianNumericalDeltaHedgingAgent,
         'QuantlibAsianGeometricAgent': QuantlibAsianGeometricAgent,
-        'QuantlibAsianArithmeticAgent': QuantlibAsianArithmeticAgent,
-        'AsianNumericalDeltaHedgingAgent': AsianNumericalDeltaHedgingAgent
+        'ArithmeticAsianMonteCarloAgent': ArithmeticAsianMonteCarloAgent,
+        'ArithmeticAsianControlVariateAgent': ArithmeticAsianControlVariateAgent
     }
     if agent_name not in agents:
         raise ValueError(f"Agent '{agent_name}' is not recognized. Available agents: {list(agents.keys())}")
@@ -62,10 +63,10 @@ def parse_arguments():
     # Model parameters
     parser.add_argument('--agent', type=str, default='RecurrentAgent', 
                         choices=[
-                            'SimpleAgent', 'RecurrentAgent', 'LSTMAgent', 'DeltaHedgingAgent', 
-                            'WaveNetAgent', 'GRUAgent', 'AsianDeltaHedgingAgent', 
-                            'AsianDeltaHedgingAgent2', 'QuantlibAsianGeometricAgent', 
-                            'QuantlibAsianArithmeticAgent', 'AsianNumericalDeltaHedgingAgent'
+                            'SimpleAgent', 'RecurrentAgent', 'LSTMAgent', 'GRUAgent', 'WaveNetAgent', 
+                            'DeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent2', 
+                            'GeometricAsianNumericalDeltaHedgingAgent', 'QuantlibAsianGeometricAgent', 
+                            'ArithmeticAsianMonteCarloAgent', 'ArithmeticAsianControlVariateAgent'
                         ],
                         help='Type of agent to train (default: RecurrentAgent)')
     

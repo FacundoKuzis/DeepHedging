@@ -262,6 +262,19 @@ class Environment:
         if save_actions_path:
             os.makedirs(save_actions_path, exist_ok=True)
 
+        # If fixed_actions_paths is not provided, check for existing action files in save_actions_path
+        if fixed_actions_paths is None and save_actions_path:
+            fixed_actions_paths = {}
+            for agent in agents:
+                agent_actions_filename = f"{agent.name}_actions.npy"
+                agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
+                if os.path.isfile(agent_actions_path):
+                    fixed_actions_paths[agent.name] = agent_actions_path
+                    print(f"Using existing actions file for agent '{agent.name}' at '{agent_actions_path}'.")
+            # If no existing files are found, set fixed_actions_paths back to None
+            if not fixed_actions_paths:
+                fixed_actions_paths = None
+
         for agent in agents:
             agent_name = agent.name  # Assuming each agent has a 'name' attribute
 
@@ -335,8 +348,8 @@ class Environment:
                 os.makedirs(os.path.dirname(save_plot_path), exist_ok=True)
                 plt.savefig(save_plot_path)
                 print(f"Plot saved to {save_plot_path}")
-            else:
-                plt.show()
+
+            plt.show()
 
         # Save statistics to Excel if save_stats_path is provided
         if save_stats_path:
@@ -357,7 +370,6 @@ class Environment:
             return df
 
         return mean_errors, std_errors, loss_results if loss_functions else None
-
 
     def save_optimizer(self, optimizer_path):
         """

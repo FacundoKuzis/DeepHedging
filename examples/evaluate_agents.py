@@ -5,7 +5,8 @@ from DeepHedging.Agents import (BaseAgent, SimpleAgent, RecurrentAgent, LSTMAgen
                                 GRUAgent, WaveNetAgent, DeltaHedgingAgent, 
                                 GeometricAsianDeltaHedgingAgent, GeometricAsianDeltaHedgingAgent2, 
                                 GeometricAsianNumericalDeltaHedgingAgent, QuantlibAsianGeometricAgent, 
-                                ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent)
+                                ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent, 
+                                MonteCarloAgent)
 
 from DeepHedging.HedgingInstruments import GBMStock
 from DeepHedging.ContingentClaims import (
@@ -16,27 +17,27 @@ from DeepHedging.CostFunctions import ProportionalCost
 from DeepHedging.RiskMeasures import MAE, CVaR, Entropy, WorstCase
 from DeepHedging.Environments import Environment
 
+AGENTS = {
+    'SimpleAgent': SimpleAgent,
+    'RecurrentAgent': RecurrentAgent,
+    'LSTMAgent': LSTMAgent,
+    'GRUAgent': GRUAgent,
+    'WaveNetAgent': WaveNetAgent,
+    'DeltaHedgingAgent': DeltaHedgingAgent,
+    'GeometricAsianDeltaHedgingAgent': GeometricAsianDeltaHedgingAgent,
+    'GeometricAsianDeltaHedgingAgent2': GeometricAsianDeltaHedgingAgent2,
+    'GeometricAsianNumericalDeltaHedgingAgent': GeometricAsianNumericalDeltaHedgingAgent,
+    'QuantlibAsianGeometricAgent': QuantlibAsianGeometricAgent,
+    'ArithmeticAsianMonteCarloAgent': ArithmeticAsianMonteCarloAgent,
+    'ArithmeticAsianControlVariateAgent': ArithmeticAsianControlVariateAgent,
+    'MonteCarloAgent': MonteCarloAgent
+}
 
 def get_agent(agent_name, instrument, contingent_claim, path_transformation_configs=None, n_hedging_timesteps=None, **kwargs):
 
-    agents = {
-        'SimpleAgent': SimpleAgent,
-        'RecurrentAgent': RecurrentAgent,
-        'LSTMAgent': LSTMAgent,
-        'GRUAgent': GRUAgent,
-        'WaveNetAgent': WaveNetAgent,
-        'DeltaHedgingAgent': DeltaHedgingAgent,
-        'GeometricAsianDeltaHedgingAgent': GeometricAsianDeltaHedgingAgent,
-        'GeometricAsianDeltaHedgingAgent2': GeometricAsianDeltaHedgingAgent2,
-        'GeometricAsianNumericalDeltaHedgingAgent': GeometricAsianNumericalDeltaHedgingAgent,
-        'QuantlibAsianGeometricAgent': QuantlibAsianGeometricAgent,
-        'ArithmeticAsianMonteCarloAgent': ArithmeticAsianMonteCarloAgent,
-        'ArithmeticAsianControlVariateAgent': ArithmeticAsianControlVariateAgent
-    }
-
-    if agent_name not in agents:
-        raise ValueError(f"Agent '{agent_name}' is not recognized. Available agents: {list(agents.keys())}")
-    agent_class = agents[agent_name]
+    if agent_name not in AGENTS:
+        raise ValueError(f"Agent '{agent_name}' is not recognized. Available agents: {list(AGENTS.keys())}")
+    agent_class = AGENTS[agent_name]
     if agent_class.is_trainable:
         path_transformation_configs = [{'transformation_type': 'log_moneyness', 'K': contingent_claim.strike}]
         return agent_class(path_transformation_configs=path_transformation_configs,
@@ -77,12 +78,7 @@ def parse_arguments():
 
     # Agent parameters
     parser.add_argument('--agents', type=str, nargs='+', required=True,
-                        choices=[
-                            'SimpleAgent', 'RecurrentAgent', 'LSTMAgent', 'GRUAgent', 'WaveNetAgent', 
-                            'DeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent', 'GeometricAsianDeltaHedgingAgent2', 
-                            'GeometricAsianNumericalDeltaHedgingAgent', 'QuantlibAsianGeometricAgent', 
-                            'ArithmeticAsianMonteCarloAgent', 'ArithmeticAsianControlVariateAgent'
-                        ],
+                        choices=list(AGENTS.keys()),
                         help='List of agents to evaluate')
     parser.add_argument('--bump_size', type=float, default=0.001, help='Bump size for numerical delta (default: 0.001)')
 
@@ -142,6 +138,8 @@ def parse_fixed_actions_paths(arg_list):
                     f"Invalid format for fixed_actions_paths: '{item}'. "
                     "Expected format 'agent_name=path/to/actions.csv'"
                 )
+    if fixed_paths == {}:
+        fixed_paths = None
     return fixed_paths
 
 

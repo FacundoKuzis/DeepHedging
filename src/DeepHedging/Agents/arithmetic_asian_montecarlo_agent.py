@@ -16,35 +16,48 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         'es': 'Delta de Opción Asiática Aritmética - Monte Carlo'
     }
     
-    def __init__(self, gbm_stock, option_class, bump_size=0.01):
+    def __init__(self, stock_model, option_class, bump_size=0.01):
         """
         Initialize the agent with market and option parameters.
 
         Arguments:
-        - gbm_stock (GBMStock): An instance containing the stock parameters.
+        - stock_model (GBMStock): An instance containing the stock parameters.
         - option_class: An instance of the option class containing option parameters.
         - bump_size (float): The relative size of the bump to compute finite differences.
-                        Default is 0.01 (1%).
+                             Default is 0.01 (1%).
         """
-        self.S0 = gbm_stock.S0
-        self.T = gbm_stock.T
-        self.N = gbm_stock.N
-        self.r = gbm_stock.r
-        self.sigma = gbm_stock.sigma
+        self.S0 = stock_model.S0
+        self.T = stock_model.T  # T is passed as N/252
+        self.r = stock_model.r
+        self.sigma = stock_model.sigma
         self.strike = option_class.strike
         self.option_type = option_class.option_type
-        self.dt = gbm_stock.dt
 
-        self.bump_size = bump_size # Relative bump size for finite differences
+        self.bump_size = bump_size  # Relative bump size for finite differences
 
         # Initialize last delta for delta hedging
         self.last_delta = None
 
         # Pre-initialize QuantLib objects
-        self.day_count = ql.Actual365Fixed()
-        self.calendar = ql.NullCalendar()
-        self.settlement_date = ql.Date.todaysDate()
-        self.maturity_date = self.settlement_date + int(self.T * 365 + 0.5)
+        self.day_count = ql.Actual252()
+        self.calendar = ql.UnitedStates(ql.UnitedStates.Market.NYSE)
+        self.settlement_date = self.calendar.adjust(ql.Date.todaysDate())
+
+        # Calculate number of trading days (N)
+        self.N = int(self.T * 252 + 0.5)  # Since T = N/252, this retrieves N
+
+        # Generate averaging dates as the next N business days starting from settlement date
+        self.averaging_dates = []
+        current_date = self.settlement_date
+        trading_days_count = 0
+        while trading_days_count < self.N:
+            current_date = self.calendar.advance(current_date, ql.Period(1, ql.Days))
+            if self.calendar.isBusinessDay(current_date):
+                self.averaging_dates.append(current_date)
+                trading_days_count += 1
+
+        # Set maturity date as the last averaging date
+        self.maturity_date = self.averaging_dates[-1]
 
         # Option type
         if self.option_type.lower() == 'call':
@@ -60,12 +73,6 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
 
         # Average type
         self.average_type = ql.Average.Arithmetic
-
-        # Averaging dates
-        self.N_time_steps = self.N
-        delta_time = self.T / self.N_time_steps
-        self.averaging_dates = [self.settlement_date + int((i+1)*delta_time*365 + 0.5) for i in range(self.N_time_steps)]
-        self.averaging_dates[-1] = self.maturity_date  # Ensure last date is maturity
 
         # Asian option (discrete arithmetic averaging)
         self.option = ql.DiscreteAveragingAsianOption(
@@ -231,11 +238,13 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         self.spot_quote.setValue(spot_price)
 
         # Update evaluation date
-        evaluation_date = self.maturity_date - int(time_to_maturity * 365 + 0.5)
+        time_to_maturity_days = int(time_to_maturity * 252 + 0.5)
+        evaluation_date = self.calendar.advance(
+            self.maturity_date,
+            -ql.Period(time_to_maturity_days, ql.Days),
+            ql.ModifiedFollowing
+        )
         ql.Settings.instance().evaluationDate = evaluation_date
-
-        # Adjust yield curve and volatility term structures if necessary
-        # (Assuming constant rates and volatilities, so no need to adjust)
 
         # Recalculate the option price
         epsilon = spot_price * self.bump_size
@@ -248,7 +257,7 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         down_price = self.option.NPV()
 
         # Central difference approximation of delta
-        delta = (up_price - down_price) / (epsilon)
+        delta = (up_price - down_price) / epsilon
 
         return delta
 

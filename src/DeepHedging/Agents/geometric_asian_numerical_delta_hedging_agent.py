@@ -15,17 +15,17 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
         'es': 'Delta de Opción Asiática Geométrica - Diferencias Finitas'
     }
 
-    def __init__(self, gbm_stock, option_class, bump_size=0.01):
+    def __init__(self, stock_model, option_class, bump_size=0.01):
         """
         Initialize the agent.
 
         Arguments:
-        - gbm_stock: An instance containing the stock parameters.
+        - stock_model: An instance containing the stock parameters.
         - option_class: An instance of the option class containing option parameters.
         - bump_size (float): The relative size of the bump to compute finite differences.
                              Default is 0.01 (1%).
         """
-        super().__init__(gbm_stock, option_class)
+        super().__init__(stock_model, option_class)
         self.name = f'asian_numerical_{bump_size}_delta_hedging'
         self.plot_name['en'] = f"{self.plot_name['en']} with {bump_size*100}% bump"
         self.plot_name['es'] = f"{self.plot_name['es']} con incremento del {bump_size*100}%"
@@ -50,7 +50,7 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
         z = numerator / denominator
         return z
 
-    def get_model_price(self, S, T_minus_t):
+    def get_model_price(self, S = None, T_minus_t = None):
         """
         Calculate the price for the geometric Asian option using the provided formula.
 
@@ -61,6 +61,11 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
         Returns:
         - price (tf.Tensor): Option prices. Shape: (...)
         """
+        if S is None:
+            S = self.S0
+        if T_minus_t is None:
+            T_minus_t = self.T
+
         sigma = self.sigma
         r = self.r
         K = self.strike
@@ -68,7 +73,8 @@ class GeometricAsianNumericalDeltaHedgingAgent(DeltaHedgingAgent):
 
         sqrt_3 = tf.sqrt(3.0)
         sqrt_T = tf.sqrt(T)
-
+        
+            
         z = self.compute_z(S, T)
 
         # Compute z1 = z + (sigma * sqrt(T)) / sqrt(3)

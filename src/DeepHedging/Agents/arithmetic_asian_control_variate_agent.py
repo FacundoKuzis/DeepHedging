@@ -70,7 +70,7 @@ class ArithmeticAsianControlVariateAgent(DeltaHedgingAgent):
         else:
             raise ValueError("Option type must be either 'call' or 'put'.")
 
-        self.geometric_agent = GeometricAsianDeltaHedgingAgent(self.stock_model, self.geometric_option)
+        self.geometric_agent = GeometricAsianDeltaHedgingAgent(stock_model=self.stock_model, option_class=self.geometric_option)
 
     def build_model(self):
         """

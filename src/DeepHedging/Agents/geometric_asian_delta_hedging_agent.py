@@ -15,8 +15,8 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
         'es': 'Delta de Opción Asiática Geométrica'
     }
 
-    def __init__(self, gbm_stock, option_class):
-        super().__init__(gbm_stock, option_class)
+    def __init__(self, stock_model, option_class):
+        super().__init__(stock_model, option_class)
 
     def d1(self, S, T_minus_t):
         """
@@ -40,6 +40,10 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
         """
         Calculate the delta of the geometric Asian option.
         """
+
+        # Ensure S and T_minus_t are tf.float32 tensors
+        S = tf.cast(S, tf.float32)
+        T_minus_t = tf.cast(T_minus_t, tf.float32)
 
         d1 = self.d1(S, T_minus_t)
         d2 = self.d2(S, T_minus_t)
@@ -75,6 +79,10 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
         """
         eps = 1e-4
         T_tilde = self.T + eps  # Total time to maturity
+
+        # Ensure S and T_tilde are tf.float32 tensors
+        self.S0 = tf.cast(self.S0, tf.float32)
+        T_tilde = tf.cast(T_tilde, tf.float32)
 
         d1 = self.d1(self.S0, T_tilde)
         d2 = self.d2(self.S0, T_tilde)

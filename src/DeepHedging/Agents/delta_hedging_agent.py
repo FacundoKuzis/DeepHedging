@@ -7,7 +7,7 @@ class DeltaHedgingAgent(BaseAgent):
     A delta hedging agent that computes the delta of an option and uses it as the hedging strategy.
 
     Arguments:
-    - gbm_stock (GBMStock): An instance of the GBMStock class containing the stock parameters.
+    - stock_model (GBMStock): An instance of the GBMStock class containing the stock parameters.
     - strike (float): Strike price of the option.
     - option_type (str): Type of the option ('call' or 'put').
     """
@@ -20,15 +20,16 @@ class DeltaHedgingAgent(BaseAgent):
         'es': 'Delta de Opción Europea Vanilla'
     }
 
-    def __init__(self, gbm_stock, option_class):
-        self.S0 = gbm_stock.S0
-        self.T = gbm_stock.T
-        self.N = gbm_stock.N
-        self.r = gbm_stock.r
-        self.sigma = gbm_stock.sigma
+    def __init__(self, stock_model, option_class):
+        self.stock_model = stock_model
+        self.S0 = stock_model.S0
+        self.T = stock_model.T
+        self.N = stock_model.N
+        self.r = stock_model.r
+        self.sigma = stock_model.sigma
         self.strike = option_class.strike
         self.option_type = option_class.option_type
-        self.dt = gbm_stock.dt
+        self.dt = stock_model.dt
 
     def build_model(self):
         """
@@ -100,6 +101,7 @@ class DeltaHedgingAgent(BaseAgent):
         self.reset_last_delta(batch_paths.shape[0])
         all_actions = []
         for t in range(batch_paths.shape[1] -1):  # timesteps until T-1
+            print(t)
             current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
             current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
             action = self.act(current_paths, current_T_minus_t)

@@ -8,22 +8,20 @@ class QuantlibAsianGeometricAgent(BaseAgent):
     An agent that uses QuantLib to compute the delta hedging strategy for continuous geometric Asian options.
     """
 
-    def __init__(self, gbm_stock, option_class):
+    def __init__(self, stock_model, option_class):
         """
         Initialize the agent with market and option parameters.
 
         Arguments:
-        - gbm_stock (GBMStock): An instance containing the stock parameters.
+        - stock_model (GBMStock): An instance containing the stock parameters.
         - option_class: An instance of the option class containing option parameters.
         """
-        self.S0 = gbm_stock.S0
-        self.T = gbm_stock.T
-        self.N = gbm_stock.N
-        self.r = gbm_stock.r
-        self.sigma = gbm_stock.sigma
+        self.S0 = stock_model.S0
+        self.T = stock_model.T  # T is passed as N/252
+        self.r = stock_model.r
+        self.sigma = stock_model.sigma
         self.strike = option_class.strike
         self.option_type = option_class.option_type
-        self.dt = gbm_stock.dt
         self.name = 'quantlib_asian_geometric_continuous'
         self.plot_name = 'QuantLib Asian Geometric Continuous Delta'
 
@@ -55,7 +53,11 @@ class QuantlibAsianGeometricAgent(BaseAgent):
             self.reset_last_delta(instrument_paths.shape[0])
 
         # Compute delta using QuantLib
-        delta = self.compute_delta_quantlib(instrument_paths[:, 0], T_minus_t)
+        delta = tf.numpy_function(
+            self.compute_delta_quantlib,
+            [instrument_paths[:, 0], T_minus_t],
+            tf.float32
+        )
 
         # Calculate action as change in delta
         action = delta - self.last_delta
@@ -110,21 +112,24 @@ class QuantlibAsianGeometricAgent(BaseAgent):
         Compute the delta of the geometric Asian option using QuantLib.
 
         Arguments:
-        - S_values (tf.Tensor): Current stock prices. Shape: (batch_size,)
-        - T_minus_t_values (tf.Tensor): Time to maturity. Shape: (batch_size,)
+        - S_values (np.ndarray): Current stock prices. Shape: (batch_size,)
+        - T_minus_t_values (np.ndarray): Time to maturity. Shape: (batch_size,)
 
         Returns:
-        - deltas (tf.Tensor): The computed deltas. Shape: (batch_size,)
+        - deltas (np.ndarray): The computed deltas. Shape: (batch_size,)
         """
-        # Use tf.map_fn to apply quantlib_delta over the batch
-        inputs = (S_values, T_minus_t_values)
-        deltas = tf.map_fn(
-            lambda x: tf.py_function(
-                self.quantlib_delta, [x[0], x[1]], tf.float32
-            ),
-            elems=inputs,
-            fn_output_signature=tf.float32
-        )
+        S_values = np.array(S_values, dtype=np.float64)
+        T_minus_t_values = np.array(T_minus_t_values, dtype=np.float64)
+
+        batch_size = len(S_values)
+        deltas = np.zeros(batch_size, dtype=np.float32)
+
+        for i in range(batch_size):
+            spot_price = S_values[i]
+            time_to_maturity = T_minus_t_values[i]
+            delta = self.quantlib_delta(spot_price, time_to_maturity)
+            deltas[i] = delta
+
         return deltas
 
     def quantlib_delta(self, spot_price, time_to_maturity):
@@ -142,11 +147,18 @@ class QuantlibAsianGeometricAgent(BaseAgent):
         time_to_maturity = float(time_to_maturity)
 
         # Set up QuantLib parameters
-        day_count = ql.Actual365Fixed()
-        calendar = ql.NullCalendar()
-        settlement_date = ql.Date.todaysDate()
+        day_count = ql.Actual252()
+        calendar = ql.UnitedStates(ql.UnitedStates.Market.NYSE)
+        settlement_date = calendar.adjust(ql.Date.todaysDate())
         ql.Settings.instance().evaluationDate = settlement_date
-        maturity_date = settlement_date + int(time_to_maturity * 365)
+
+        # Calculate maturity date
+        N_remaining = int(time_to_maturity * 252 + 0.5)
+        maturity_date = calendar.advance(
+            settlement_date,
+            ql.Period(N_remaining, ql.Days),
+            ql.ModifiedFollowing
+        )
 
         # Option type
         if self.option_type.lower() == 'call':
@@ -199,11 +211,18 @@ class QuantlibAsianGeometricAgent(BaseAgent):
         - price (float): The QuantLib price of the option.
         """
         # Set up QuantLib parameters
-        day_count = ql.Actual365Fixed()
-        calendar = ql.NullCalendar()
-        settlement_date = ql.Date.todaysDate()
+        day_count = ql.Actual252()
+        calendar = ql.UnitedStates(ql.UnitedStates.Market.NYSE)
+        settlement_date = calendar.adjust(ql.Date.todaysDate())
         ql.Settings.instance().evaluationDate = settlement_date
-        maturity_date = settlement_date + int(self.T * 365)
+
+        # Calculate maturity date
+        N_total = int(self.T * 252 + 0.5)
+        maturity_date = calendar.advance(
+            settlement_date,
+            ql.Period(N_total, ql.Days),
+            ql.ModifiedFollowing
+        )
 
         # Option type
         if self.option_type.lower() == 'call':
