@@ -9,15 +9,20 @@ class RecurrentAgent(SimpleAgent):
     - input_shape (tuple): Shape of the input.
     - output_shape (int): Shape of the output.
     """
+    plot_color = 'steelblue' 
+    name = 'recurrent'
+    is_trainable = True
+    plot_name = {
+        'en': 'Recurrent Agent',
+        'es': 'Agente Recurrente'
+    }
 
-    def __init__(self, path_transformation_configs = None, n_instruments = 1):
+    def __init__(self, path_transformation_configs = None, n_instruments = 1, n_hedging_timesteps = None):
         self.input_shape = (n_instruments + 1 + n_instruments,) # +1 for T-t and + n_instruments for accumulated position
         self.n_instruments = n_instruments
         self.model = self.build_model(self.input_shape, self.n_instruments)
         self.accumulated_position = None  # Initialize accumulated position
         self.path_transformation_configs = path_transformation_configs
-        self.name = 'recurrent'
-        self.plot_name = 'Recurrent'
 
     def build_model(self, input_shape, output_shape):
         """
