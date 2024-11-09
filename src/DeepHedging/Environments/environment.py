@@ -184,9 +184,9 @@ class Environment:
         unique_agents = []
         seen_agents = set()
         for agent in agents:
-            if agent not in seen_agents:
+            if agent.name not in seen_agents:
                 unique_agents.append(agent)
-                seen_agents.add(agent)
+                seen_agents.add(agent.name)
         agents = unique_agents
 
         # Generate the data paths
