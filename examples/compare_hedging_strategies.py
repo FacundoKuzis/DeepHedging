@@ -244,12 +244,13 @@ def main():
     print(f"Agents to compare: {[agent.name for agent in agents]}")
 
     # Prepare save plot path
-    comparison_model_names = [agent_model_names.get(agent.name, args.model_name) if agent_model_names else args.model_name for agent in agents]
+    comparison_model_names = [
+        agent_model_names.get(agent.name, args.model_name) if agent_model_names else args.model_name 
+        for agent in agents
+    ]
     agents_plot_names = '_vs_'.join([f"{agent.name}_{model_name}" for agent, model_name in zip(agents, comparison_model_names)])
-    save_plot_path = os.path.join(
-        args.save_plots_dir,
-        f'hedging_comparison_{agents_plot_names}.pdf'
-    )
+    save_plot_filename = f'hedging_comparison_{agents_plot_names}.pdf'
+    save_plot_path = os.path.join(args.save_plots_dir, save_plot_filename)
 
     # Call the compare_hedging_strategy method
     env.compare_hedging_strategy(

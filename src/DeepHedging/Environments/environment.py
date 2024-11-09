@@ -566,7 +566,14 @@ class Environment:
         plt.grid(True, linestyle='--', alpha=0.7)
 
         if save_plot_path:
-            os.makedirs(os.path.dirname(save_plot_path), exist_ok=True)
+            directory = os.path.dirname(save_plot_path)
+            filename = os.path.basename(save_plot_path)
+            
+            if os.path.isdir(save_plot_path):
+                raise IsADirectoryError(f"The path '{save_plot_path}' is a directory. Please provide a valid file path.")
+
+            print(f"Attempting to save plot to: {save_plot_path}")
+            os.makedirs(directory, exist_ok=True)
             plt.savefig(save_plot_path, bbox_inches='tight')
             print(f"Comparison plot saved to {save_plot_path}")
         else:
