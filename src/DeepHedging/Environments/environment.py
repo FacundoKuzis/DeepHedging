@@ -225,8 +225,12 @@ class Environment:
             if not fixed_actions_paths:
                 fixed_actions_paths = None
 
+        evaluated_agents = []
         for idx, agent in enumerate(agents):
             agent_name = agent.name
+            if agent_name in evaluated_agents:
+                continue
+
             price = prices[idx]
 
             # Check if actions are fixed for this agent
@@ -321,7 +325,7 @@ class Environment:
 
         return mean_errors, std_errors, loss_results if loss_functions else None
 
-    def terminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
+    def aterminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
         fixed_price=None, plot_error=False, plot_title='Terminal Hedging Error', save_plot_path=None, 
         colors=None, save_stats_path=None, loss_functions=None, min_x=-0.3, max_x=0.3, language='en',
         save_actions_path=None, fixed_actions_paths=None):
@@ -389,7 +393,7 @@ class Environment:
             agent_name = agent.name
             if agent_name in evaluated_agents:
                 continue
-            
+
             # Check if actions are fixed for this agent
             if fixed_actions_paths and agent_name in fixed_actions_paths:
                 fixed_path = fixed_actions_paths[agent_name]
