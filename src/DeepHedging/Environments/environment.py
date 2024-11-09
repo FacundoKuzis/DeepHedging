@@ -180,7 +180,15 @@ class Environment:
         - std_errors (list): List of standard deviations of errors for each agent.
         - losses (dict or None): Dictionary of loss function results for each agent.
         """
-        agents = np.unique(agents)
+        # Remove duplicate agents
+        unique_agents = []
+        seen_agents = set()
+        for agent in agents:
+            if agent not in seen_agents:
+                unique_agents.append(agent)
+                seen_agents.add(agent)
+        agents = unique_agents
+
         # Generate the data paths
         paths = self.generate_data(n_paths, random_seed=random_seed)
 
