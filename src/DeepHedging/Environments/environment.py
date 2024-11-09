@@ -7,8 +7,9 @@ import warnings
 import pandas as pd
 
 class Environment:
-    def __init__(self, agent, T, N, r, instrument_list, n_instruments, contingent_claim, cost_function, risk_measure,
-                 n_epochs, batch_size, learning_rate, optimizer):
+    def __init__(self, agent, T, N, r, instrument_list, n_instruments, contingent_claim, cost_function, 
+                 risk_measure = None,
+                 n_epochs = None, batch_size = None, learning_rate = None, optimizer = None):
         self.agent = agent
         self.T = T # Maturity (in years)
         self.N = N # Number of hedging steps
@@ -21,7 +22,7 @@ class Environment:
         self.risk_measure = risk_measure
         self.n_epochs = n_epochs
         self.batch_size = batch_size
-        self.optimizer = optimizer(learning_rate=learning_rate)
+        self.optimizer = None if not optimizer else optimizer(learning_rate=learning_rate)
 
         self.train_losses = []
         self.val_losses = []
@@ -329,168 +330,6 @@ class Environment:
 
         return mean_errors, std_errors, loss_results if loss_functions else None
 
-    def aterminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
-        fixed_price=None, plot_error=False, plot_title='Terminal Hedging Error', save_plot_path=None, 
-        colors=None, save_stats_path=None, loss_functions=None, min_x=-0.3, max_x=0.3, language='en',
-        save_actions_path=None, fixed_actions_paths=None):
-        """
-        Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
-
-        Arguments:
-        - agents (list): List of agent instances to evaluate.
-        - n_paths (int): Number of paths to generate for evaluation.
-        - random_seed (int or None): Random seed for path generation.
-        - fixed_price (float): The fixed price to use in calculating the hedging error.
-        - plot_error (bool): Whether to plot the error histograms.
-        - plot_title (str): Title of the plot.
-        - save_plot_path (str or None): Path to save the plot image. If None, plot is shown.
-        - colors (list or None): List of colors for the plot. If None, default colors are used.
-        - save_stats_path (str or None): Path to save the statistics as an Excel file.
-        - loss_functions (list of callables or None): List of loss functions to evaluate on the PnL.
-        - min_x (float): Minimum x-axis value for the histogram.
-        - max_x (float): Maximum x-axis value for the histogram.
-        - language (str): Language for labels ('en' for English, 'es' for Spanish).
-        - save_actions_path (str or None): Directory path to save each agent's val_actions as `.npy` files.
-        - fixed_actions_paths (dict or None): Dictionary mapping agent names to fixed actions file paths.
-                                            Example: {'agent1': 'path/to/agent1_actions.npy', ...}
-
-        Returns:
-        - mean_errors (list): List of mean errors for each agent.
-        - std_errors (list): List of standard deviations of errors for each agent.
-        - losses (dict or None): Dictionary of loss function results for each agent.
-        """
-
-        # Generate the data paths
-        paths = self.generate_data(n_paths, random_seed=random_seed)
-
-        # Validate fixed_price
-        if fixed_price is not None:
-            price = fixed_price
-        else:
-            raise ValueError('Insert fixed_price.')
-
-        errors = []
-        mean_errors = []
-        std_errors = []
-
-        # Initialize a dictionary to store losses for each loss function and agent
-        loss_results = {loss_fn.name: [] for loss_fn in loss_functions} if loss_functions else {}
-
-        # Ensure save_actions_path exists if provided
-        if save_actions_path:
-            os.makedirs(save_actions_path, exist_ok=True)
-
-        # If fixed_actions_paths is not provided, check for existing action files in save_actions_path
-        if fixed_actions_paths is None and save_actions_path:
-            fixed_actions_paths = {}
-            for agent in agents:
-                agent_actions_filename = f"{agent.name}_actions.npy"
-                agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
-                if os.path.isfile(agent_actions_path):
-                    fixed_actions_paths[agent.name] = agent_actions_path
-                    print(f"Using existing actions file for agent '{agent.name}' at '{agent_actions_path}'.")
-            # If no existing files are found, set fixed_actions_paths back to None
-            if not fixed_actions_paths:
-                fixed_actions_paths = None
-        evaluated_agents = []
-        for agent in agents:
-            agent_name = agent.name
-            if agent_name in evaluated_agents:
-                continue
-
-            # Check if actions are fixed for this agent
-            if fixed_actions_paths and agent_name in fixed_actions_paths:
-                fixed_path = fixed_actions_paths[agent_name]
-                if not os.path.isfile(fixed_path):
-                    raise FileNotFoundError(f"Fixed actions file for agent '{agent_name}' not found at '{fixed_path}'.")
-                # Load val_actions from .npy
-                print(f"Loading fixed actions for agent '{agent_name}' from '{fixed_path}'.")
-                val_actions_np = np.load(fixed_path)
-                val_actions = tf.convert_to_tensor(val_actions_np, dtype=tf.float32)
-            else:
-                # Process batch to get val_actions
-                T_minus_t = self.get_T_minus_t(paths.shape[0])
-                val_actions = agent.process_batch(paths, T_minus_t)
-
-                # Save val_actions if save_actions_path is provided
-                if save_actions_path:
-                    agent_actions_filename = f"{agent_name}_actions.npy"
-                    agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
-                    # Convert TensorFlow tensor to NumPy array
-                    val_actions_np = val_actions.numpy()
-                    # Save as .npy
-                    np.save(agent_actions_path, val_actions_np)
-                    print(f"Saved val_actions for agent '{agent_name}' to '{agent_actions_path}'.")
-
-            pnl = self.calculate_pnl(paths, val_actions)
-            error = price + pnl * np.exp(-self.r * self.T)
-
-            errors.append(error)
-            mean_errors.append(tf.reduce_mean(error).numpy())
-            std_errors.append(tf.math.reduce_std(error).numpy())
-
-            # Compute additional loss functions if provided
-            if loss_functions:
-                for loss_fn in loss_functions:
-                    loss_value = loss_fn(pnl)
-                    loss_results[loss_fn.name].append(tf.reduce_mean(loss_value).numpy())
-
-        if plot_error:
-            plt.figure(figsize=(10, 6))
-
-            # Define the bins for the histogram
-            bins = np.linspace(min_x, max_x, 60)  # 60 bins across the specified range
-
-            # Set default colors if not provided
-            if colors is None:
-                cmap = plt.cm.get_cmap('tab10', len(agents))
-                colors = [cmap(i) for i in range(len(agents))]
-
-            # Plot each agent's error histogram
-            for i, error in enumerate(errors):
-                plt.hist(error, bins=bins, density=True, color=colors[i], alpha=0.6, edgecolor='black', 
-                        label=f'{agents[i].plot_name.get(language)}')
-
-            plt.grid(True, linestyle='--', alpha=0.7)
-            plt.title(plot_title, fontsize=14)
-            plt.xlabel('Error', fontsize=12)
-
-            # Set y-axis label based on language
-            if language == 'es':
-                plt.ylabel('Densidad', fontsize=12)
-            else:
-                plt.ylabel('Density', fontsize=12)
-
-            plt.legend()
-
-            # Save or show the plot
-            if save_plot_path:
-                os.makedirs(os.path.dirname(save_plot_path), exist_ok=True)
-                plt.savefig(save_plot_path)
-                print(f"Plot saved to {save_plot_path}")
-
-            plt.show()
-
-        # Save statistics to Excel if save_stats_path is provided
-        if save_stats_path:
-            os.makedirs(os.path.dirname(save_stats_path), exist_ok=True)
-            data = {
-                'Agent': [agent.plot_name.get(language) for agent in agents],
-                'Mean Error': mean_errors,
-                'Standard Deviation': std_errors,
-            }
-            # Add additional loss functions to the data dictionary
-            if loss_functions:
-                for loss_fn_name, results in loss_results.items():
-                    data[loss_fn_name] = results
-
-            df = pd.DataFrame(data)
-            df.to_excel(save_stats_path, index=False)
-            print(f"Statistics saved to {save_stats_path}")
-            return df
-
-        return mean_errors, std_errors, loss_results if loss_functions else None
-
     def get_agent_price(self, agent, n_paths=10_000, random_seed=None):
         """
         Calculates the price of the agent by computing the expected loss over a set of paths.
@@ -625,3 +464,117 @@ class Environment:
         else:
             plt.show()
 
+    def compare_hedging_strategy(self, agents, n_paths=1, random_seed=None, 
+                                save_plot_path=None, language='en'):
+        """
+        Compare the hedging strategies of multiple agents by plotting their actions over time alongside the stock price.
+
+        Arguments:
+        - agents (list): List of agent instances to compare.
+        - n_paths (int): Number of paths to generate for plotting. Default is 1.
+        - random_seed (int, optional): Seed for random number generator to ensure reproducibility.
+        - save_plot_path (str, optional): File path to save the plot. If None, the plot is only shown.
+        - language (str): Language code for agent labels and plot texts (e.g., 'en' for English, 'es' for Spanish).
+
+        Returns:
+        - None
+        """
+
+        if n_paths < 1:
+            raise ValueError("n_paths must be at least 1.")
+
+        # Define multilingual titles and labels
+        plot_titles = {
+            'en': "Comparison of Hedging Strategies",
+            'es': "Comparación de Estrategias de Cobertura"
+        }
+
+        axis_labels = {
+            'xlabel': {
+                'en': "Timestep",
+                'es': "Paso de Tiempo"
+            },
+            'ylabel_primary': {
+                'en': "Portfolio Value",
+                'es': "Valor del Portafolio"
+            },
+            'ylabel_secondary': {
+                'en': "Underlying Asset Price",
+                'es': "Precio del Activo Subyacente"
+            },
+            'stock_label': {
+                'en': "Stock Price",
+                'es': "Precio de la Acción"
+            },
+            'strike_label': {
+                'en': "Strike Price",
+                'es': "Precio de Ejercicio"
+            }
+        }
+
+        legend_labels = {
+            'actions': {
+                'en': "Actions",
+                'es': "Acciones"
+            },
+            'portfolio': {
+                'en': "Net Portfolio Values",
+                'es': "Valores Netos del Portafolio"
+            },
+            'payoff': {
+                'en': "Contingent Claim Payoff",
+                'es': "Pago de la Obligación Contingente"
+            }
+        }
+
+        # Generate the specified number of paths
+        paths = self.generate_data(n_paths, random_seed=random_seed)  # Shape: (n_paths, N+1, n_instruments)
+        
+        # For simplicity, we'll plot the first path
+        path = paths[0]  # Shape: (N+1, n_instruments)
+        stock_prices = path[:, 0].numpy()  # Assuming the first instrument is the stock
+
+        timesteps = np.arange(self.N + 1)
+
+        plt.figure(figsize=(12, 8))
+
+        # Plot the stock price
+        plt.plot(timesteps, stock_prices, label=axis_labels['stock_label'].get(language, 'Stock Price'), color='black', linewidth=2)
+
+        # Iterate over each agent and plot their actions
+        for agent in agents:
+            # Get T_minus_t for the path
+            T_minus_t = self.get_T_minus_t(1)  # Shape: (1, N)
+            
+            # Process the batch to get actions
+            actions = agent.process_batch(path[tf.newaxis, ...], T_minus_t)  # Shape: (1, N, n_instruments)
+            actions = actions.numpy()[0, :, 0]  # Assuming actions on the first instrument
+
+            # Prepend a zero action for the initial time step
+            actions = np.insert(actions, 0, 0)
+
+            # Plot the actions
+            plt.step(timesteps, actions, where='post', label=f"{agent.plot_name.get(language, agent.name)} {legend_labels['actions'].get(language, 'Actions')}", alpha=0.7)
+
+        plt.xlabel(axis_labels['xlabel'].get(language, 'Timestep'), fontsize=14)
+        plt.ylabel(axis_labels['ylabel_primary'].get(language, 'Portfolio Value'), fontsize=14)
+        plt.title(plot_titles.get(language, "Comparison of Hedging Strategies"), fontsize=16)
+        
+        # Create a secondary y-axis for the underlying asset price
+        ax1 = plt.gca()
+        ax2 = ax1.twinx()
+        ax2.plot(timesteps, stock_prices, label=axis_labels['stock_label'].get(language, 'Stock Price'), color='grey', linestyle='--', linewidth=1.5)
+        ax2.set_ylabel(axis_labels['ylabel_secondary'].get(language, 'Underlying Asset Price'), fontsize=14)
+        
+        # Combine legends from both axes
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        plt.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+        plt.grid(True, linestyle='--', alpha=0.7)
+
+        if save_plot_path:
+            plt.savefig(save_plot_path)
+            print(f"Comparison plot saved to {save_plot_path}")
+        else:
+            plt.show()
