@@ -566,6 +566,7 @@ class Environment:
         plt.grid(True, linestyle='--', alpha=0.7)
 
         if save_plot_path:
+            os.makedirs(save_plot_path, exist_ok=True)
             plt.savefig(save_plot_path, bbox_inches='tight')
             print(f"Comparison plot saved to {save_plot_path}")
         else:
