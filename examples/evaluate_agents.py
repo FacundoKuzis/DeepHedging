@@ -1,6 +1,13 @@
 import argparse
 import tensorflow as tf
+import matplotlib.pyplot as plt
+import numpy as np
 import os
+import pickle
+import warnings
+import pandas as pd
+
+# Import DeepHedging modules (Ensure these are available in your environment)
 from DeepHedging.Agents import (BaseAgent, SimpleAgent, RecurrentAgent, LSTMAgent, 
                                 GRUAgent, WaveNetAgent, DeltaHedgingAgent, 
                                 GeometricAsianDeltaHedgingAgent, GeometricAsianDeltaHedgingAgent2, 
@@ -33,29 +40,43 @@ AGENTS = {
     'MonteCarloAgent': MonteCarloAgent
 }
 
-def get_agent(agent_name, instrument, contingent_claim, path_transformation_configs=None, n_hedging_timesteps=None, **kwargs):
+def parse_agent_model_names(arg_list):
+    """
+    Parses a list of strings in the format 'agent_name=model_name' into a dictionary.
+    """
+    agent_model_names = {}
+    if arg_list:
+        for item in arg_list:
+            try:
+                agent_name, model_name = item.split('=')
+                agent_model_names[agent_name] = model_name
+            except ValueError:
+                raise argparse.ArgumentTypeError(
+                    f"Invalid format for agent_model_names: '{item}'. "
+                    "Expected format 'agent_name=model_name'"
+                )
+    if agent_model_names == {}:
+        agent_model_names = None
+    return agent_model_names
 
-    if agent_name not in AGENTS:
-        raise ValueError(f"Agent '{agent_name}' is not recognized. Available agents: {list(AGENTS.keys())}")
-    agent_class = AGENTS[agent_name]
-    if agent_class.is_trainable:
-        path_transformation_configs = [{'transformation_type': 'log_moneyness', 'K': contingent_claim.strike}]
-        return agent_class(path_transformation_configs=path_transformation_configs,
-                            n_hedging_timesteps=n_hedging_timesteps)
-    return agent_class(instrument, contingent_claim, **kwargs)
-
-def get_contingent_claim(claim_type, strike):
-    claims = {
-        'EuropeanCall': EuropeanCall(strike=strike),
-        'EuropeanPut': EuropeanPut(strike=strike),
-        'AsianGeometricCall': AsianGeometricCall(strike=strike),
-        'AsianGeometricPut': AsianGeometricPut(strike=strike),
-        'AsianArithmeticCall': AsianArithmeticCall(strike=strike),
-        'AsianArithmeticPut': AsianArithmeticPut(strike=strike)
-    }
-    if claim_type not in claims:
-        raise ValueError(f"Contingent Claim '{claim_type}' is not recognized. Available claims: {list(claims.keys())}")
-    return claims[claim_type]
+def parse_fixed_actions_paths(arg_list):
+    """
+    Parses a list of strings in the format 'agent_name=path/to/actions.csv' into a dictionary.
+    """
+    fixed_paths = {}
+    if arg_list:
+        for item in arg_list:
+            try:
+                agent_name, path = item.split('=')
+                fixed_paths[agent_name] = path
+            except ValueError:
+                raise argparse.ArgumentTypeError(
+                    f"Invalid format for fixed_actions_paths: '{item}'. "
+                    "Expected format 'agent_name=path/to/actions.csv'"
+                )
+    if fixed_paths == {}:
+        fixed_paths = None
+    return fixed_paths
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Evaluate Deep Hedging agents with specified parameters.")
@@ -114,35 +135,41 @@ def parse_arguments():
                         help='Fixed actions paths in the format agent_name=path/to/actions.csv. '
                             'Example: agent1=path/to/agent1_actions.csv agent2=path/to/agent2_actions.csv')
 
+    # New argument for agent-specific model names
+    parser.add_argument('--agent_model_names', type=str, nargs='*', default=None,
+                        help='Agent model names in the format agent_name=model_name. '
+                             'Example: agent1=model1 agent2=model2')
+
+    # New argument for pricing method
+    parser.add_argument('--pricing_method', type=str, choices=['fixed', 'individual'], default='fixed',
+                        help='Pricing method: "fixed" to charge all agents the price of the first agent, '
+                             '"individual" to charge each agent their own price (default: fixed)')
 
     return parser.parse_args()
 
-def parse_fixed_actions_paths(arg_list):
-    """
-    Parses a list of strings in the format 'agent_name=path/to/actions.csv' into a dictionary.
+def get_agent(agent_name, instrument, contingent_claim, path_transformation_configs=None, n_hedging_timesteps=None, **kwargs):
 
-    Arguments:
-    - arg_list (list of str): List of strings to parse.
+    if agent_name not in AGENTS:
+        raise ValueError(f"Agent '{agent_name}' is not recognized. Available agents: {list(AGENTS.keys())}")
+    agent_class = AGENTS[agent_name]
+    if agent_class.is_trainable:
+        path_transformation_configs = [{'transformation_type': 'log_moneyness', 'K': contingent_claim.strike}]
+        return agent_class(path_transformation_configs=path_transformation_configs,
+                            n_hedging_timesteps=n_hedging_timesteps)
+    return agent_class(instrument, contingent_claim, **kwargs)
 
-    Returns:
-    - dict: Dictionary mapping agent names to file paths.
-    """
-    fixed_paths = {}
-    if arg_list:
-        for item in arg_list:
-            try:
-                agent_name, path = item.split('=')
-                fixed_paths[agent_name] = path
-            except ValueError:
-                raise argparse.ArgumentTypeError(
-                    f"Invalid format for fixed_actions_paths: '{item}'. "
-                    "Expected format 'agent_name=path/to/actions.csv'"
-                )
-    if fixed_paths == {}:
-        fixed_paths = None
-    return fixed_paths
-
-
+def get_contingent_claim(claim_type, strike):
+    claims = {
+        'EuropeanCall': EuropeanCall(strike=strike),
+        'EuropeanPut': EuropeanPut(strike=strike),
+        'AsianGeometricCall': AsianGeometricCall(strike=strike),
+        'AsianGeometricPut': AsianGeometricPut(strike=strike),
+        'AsianArithmeticCall': AsianArithmeticCall(strike=strike),
+        'AsianArithmeticPut': AsianArithmeticPut(strike=strike)
+    }
+    if claim_type not in claims:
+        raise ValueError(f"Contingent Claim '{claim_type}' is not recognized. Available claims: {list(claims.keys())}")
+    return claims[claim_type]
 
 def load_agent(agent_name, model_name, models_dir, instrument, contingent_claim, bump_size, path_transformation_configs, n_hedging_timesteps):
     # Initialize agent with additional parameters if necessary
@@ -167,6 +194,7 @@ def load_agent(agent_name, model_name, models_dir, instrument, contingent_claim,
 
 def main():
     args = parse_arguments()
+    agent_model_names = parse_agent_model_names(args.agent_model_names)
 
     # Set up instruments
     instrument1 = GBMStock(S0=args.S0, T=args.T, N=args.N, r=args.r, sigma=args.sigma)
@@ -188,12 +216,18 @@ def main():
     # Risk measure
     risk_measure = CVaR(alpha=args.cvar_alpha)
 
-    # Initialize agents
+    # Initialize agents with agent-specific model names
     agents = []
     for agent_name in args.agents:
+        # Get model_name for this agent
+        if agent_model_names and agent_name in agent_model_names:
+            model_name = agent_model_names[agent_name]
+        else:
+            model_name = args.model_name  # default model_name
+
         agent = load_agent(
             agent_name=agent_name,
-            model_name=args.model_name,
+            model_name=model_name,
             models_dir=args.models_dir,
             instrument=instruments[0],
             contingent_claim=contingent_claim,
@@ -203,10 +237,16 @@ def main():
         )
         agents.append(agent)
 
-    # Define optimizer paths
+    # Define optimizer paths with agent-specific model names
     optimizer_paths = {}
     for agent in agents:
-        optimizer_path = os.path.join(args.optimizers_dir, agent.name, args.model_name)
+        # Get model_name for this agent
+        if agent_model_names and agent.name in agent_model_names:
+            model_name = agent_model_names[agent.name]
+        else:
+            model_name = args.model_name  # default model_name
+
+        optimizer_path = os.path.join(args.optimizers_dir, agent.name, model_name)
         optimizer_paths[agent.name] = optimizer_path
 
     # Initialize environment with the first agent as primary
@@ -241,19 +281,42 @@ def main():
     for comparison_agent in agents[1:]:
         print(f"Evaluating {comparison_agent.name} against {primary_agent.name}")
         
-        # Get colors from the COLORS dictionary
+        # Get colors from the agent attributes or set default
         try:
             primary_color = primary_agent.plot_color
+        except AttributeError:
+            primary_color = 'blue'
+
+        try:
             comparison_color = comparison_agent.plot_color
-        except KeyError as e:
-            print(f"Color for agent '{e.args[0]}' not found. Using default color 'black'.")
-            primary_color = 'black'
-            comparison_color = 'black'
+        except AttributeError:
+            comparison_color = 'orange'
 
         plot_title = {
             'en': 'Terminal Hedging Error',
             'es': 'Error de Cobertura Final'
         }
+
+        # Get model names for the agents
+        if agent_model_names and primary_agent.name in agent_model_names:
+            primary_model_name = agent_model_names[primary_agent.name]
+        else:
+            primary_model_name = args.model_name
+
+        if agent_model_names and comparison_agent.name in agent_model_names:
+            comparison_model_name = agent_model_names[comparison_agent.name]
+        else:
+            comparison_model_name = args.model_name
+
+        # Use model names in file paths
+        save_plot_path = os.path.join(
+            args.save_plots_dir,
+            f'{primary_agent.name}_{primary_model_name}_vs_{comparison_agent.name}_{comparison_model_name}_comparison.pdf'
+        )
+        save_stats_path = os.path.join(
+            args.save_stats_dir,
+            f'{primary_agent.name}_{primary_model_name}_vs_{comparison_agent.name}_{comparison_model_name}_comparison.xlsx'
+        )
 
         q = env.terminal_hedging_error_multiple_agents(
             agents=[primary_agent, comparison_agent], 
@@ -263,20 +326,14 @@ def main():
             colors=[primary_color, comparison_color],  
             loss_functions=measures, 
             plot_title=plot_title.get(args.language),
-            fixed_price=primary_agent.get_model_price(),
-            save_plot_path=os.path.join(
-                args.save_plots_dir, 
-                f'{args.model_name}_{comparison_agent.name}_comparison.pdf'
-            ),
-            save_stats_path=os.path.join(
-                args.save_stats_dir, 
-                f'{args.model_name}_{comparison_agent.name}_comparison.xlsx'
-            ),
+            save_plot_path=save_plot_path,
+            save_stats_path=save_stats_path,
             min_x=args.min_x, 
             max_x=args.max_x,
             language=args.language,
             save_actions_path=args.save_actions_path,
-            fixed_actions_paths=parse_fixed_actions_paths(args.fixed_actions_paths)
+            fixed_actions_paths=parse_fixed_actions_paths(args.fixed_actions_paths),
+            pricing_method=args.pricing_method  # Pass the new argument here
         )
         print(f"Evaluation result for {comparison_agent.name}: {q}")
 

@@ -5,7 +5,7 @@ from DeepHedging.ContingentClaims import ContingentClaim
 
 class MonteCarloPricer:
     """
-    A Monte Carlo pricer for Asian options using TensorFlow.
+    A Monte Carlo pricer for options using TensorFlow.
 
     This class simulates asset price paths using a provided Stock model,
     computes option payoffs using a provided ContingentClaim class, and estimates
