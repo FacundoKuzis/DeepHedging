@@ -180,7 +180,7 @@ class Environment:
         - std_errors (list): List of standard deviations of errors for each agent.
         - losses (dict or None): Dictionary of loss function results for each agent.
         """
-
+        agents = set(agents)
         # Generate the data paths
         paths = self.generate_data(n_paths, random_seed=random_seed)
 
@@ -225,13 +225,8 @@ class Environment:
             if not fixed_actions_paths:
                 fixed_actions_paths = None
 
-        evaluated_agents = []
         for idx, agent in enumerate(agents):
             agent_name = agent.name
-            if agent_name in evaluated_agents:
-                continue
-            evaluated_agents.append(agent_name)
-            
             price = prices[idx]
 
             # Check if actions are fixed for this agent
