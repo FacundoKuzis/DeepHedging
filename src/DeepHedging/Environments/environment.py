@@ -230,7 +230,8 @@ class Environment:
             agent_name = agent.name
             if agent_name in evaluated_agents:
                 continue
-
+            evaluated_agents.append(agent_name)
+            
             price = prices[idx]
 
             # Check if actions are fixed for this agent
