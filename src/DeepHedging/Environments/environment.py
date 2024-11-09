@@ -467,7 +467,7 @@ class Environment:
     def compare_hedging_strategy(self, agents, n_paths=1, random_seed=None, 
                                 save_plot_path=None, language='en'):
         """
-        Compare the hedging strategies of multiple agents by plotting their actions over time alongside the stock price.
+        Compare the hedging strategies of multiple agents by plotting their actions (deltas) over time alongside the stock price.
 
         Arguments:
         - agents (list): List of agent instances to compare.
@@ -494,21 +494,17 @@ class Environment:
                 'en': "Timestep",
                 'es': "Paso de Tiempo"
             },
-            'ylabel_primary': {
-                'en': "Portfolio Value",
-                'es': "Valor del Portafolio"
+            'ylabel_deltas': {
+                'en': "Hedging Actions (Delta)",
+                'es': "Acciones de Cobertura (Delta)"
             },
-            'ylabel_secondary': {
+            'ylabel_stock': {
                 'en': "Underlying Asset Price",
                 'es': "Precio del Activo Subyacente"
             },
             'stock_label': {
                 'en': "Stock Price",
                 'es': "Precio de la Acción"
-            },
-            'strike_label': {
-                'en': "Strike Price",
-                'es': "Precio de Ejercicio"
             }
         }
 
@@ -517,13 +513,9 @@ class Environment:
                 'en': "Actions",
                 'es': "Acciones"
             },
-            'portfolio': {
-                'en': "Net Portfolio Values",
-                'es': "Valores Netos del Portafolio"
-            },
-            'payoff': {
-                'en': "Contingent Claim Payoff",
-                'es': "Pago de la Obligación Contingente"
+            'stock': {
+                'en': "Stock Price",
+                'es': "Precio de la Acción"
             }
         }
 
@@ -538,43 +530,43 @@ class Environment:
 
         plt.figure(figsize=(12, 8))
 
-        # Plot the stock price
-        plt.plot(timesteps, stock_prices, label=axis_labels['stock_label'].get(language, 'Stock Price'), color='black', linewidth=2)
-
-        # Iterate over each agent and plot their actions
+        # Initialize primary axis for deltas
+        ax1 = plt.gca()
+        ax1.set_xlabel(axis_labels['xlabel'].get(language, 'Timestep'), fontsize=14)
+        ax1.set_ylabel(axis_labels['ylabel_deltas'].get(language, 'Hedging Actions (Delta)'), fontsize=14)
+        ax1.set_title(plot_titles.get(language, "Comparison of Hedging Strategies"), fontsize=16)
+        
+        # Iterate over each agent and plot their actions (deltas)
         for agent in agents:
             # Get T_minus_t for the path
             T_minus_t = self.get_T_minus_t(1)  # Shape: (1, N)
             
             # Process the batch to get actions
             actions = agent.process_batch(path[tf.newaxis, ...], T_minus_t)  # Shape: (1, N, n_instruments)
-            actions = actions.numpy()[0, :self.N, 0]
+            actions = actions.numpy()[0, :self.N, 0]  # Assuming actions on the first instrument
 
             # Prepend a zero action for the initial time step
             actions = np.insert(actions, 0, 0)
 
-            # Plot the actions
-            plt.step(timesteps, actions, where='post', label=f"{agent.plot_name.get(language, agent.name)} {legend_labels['actions'].get(language, 'Actions')}", alpha=0.7)
+            # Plot the actions (deltas) as step plots
+            ax1.step(timesteps, actions, where='post', label=f"{agent.plot_name.get(language, agent.name)} {legend_labels['actions'].get(language, 'Actions')}", alpha=0.7)
 
-        plt.xlabel(axis_labels['xlabel'].get(language, 'Timestep'), fontsize=14)
-        plt.ylabel(axis_labels['ylabel_primary'].get(language, 'Portfolio Value'), fontsize=14)
-        plt.title(plot_titles.get(language, "Comparison of Hedging Strategies"), fontsize=16)
-        
-        # Create a secondary y-axis for the underlying asset price
-        ax1 = plt.gca()
+        # Initialize secondary axis for stock price
         ax2 = ax1.twinx()
-        ax2.plot(timesteps, stock_prices, label=axis_labels['stock_label'].get(language, 'Stock Price'), color='grey', linestyle='--', linewidth=1.5)
-        ax2.set_ylabel(axis_labels['ylabel_secondary'].get(language, 'Underlying Asset Price'), fontsize=14)
+        ax2.set_ylabel(axis_labels['ylabel_stock'].get(language, 'Underlying Asset Price'), fontsize=14)
         
+        # Plot the stock price on the secondary y-axis
+        ax2.plot(timesteps, stock_prices, label=legend_labels['stock'].get(language, 'Stock Price'), color='grey', linestyle='--', linewidth=2)
+
         # Combine legends from both axes
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
-        plt.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
 
         plt.grid(True, linestyle='--', alpha=0.7)
 
         if save_plot_path:
-            plt.savefig(save_plot_path)
+            plt.savefig(save_plot_path, bbox_inches='tight')
             print(f"Comparison plot saved to {save_plot_path}")
         else:
             plt.show()
