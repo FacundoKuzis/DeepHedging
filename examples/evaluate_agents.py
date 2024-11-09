@@ -122,6 +122,7 @@ def parse_arguments():
     parser.add_argument('--min_x', type=float, default=-2.0, help='Minimum x-axis value for plots (default: -2.0)')
     parser.add_argument('--max_x', type=float, default=2.0, help='Maximum x-axis value for plots (default: 2.0)')
     parser.add_argument('--language', type=str, choices=['en', 'es'], default='es', help='Language for labels: "en" for English or "es" for Spanish (default: es)')
+    parser.add_argument('--plot_title', type=str, default=None, help='Title for comparison plot')
 
     # File paths
     parser.add_argument('--model_name', type=str, default='asian_1', help='Model name (default: asian_1)')
@@ -325,7 +326,7 @@ def main():
             plot_error=True, 
             colors=[primary_color, comparison_color],  
             loss_functions=measures, 
-            plot_title=plot_title.get(args.language),
+            plot_title=args.plot_title if args.plot_title else plot_title.get(args.language),
             save_plot_path=save_plot_path,
             save_stats_path=save_stats_path,
             min_x=args.min_x, 
@@ -333,7 +334,7 @@ def main():
             language=args.language,
             save_actions_path=args.save_actions_path,
             fixed_actions_paths=parse_fixed_actions_paths(args.fixed_actions_paths),
-            pricing_method=args.pricing_method  # Pass the new argument here
+            pricing_method=args.pricing_method
         )
         print(f"Evaluation result for {comparison_agent.name}: {q}")
 
