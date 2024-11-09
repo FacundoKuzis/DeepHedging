@@ -548,7 +548,7 @@ class Environment:
             
             # Process the batch to get actions
             actions = agent.process_batch(path[tf.newaxis, ...], T_minus_t)  # Shape: (1, N, n_instruments)
-            actions = actions.numpy()[0, :N+1, 0]  # Assuming actions on the first instrument
+            actions = actions.numpy()[0, :self.N+1, 0]  # Assuming actions on the first instrument
 
             # Prepend a zero action for the initial time step
             actions = np.insert(actions, 0, 0)
