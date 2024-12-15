@@ -666,7 +666,7 @@ class Environment:
         # Prepare results storage
         columns = ['Agent']
         for stat_fn in statistics:
-            stat_name = getattr(stat_fn, 'name', stat_fn.__name__ if hasattr(stat_fn, '__name__') else 'unnamed_statistic')
+            stat_name = stat_fn.name
             columns.extend([
                 f"{stat_name}_point_estimate", 
                 f"{stat_name}_ci_lower", 
@@ -721,6 +721,7 @@ class Environment:
             agent_results = [agent.plot_name.get(language, agent.name)]
             for stat_fn in statistics:
                 # Apply statistic to original sample
+                print('stat:', stat_fn)
                 point_estimate = stat_fn(error_np)
 
                 # Bootstrap distribution
@@ -741,7 +742,7 @@ class Environment:
 
                 # Plot histogram if requested
                 if plot_histograms:
-                    stat_name = getattr(stat_fn, 'name', stat_fn.__name__ if hasattr(stat_fn, '__name__') else 'unnamed_statistic')
+                    stat_name = stat_fn.name
                     plt.figure(figsize=(10, 6))
                     plt.hist(bootstrap_samples, bins=30, alpha=0.7, edgecolor='black')
                     plt.title(f'Bootstrap Distribution of {stat_name} for {agent.plot_name.get(language, agent.name)}')

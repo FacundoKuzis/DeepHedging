@@ -199,6 +199,8 @@ def get_statistics(statistics):
         if stat_i is None:
                 f"Unrecognized statistic '{stat}'. Available statistics are: {available_stats}."
         stats_instances_list.append(stat_i)
+
+    print(stats_instances_list)
     return stats_instances_list
 
 def load_agent(agent_name, model_name, models_dir, instrument, contingent_claim, bump_size, path_transformation_configs, n_hedging_timesteps):
