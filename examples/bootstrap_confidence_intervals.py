@@ -309,6 +309,7 @@ def main():
         os.makedirs(args.bootstrap_plots_dir, exist_ok=True)
 
     # Perform bootstrap confidence intervals for all agents
+    print('Statistics:', args.statistics)
     print("Computing bootstrap confidence intervals...")
     df = env.bootstrap_confidence_intervals(
         agents=agents,
