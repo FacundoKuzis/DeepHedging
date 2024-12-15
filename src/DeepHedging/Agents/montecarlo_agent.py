@@ -149,3 +149,7 @@ class MonteCarloAgent(DeltaHedgingAgent):
 
         return np.array(deltas, dtype=np.float32)
 
+    
+    def get_model_price(self):
+        return self.pricer.price_with_S0(self.option_class, self.S0)
+
