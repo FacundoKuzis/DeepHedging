@@ -578,3 +578,191 @@ class Environment:
             print(f"Comparison plot saved to {save_plot_path}")
         else:
             plt.show()
+
+    def bootstrap_confidence_intervals(
+        self,
+        agents,
+        statistics, 
+        n_paths=10_000, 
+        n_bootstraps=1_000,
+        confidence_level=0.95,
+        random_seed=None,
+        plot_histograms=False,
+        save_plot_dir=None,
+        language='en',
+        save_actions_path=None,
+        fixed_actions_paths=None,
+        pricing_method='fixed'
+    ):
+        """
+        Compute bootstrap confidence intervals for given statistics applied to the PnL distribution of multiple agents.
+
+        Parameters:
+        - agents (list): List of agent instances to evaluate.
+        - statistics (callable or list of callables): One or multiple statistics to apply to the PnL distribution.
+          Each callable should accept a 1D array of pnl values and return a scalar.
+        - n_paths (int): Number of paths used to generate PnL samples (default: 10,000).
+        - n_bootstraps (int): Number of bootstrap samples (default: 1,000).
+        - confidence_level (float): Confidence level for the interval (default: 0.95).
+        - random_seed (int): Random seed for reproducibility (default: None).
+        - plot_histograms (bool): If True, plot bootstrap distributions for each statistic and agent (default: False).
+        - save_plot_dir (str): Directory to save the histograms if plot_histograms is True (default: None).
+        - language (str): Language for labels (default: 'en').
+        - save_actions_path (str): If provided, directory to save actions of each agent (default: None).
+        - fixed_actions_paths (dict): If provided, dictionary mapping agent_name to path of precomputed actions.
+        - pricing_method (str): 'fixed' or 'individual', same as terminal_hedging_error_multiple_agents method.
+
+        Returns:
+        - results_df (pd.DataFrame): A DataFrame with agents as rows and statistics & confidence intervals as columns.
+        """
+        # Ensure statistics is a list
+        if not isinstance(statistics, list):
+            statistics = [statistics]
+
+        # Remove duplicate agents
+        unique_agents = []
+        seen_agents = set()
+        for agent in agents:
+            if agent.name not in seen_agents:
+                unique_agents.append(agent)
+                seen_agents.add(agent.name)
+        agents = unique_agents
+
+        # Generate the data paths
+        paths = self.generate_data(n_paths, random_seed=random_seed)
+
+        # Compute prices based on the pricing_method
+        if pricing_method == 'fixed':
+            first_agent = agents[0]
+            price = self.get_agent_price(first_agent, n_paths=n_paths, random_seed=random_seed)
+            prices = [price] * len(agents)
+            print(f"Using fixed price from the first agent: {price}")
+        elif pricing_method == 'individual':
+            prices = []
+            for agent in agents:
+                price = self.get_agent_price(agent, n_paths=n_paths, random_seed=random_seed)
+                prices.append(price)
+                print(f"Computed price for agent '{agent.name}': {price}")
+        else:
+            raise ValueError(f"Invalid pricing_method '{pricing_method}'. Choose 'fixed' or 'individual'.")
+
+        # Ensure save_actions_path exists if provided
+        if save_actions_path:
+            os.makedirs(save_actions_path, exist_ok=True)
+
+        # If fixed_actions_paths is not provided, check for existing action files in save_actions_path
+        if fixed_actions_paths is None and save_actions_path:
+            fixed_actions_paths = {}
+            for agent in agents:
+                agent_actions_filename = f"{agent.name}_actions.npy"
+                agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
+                if os.path.isfile(agent_actions_path):
+                    fixed_actions_paths[agent.name] = agent_actions_path
+                    print(f"Using existing actions file for agent '{agent.name}' at '{agent_actions_path}'.")
+            # If no existing files are found, set fixed_actions_paths back to None
+            if not fixed_actions_paths:
+                fixed_actions_paths = None
+
+        # Prepare results storage
+        columns = ['Agent']
+        for stat_fn in statistics:
+            stat_name = getattr(stat_fn, 'name', stat_fn.__name__ if hasattr(stat_fn, '__name__') else 'unnamed_statistic')
+            columns.extend([
+                f"{stat_name}_point_estimate", 
+                f"{stat_name}_ci_lower", 
+                f"{stat_name}_ci_upper"
+            ])
+
+        results = []
+
+        # Seed for bootstrap reproducibility
+        if random_seed is not None:
+            np.random.seed(random_seed)
+
+        # Create plot directory if needed
+        if plot_histograms and save_plot_dir:
+            os.makedirs(save_plot_dir, exist_ok=True)
+
+        # Process each agent
+        for idx, agent in enumerate(agents):
+            agent_name = agent.name
+            price = prices[idx]
+
+            # Check if actions are fixed for this agent
+            if fixed_actions_paths and agent_name in fixed_actions_paths:
+                fixed_path = fixed_actions_paths[agent_name]
+                if not os.path.isfile(fixed_path):
+                    raise FileNotFoundError(f"Fixed actions file for agent '{agent_name}' not found at '{fixed_path}'.")
+                # Load val_actions from .npy
+                print(f"Loading fixed actions for agent '{agent_name}' from '{fixed_path}'.")
+                val_actions_np = np.load(fixed_path)
+                val_actions = tf.convert_to_tensor(val_actions_np, dtype=tf.float32)
+            else:
+                # Process batch to get val_actions
+                T_minus_t = self.get_T_minus_t(paths.shape[0])
+                val_actions = agent.process_batch(paths, T_minus_t)
+
+                # Save val_actions if save_actions_path is provided
+                if save_actions_path:
+                    agent_actions_filename = f"{agent_name}_actions.npy"
+                    agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
+                    # Convert TensorFlow tensor to NumPy array
+                    val_actions_np = val_actions.numpy()
+                    # Save as .npy
+                    np.save(agent_actions_path, val_actions_np)
+                    print(f"Saved val_actions for agent '{agent_name}' to '{agent_actions_path}'.")
+
+            pnl = self.calculate_pnl(paths, val_actions)
+            # Adjusting for present value
+            error = price + pnl * np.exp(-self.r * self.T)
+            error_np = error.numpy()
+
+            # Compute bootstrap confidence intervals for each statistic
+            agent_results = [agent.plot_name.get(language, agent.name)]
+            for stat_fn in statistics:
+                # Apply statistic to original sample
+                point_estimate = stat_fn(error_np)
+
+                # Bootstrap distribution
+                bootstrap_samples = np.empty(n_bootstraps)
+                n = len(error_np)
+                for b in range(n_bootstraps):
+                    # Sample with replacement
+                    sample_indices = np.random.randint(0, n, size=n)
+                    sample = error_np[sample_indices]
+                    bootstrap_samples[b] = stat_fn(sample)
+
+                # Compute confidence interval
+                alpha = (1 - confidence_level) / 2
+                lower_bound = np.percentile(bootstrap_samples, 100 * alpha)
+                upper_bound = np.percentile(bootstrap_samples, 100 * (1 - alpha))
+
+                agent_results.extend([point_estimate, lower_bound, upper_bound])
+
+                # Plot histogram if requested
+                if plot_histograms:
+                    stat_name = getattr(stat_fn, 'name', stat_fn.__name__ if hasattr(stat_fn, '__name__') else 'unnamed_statistic')
+                    plt.figure(figsize=(10, 6))
+                    plt.hist(bootstrap_samples, bins=30, alpha=0.7, edgecolor='black')
+                    plt.title(f'Bootstrap Distribution of {stat_name} for {agent.plot_name.get(language, agent.name)}')
+                    plt.xlabel(stat_name)
+                    plt.ylabel('Frequency')
+                    plt.axvline(point_estimate, color='red', linestyle='--', label='Point Estimate')
+                    plt.axvline(lower_bound, color='green', linestyle='--', label=f'{int(confidence_level*100)}% CI Lower')
+                    plt.axvline(upper_bound, color='green', linestyle='--', label=f'{int(confidence_level*100)}% CI Upper')
+                    plt.legend()
+                    if save_plot_dir:
+                        histogram_path = os.path.join(
+                            save_plot_dir,
+                            f"{agent_name}_{stat_name}_bootstrap_histogram.pdf"
+                        )
+                        plt.savefig(histogram_path)
+                        print(f"Histogram saved to {histogram_path}")
+                    else:
+                        plt.show()
+                    plt.close()
+
+            results.append(agent_results)
+
+        results_df = pd.DataFrame(results, columns=columns)
+        return results_df

@@ -241,3 +241,57 @@ class Entropy(RiskMeasure):
         # Compute the entropy
         entropy = -tf.reduce_sum(probabilities * tf.math.log(probabilities))
         return entropy
+
+class Mean(RiskMeasure):
+    """
+    A class representing the Mean risk measure.
+
+    Methods:
+    - calculate(self, pnl): Calculates the mean of the given PnL.
+      - Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+      - Returns:
+        - mean (tf.Tensor): Scalar tensor containing the calculated mean.
+    """
+    def __init__(self):
+        self.name = 'Mean'
+
+    def calculate(self, pnl):
+        """
+        Calculates the Mean of the given PnL.
+
+        Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+
+        Returns:
+        - mean (tf.Tensor): Scalar tensor containing the calculated mean.
+        """
+        mean = tf.reduce_mean(pnl)
+        return mean
+
+class StdDev(RiskMeasure):
+    """
+    A class representing the Standard Deviation risk measure.
+
+    Methods:
+    - calculate(self, pnl): Calculates the standard deviation of the given PnL.
+      - Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+      - Returns:
+        - std_dev (tf.Tensor): Scalar tensor containing the calculated standard deviation.
+    """
+    def __init__(self):
+        self.name = 'StdDev'
+
+    def calculate(self, pnl):
+        """
+        Calculates the Standard Deviation of the given PnL.
+
+        Arguments:
+        - pnl (tf.Tensor): Tensor containing the PnL values.
+
+        Returns:
+        - std_dev (tf.Tensor): Scalar tensor containing the calculated standard deviation.
+        """
+        std_dev = tf.math.reduce_std(pnl)
+        return std_dev
