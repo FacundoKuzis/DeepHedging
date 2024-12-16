@@ -656,6 +656,7 @@ class Environment:
             for agent in agents:
                 agent_actions_filename = f"{agent.name}_actions.npy"
                 agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
+                print('Agent actions path:', agent_actions_path)
                 if os.path.isfile(agent_actions_path):
                     fixed_actions_paths[agent.name] = agent_actions_path
                     print(f"Using existing actions file for agent '{agent.name}' at '{agent_actions_path}'.")
@@ -683,14 +684,14 @@ class Environment:
 
         # Pre-generate all bootstrap indices once
         # All agents have the same number of paths, so we can do this once for all
+        print('Random choosing indices.')
         bootstrap_indices = np.random.randint(0, n_paths, size=(n_bootstraps, n_paths))
-
+        print(f'Chose ({n_bootstraps}, {n_paths}) indices.')
         results = []
 
         # Process each agent
         for idx, agent in enumerate(agents):
             agent_name = agent.name
-            agent_label = agent.plot_name.get(language, agent.name)
             price = prices[idx]
 
             # Check if actions are fixed for this agent
@@ -703,6 +704,7 @@ class Environment:
                 val_actions_np = np.load(fixed_path)
                 val_actions = tf.convert_to_tensor(val_actions_np, dtype=tf.float32)
             else:
+                print(f"Processing batch as fixed actions file for agent '{agent_name}' not found at '{fixed_path}'.")
                 # Process batch to get val_actions
                 T_minus_t = self.get_T_minus_t(paths.shape[0])
                 val_actions = agent.process_batch(paths, T_minus_t)
@@ -720,7 +722,7 @@ class Environment:
             error = price + pnl * np.exp(-self.r * self.T)
             error_np = error.numpy()
 
-            agent_results = [agent_label]
+            agent_results = [agent_name]
 
             # Compute bootstrap confidence intervals for each statistic
             for stat_fn in statistics:
@@ -734,9 +736,11 @@ class Environment:
                 # Compute bootstrap distribution
                 # Instead of sampling indices individually, we use our precomputed bootstrap_indices
                 bootstrap_samples = np.empty(n_bootstraps)
+                print(f'Starting {n_bootstraps} calcualtions of {stat_name}')
                 for b in range(n_bootstraps):
                     sample = error_np[bootstrap_indices[b, :]]
                     bootstrap_samples[b] = stat_fn(sample)
+                print(f'Finished {n_bootstraps} calcualtions of {stat_name}')
 
                 # Compute confidence interval
                 alpha = (1 - confidence_level) / 2
