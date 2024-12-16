@@ -5,6 +5,8 @@ import os
 import pickle
 import warnings
 import pandas as pd
+from tqdm import tqdm  # For progress bars
+
 
 class Environment:
     def __init__(self, agent, T, N, r, instrument_list, n_instruments, contingent_claim, cost_function, 
@@ -592,7 +594,8 @@ class Environment:
         language='en',
         save_actions_path=None,
         fixed_actions_paths=None,
-        pricing_method='fixed'
+        pricing_method='fixed',
+        batch_size=100  # New parameter for batch processing
     ):
         """
         Compute bootstrap confidence intervals for given statistics applied to the PnL distribution of multiple agents.
@@ -611,6 +614,7 @@ class Environment:
         - save_actions_path (str): If provided, directory to save actions of each agent (default: None).
         - fixed_actions_paths (dict): If provided, dictionary mapping agent_name to path of precomputed actions.
         - pricing_method (str): 'fixed' or 'individual', same as terminal_hedging_error_multiple_agents method.
+        - batch_size (int): Number of bootstrap samples to process in each batch (default: 100).
 
         Returns:
         - results_df (pd.DataFrame): A DataFrame with agents as rows and statistics & confidence intervals as columns.
@@ -666,7 +670,7 @@ class Environment:
         # Prepare results storage
         columns = ['Agent']
         for stat_fn in statistics:
-            stat_name = stat_fn.name
+            stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
             columns.extend([
                 f"{stat_name}_point_estimate", 
                 f"{stat_name}_ci_lower", 
@@ -682,11 +686,11 @@ class Environment:
         if plot_histograms and save_plot_dir:
             os.makedirs(save_plot_dir, exist_ok=True)
 
-        # Precompute bootstrap indices
-        bootstrap_indices = rng.integers(0, n_paths, size=(n_bootstraps, n_paths))
+        # Precompute bootstrap indices in batches
+        n_batches = int(np.ceil(n_bootstraps / batch_size))
 
-        # Process each agent
-        for idx, agent in enumerate(agents):
+        # Process each agent with a progress bar
+        for idx, agent in enumerate(tqdm(agents, desc="Processing agents")):
             agent_name = agent.name
             price = prices[idx]
 
@@ -718,43 +722,54 @@ class Environment:
             pnl = self.calculate_pnl(paths, val_actions)
             # Adjusting for present value
             error = price + pnl * np.exp(-self.r * self.T)
-            error_np = error.numpy()
+            error_np = error.numpy().astype(np.float32)  # Use float32 to save memory
 
-            # Generate all bootstrap samples at once
-            bootstrap_samples = error_np[bootstrap_indices]  # Shape: (n_bootstraps, n_paths)
-
-            # Initialize dictionary to store statistics for this agent
-            agent_result = {'Agent': agent.plot_name.get(language, agent.name)}
+            # Initialize containers for statistics
+            point_estimates = {}
+            bootstrap_stats = {stat_fn: [] for stat_fn in statistics}
 
             # Compute point estimates
-            point_estimates = []
             for stat_fn in statistics:
                 stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
-                point_estimate = stat_fn(error_np).numpy()
-                point_estimates.append(point_estimate)
-                agent_result[f"{stat_name}_point_estimate"] = point_estimate
+                point_estimate = stat_fn(error_np)
+                if isinstance(point_estimate, tf.Tensor):
+                    point_estimate = point_estimate.numpy().item()
+                point_estimates[stat_name] = point_estimate
 
-            # Compute bootstrap statistics
-            # Assuming each stat_fn can handle 2D arrays for vectorized operations
-            # If not, we can use list comprehensions
-            for i, stat_fn in enumerate(statistics):
+            # Perform bootstrapping in batches to reduce memory usage
+            for batch_idx in range(n_batches):
+                current_batch_size = min(batch_size, n_bootstraps - batch_idx * batch_size)
+                # Generate bootstrap indices for the current batch
+                bootstrap_indices = rng.integers(0, n_paths, size=(current_batch_size, n_paths))
+                # Extract bootstrap samples
+                bootstrap_samples = error_np[bootstrap_indices]  # Shape: (current_batch_size, n_paths)
+
+                # Compute statistics for the current batch
+                for stat_fn in statistics:
+                    stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
+                    # Compute the statistic for each bootstrap sample in the batch
+                    # Assuming stat_fn can handle 2D arrays for vectorized operations
+                    try:
+                        stat_values = stat_fn(bootstrap_samples)
+                        if isinstance(stat_values, tf.Tensor):
+                            stat_values = stat_values.numpy()
+                    except:
+                        # Fallback to list comprehension if stat_fn does not support vectorization
+                        stat_values = np.array([stat_fn(sample).numpy() if isinstance(stat_fn(sample), tf.Tensor) else stat_fn(sample) for sample in bootstrap_samples])
+
+                    # Append the computed statistics
+                    bootstrap_stats[stat_fn].extend(stat_values.tolist())
+
+            # Compute confidence intervals
+            agent_result = {'Agent': agent.plot_name.get(language, agent.name)}
+            for stat_fn in statistics:
                 stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
-                # Apply stat_fn to each bootstrap sample
-                # If stat_fn cannot handle 2D arrays, use a list comprehension
-                try:
-                    # Attempt to apply stat_fn in a vectorized manner
-                    bootstrap_stat = stat_fn(bootstrap_samples)
-                    bootstrap_stat = bootstrap_stat.numpy()
-                except:
-                    # Fallback to list comprehension if stat_fn does not support vectorization
-                    bootstrap_stat = np.array([stat_fn(sample).numpy() for sample in bootstrap_samples])
+                stats = np.array(bootstrap_stats[stat_fn], dtype=np.float32)
+                lower_bound = np.percentile(stats, 100 * (1 - confidence_level) / 2)
+                upper_bound = np.percentile(stats, 100 * (1 - (1 - confidence_level) / 2))
+                point_estimate = point_estimates[stat_name]
 
-                # Compute confidence intervals
-                alpha = (1 - confidence_level) / 2
-                lower_bound = np.percentile(bootstrap_stat, 100 * alpha)
-                upper_bound = np.percentile(bootstrap_stat, 100 * (1 - alpha))
-
-                # Store in the result dictionary
+                agent_result[f"{stat_name}_point_estimate"] = point_estimate
                 agent_result[f"{stat_name}_ci_lower"] = lower_bound
                 agent_result[f"{stat_name}_ci_upper"] = upper_bound
 
@@ -783,12 +798,12 @@ class Environment:
                     labels = plot_labels.get(language, plot_labels['en'])
 
                     plt.figure(figsize=(10, 6))
-                    plt.hist(bootstrap_stat, bins=30, alpha=0.7, edgecolor='black')
+                    plt.hist(bootstrap_stats[stat_fn], bins=30, alpha=0.7, edgecolor='black')
                     plt.title(labels['title'])
                     plt.xlabel(labels['xlabel'])
                     plt.ylabel(labels['ylabel'])
 
-                    plt.axvline(point_estimates[i], color='red', linestyle='--', label=labels['point_estimate'])
+                    plt.axvline(point_estimate, color='red', linestyle='--', label=labels['point_estimate'])
                     plt.axvline(lower_bound, color='green', linestyle='--', label=labels['ci_lower'])
                     plt.axvline(upper_bound, color='green', linestyle='--', label=labels['ci_upper'])
 
