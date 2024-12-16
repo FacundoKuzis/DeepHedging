@@ -645,7 +645,7 @@ class Environment:
                 print(f"Computed price for agent '{agent.name}': {price}")
         else:
             try:
-                price = int(pricing_method)
+                price = float(pricing_method)
                 prices = [price] * len(agents)
                 print(f"Using fixed price: {price}")
             except:
