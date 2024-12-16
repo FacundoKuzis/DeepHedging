@@ -600,7 +600,7 @@ class Environment:
         Parameters:
         - agents (list): List of agent instances to evaluate.
         - statistics (callable or list of callables): One or multiple statistics to apply to the PnL distribution.
-          Each callable should accept a 1D array of pnl values and return a scalar.
+        Each callable should accept a 1D array of pnl values and return a scalar.
         - n_paths (int): Number of paths used to generate PnL samples (default: 10,000).
         - n_bootstraps (int): Number of bootstrap samples (default: 1,000).
         - confidence_level (float): Confidence level for the interval (default: 0.95).
@@ -676,12 +676,14 @@ class Environment:
         results = []
 
         # Seed for bootstrap reproducibility
-        if random_seed is not None:
-            np.random.seed(random_seed)
+        rng = np.random.default_rng(random_seed)
 
         # Create plot directory if needed
         if plot_histograms and save_plot_dir:
             os.makedirs(save_plot_dir, exist_ok=True)
+
+        # Precompute bootstrap indices
+        bootstrap_indices = rng.integers(0, n_paths, size=(n_bootstraps, n_paths))
 
         # Process each agent
         for idx, agent in enumerate(agents):
@@ -712,75 +714,89 @@ class Environment:
                     np.save(agent_actions_path, val_actions_np)
                     print(f"Saved val_actions for agent '{agent_name}' to '{agent_actions_path}'.")
 
+            # Calculate PnL and error
             pnl = self.calculate_pnl(paths, val_actions)
             # Adjusting for present value
             error = price + pnl * np.exp(-self.r * self.T)
             error_np = error.numpy()
 
-            # Compute bootstrap confidence intervals for each statistic
-            agent_results = [agent.plot_name.get(language, agent.name)]
+            # Generate all bootstrap samples at once
+            bootstrap_samples = error_np[bootstrap_indices]  # Shape: (n_bootstraps, n_paths)
+
+            # Initialize dictionary to store statistics for this agent
+            agent_result = {'Agent': agent.plot_name.get(language, agent.name)}
+
+            # Compute point estimates
+            point_estimates = []
             for stat_fn in statistics:
-                # Apply statistic to original sample
-                print('stat:', stat_fn)
+                stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
                 point_estimate = stat_fn(error_np).numpy()
+                point_estimates.append(point_estimate)
+                agent_result[f"{stat_name}_point_estimate"] = point_estimate
 
-                # Bootstrap distribution
-                bootstrap_samples = np.empty(n_bootstraps)
-                n = len(error_np)
-                for b in range(n_bootstraps):
-                    # Sample with replacement
-                    sample_indices = np.random.randint(0, n, size=n)
-                    sample = error_np[sample_indices]
-                    bootstrap_samples[b] = stat_fn(sample)
+            # Compute bootstrap statistics
+            # Assuming each stat_fn can handle 2D arrays for vectorized operations
+            # If not, we can use list comprehensions
+            for i, stat_fn in enumerate(statistics):
+                stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
+                # Apply stat_fn to each bootstrap sample
+                # If stat_fn cannot handle 2D arrays, use a list comprehension
+                try:
+                    # Attempt to apply stat_fn in a vectorized manner
+                    bootstrap_stat = stat_fn(bootstrap_samples)
+                    bootstrap_stat = bootstrap_stat.numpy()
+                except:
+                    # Fallback to list comprehension if stat_fn does not support vectorization
+                    bootstrap_stat = np.array([stat_fn(sample).numpy() for sample in bootstrap_samples])
 
-                # Compute confidence interval
+                # Compute confidence intervals
                 alpha = (1 - confidence_level) / 2
-                lower_bound = np.percentile(bootstrap_samples, 100 * alpha)
-                upper_bound = np.percentile(bootstrap_samples, 100 * (1 - alpha))
+                lower_bound = np.percentile(bootstrap_stat, 100 * alpha)
+                upper_bound = np.percentile(bootstrap_stat, 100 * (1 - alpha))
 
-                agent_results.extend([point_estimate, lower_bound, upper_bound])
+                # Store in the result dictionary
+                agent_result[f"{stat_name}_ci_lower"] = lower_bound
+                agent_result[f"{stat_name}_ci_upper"] = upper_bound
 
                 if plot_histograms:
-                    stat_name = stat_fn.plot_name[language]
-                    agent_name = agent.plot_name[language]
+                    stat_plot_name = getattr(stat_fn, 'plot_name', stat_fn.__name__)
+                    agent_plot_name = agent.plot_name.get(language, agent.name)
                     plot_labels = {
                         'en': {
-                            'title': "Bootstrap Distribution of {stat_name} for {agent_name}",
-                            'xlabel': "{stat_name}",
+                            'title': f"Bootstrap Distribution of {stat_plot_name} for {agent_plot_name}",
+                            'xlabel': f"{stat_plot_name}",
                             'ylabel': "Frequency",
                             'point_estimate': "Point Estimate",
-                            'ci_lower': "{confidence_level}% CI Lower",
-                            'ci_upper': "{confidence_level}% CI Upper"
+                            'ci_lower': f"{int(confidence_level*100)}% CI Lower",
+                            'ci_upper': f"{int(confidence_level*100)}% CI Upper"
                         },
                         'es': {
-                            'title': "Distribución Bootstrap de '{stat_name}' para errores del {agent_name}",
-                            'xlabel': "{stat_name}",
+                            'title': f"Distribución Bootstrap de '{stat_plot_name}' para errores del {agent_plot_name}",
+                            'xlabel': f"{stat_plot_name}",
                             'ylabel': "Frecuencia",
                             'point_estimate': "Estimación puntual",
-                            'ci_lower': "Límite inferior IC {confidence_level}%",
-                            'ci_upper': "Límite superior IC {confidence_level}%"
+                            'ci_lower': f"Límite inferior IC {int(confidence_level*100)}%",
+                            'ci_upper': f"Límite superior IC {int(confidence_level*100)}%"
                         }
                     }
 
-                    labels = plot_labels[language]
+                    labels = plot_labels.get(language, plot_labels['en'])
 
                     plt.figure(figsize=(10, 6))
-                    plt.hist(bootstrap_samples, bins=30, alpha=0.7, edgecolor='black')
-                    plt.title(labels['title'].format(stat_name=stat_name, agent_name=agent.plot_name.get(language, agent.name)))
-                    plt.xlabel(labels['xlabel'].format(stat_name=stat_name))
+                    plt.hist(bootstrap_stat, bins=30, alpha=0.7, edgecolor='black')
+                    plt.title(labels['title'])
+                    plt.xlabel(labels['xlabel'])
                     plt.ylabel(labels['ylabel'])
 
-                    plt.axvline(point_estimate, color='red', linestyle='--', label=labels['point_estimate'])
-                    plt.axvline(lower_bound, color='green', linestyle='--', 
-                                label=labels['ci_lower'].format(confidence_level=int(confidence_level*100)))
-                    plt.axvline(upper_bound, color='green', linestyle='--', 
-                                label=labels['ci_upper'].format(confidence_level=int(confidence_level*100)))
+                    plt.axvline(point_estimates[i], color='red', linestyle='--', label=labels['point_estimate'])
+                    plt.axvline(lower_bound, color='green', linestyle='--', label=labels['ci_lower'])
+                    plt.axvline(upper_bound, color='green', linestyle='--', label=labels['ci_upper'])
 
                     plt.legend()
                     if save_plot_dir:
                         histogram_path = os.path.join(
                             save_plot_dir,
-                            f"{agent_name}_{stat_name}_bootstrap_histogram.pdf"
+                            f"{agent_name}_{stat_plot_name}_bootstrap_histogram.pdf"
                         )
                         plt.savefig(histogram_path)
                         print(f"Histogram saved to {histogram_path}")
@@ -788,7 +804,9 @@ class Environment:
                         plt.show()
                     plt.close()
 
-                results.append(agent_results)
+            # Append the agent's results to the results list
+            results.append(agent_result)
 
+        # Create DataFrame from results
         results_df = pd.DataFrame(results, columns=columns)
         return results_df
