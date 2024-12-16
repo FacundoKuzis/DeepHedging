@@ -722,7 +722,7 @@ class Environment:
             for stat_fn in statistics:
                 # Apply statistic to original sample
                 print('stat:', stat_fn)
-                point_estimate = stat_fn(error_np).value
+                point_estimate = stat_fn(error_np).numpy()
 
                 # Bootstrap distribution
                 bootstrap_samples = np.empty(n_bootstraps)
