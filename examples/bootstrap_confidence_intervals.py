@@ -310,10 +310,11 @@ def main():
 
     # Perform bootstrap confidence intervals for all agents
     print('Statistics:', args.statistics)
+    stats_instances = get_statistics(args.statistics)
     print("Computing bootstrap confidence intervals...")
     df = env.bootstrap_confidence_intervals(
         agents=agents,
-        statistics=get_statistics(args.statistics),
+        statistics=stats_instances,
         n_paths=args.n_paths,
         n_bootstraps=args.n_bootstraps,
         confidence_level=args.confidence_level,
@@ -325,9 +326,10 @@ def main():
         fixed_actions_paths=parse_fixed_actions_paths(args.fixed_actions_paths),
         pricing_method=args.pricing_method
     )
-
+    agent_names = [agent.name for agent in agents]
+    stat_names = [stat.name for stat in stats_instances]
     # Save the results
-    results_path = os.path.join(args.save_stats_dir, f'bootstrap_statistics_results.xlsx')
+    results_path = os.path.join(args.save_stats_dir, f'bootstrap_{'_'.join(agent_names)}_{'_'.join(stat_names)}.xlsx')
     df.to_excel(results_path, index=False)
     print(f"Bootstrap statistics results saved to {results_path}")
 
