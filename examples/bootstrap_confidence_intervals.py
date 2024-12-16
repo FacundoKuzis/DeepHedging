@@ -329,7 +329,7 @@ def main():
     agent_names = [agent.name for agent in agents]
     stat_names = [stat.name for stat in stats_instances]
     # Save the results
-    results_path = os.path.join(args.save_stats_dir, f'bootstrap_{'_'.join(agent_names)}_{'_'.join(stat_names)}.xlsx')
+    results_path = os.path.join(args.save_stats_dir, f"bootstrap_{'_'.join(agent_names)}_{'_'.join(stat_names)}.xlsx")
     df.to_excel(results_path, index=False)
     print(f"Bootstrap statistics results saved to {results_path}")
 
