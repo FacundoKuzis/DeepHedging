@@ -740,17 +740,42 @@ class Environment:
 
                 agent_results.extend([point_estimate, lower_bound, upper_bound])
 
-                # Plot histogram if requested
                 if plot_histograms:
-                    stat_name = stat_fn.name
+                    stat_name = stat_fn.plot_name[language]
+                    agent_name = agent.plot_name[language]
+                    plot_labels = {
+                        'en': {
+                            'title': "Bootstrap Distribution of {stat_name} for {agent_name}",
+                            'xlabel': "{stat_name}",
+                            'ylabel': "Frequency",
+                            'point_estimate': "Point Estimate",
+                            'ci_lower': "{confidence_level}% CI Lower",
+                            'ci_upper': "{confidence_level}% CI Upper"
+                        },
+                        'es': {
+                            'title': "Distribución Bootstrap de '{stat_name}' para errores del {agent_name}",
+                            'xlabel': "{stat_name}",
+                            'ylabel': "Frecuencia",
+                            'point_estimate': "Estimación puntual",
+                            'ci_lower': "Límite inferior IC {confidence_level}%",
+                            'ci_upper': "Límite superior IC {confidence_level}%"
+                        }
+                    }
+
+                    labels = plot_labels[language]
+
                     plt.figure(figsize=(10, 6))
                     plt.hist(bootstrap_samples, bins=30, alpha=0.7, edgecolor='black')
-                    plt.title(f'Bootstrap Distribution of {stat_name} for {agent.plot_name.get(language, agent.name)}')
-                    plt.xlabel(stat_name)
-                    plt.ylabel('Frequency')
-                    plt.axvline(point_estimate, color='red', linestyle='--', label='Point Estimate')
-                    plt.axvline(lower_bound, color='green', linestyle='--', label=f'{int(confidence_level*100)}% CI Lower')
-                    plt.axvline(upper_bound, color='green', linestyle='--', label=f'{int(confidence_level*100)}% CI Upper')
+                    plt.title(labels['title'].format(stat_name=stat_name, agent_name=agent.plot_name.get(language, agent.name)))
+                    plt.xlabel(labels['xlabel'].format(stat_name=stat_name))
+                    plt.ylabel(labels['ylabel'])
+
+                    plt.axvline(point_estimate, color='red', linestyle='--', label=labels['point_estimate'])
+                    plt.axvline(lower_bound, color='green', linestyle='--', 
+                                label=labels['ci_lower'].format(confidence_level=int(confidence_level*100)))
+                    plt.axvline(upper_bound, color='green', linestyle='--', 
+                                label=labels['ci_upper'].format(confidence_level=int(confidence_level*100)))
+
                     plt.legend()
                     if save_plot_dir:
                         histogram_path = os.path.join(
@@ -763,7 +788,7 @@ class Environment:
                         plt.show()
                     plt.close()
 
-            results.append(agent_results)
+                results.append(agent_results)
 
         results_df = pd.DataFrame(results, columns=columns)
         return results_df
