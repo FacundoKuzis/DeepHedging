@@ -644,7 +644,12 @@ class Environment:
                 prices.append(price)
                 print(f"Computed price for agent '{agent.name}': {price}")
         else:
-            raise ValueError(f"Invalid pricing_method '{pricing_method}'. Choose 'fixed' or 'individual'.")
+            try:
+                price = int(pricing_method)
+                prices = [price] * len(agents)
+                print(f"Using fixed price: {price}")
+            except:
+                raise ValueError(f"Invalid pricing_method '{pricing_method}'. Choose 'fixed' or 'individual'.")
 
         # Ensure save_actions_path exists if provided
         if save_actions_path:

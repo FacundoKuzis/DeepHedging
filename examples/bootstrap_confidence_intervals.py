@@ -139,7 +139,7 @@ def parse_arguments():
                              'Example: agent1=model1 agent2=model2')
 
     # New argument for pricing method
-    parser.add_argument('--pricing_method', type=str, choices=['fixed', 'individual'], default='fixed',
+    parser.add_argument('--pricing_method', type=str, default='fixed',
                         help='Pricing method: "fixed" to charge all agents the price of the first agent, '
                              '"individual" to charge each agent their own price (default: fixed)')
 
