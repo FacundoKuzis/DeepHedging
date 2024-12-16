@@ -600,7 +600,7 @@ class Environment:
         Parameters:
         - agents (list): List of agent instances to evaluate.
         - statistics (callable or list of callables): One or multiple statistics to apply to the PnL distribution.
-          Each callable should accept a 1D array of pnl values and return a scalar.
+        Each callable should accept a 1D array of pnl values and return a scalar.
         - n_paths (int): Number of paths used to generate PnL samples (default: 10,000).
         - n_bootstraps (int): Number of bootstrap samples (default: 1,000).
         - confidence_level (float): Confidence level for the interval (default: 0.95).
@@ -673,8 +673,6 @@ class Environment:
                 f"{stat_name}_ci_upper"
             ])
 
-        results = []
-
         # Seed for bootstrap reproducibility
         if random_seed is not None:
             np.random.seed(random_seed)
@@ -683,9 +681,16 @@ class Environment:
         if plot_histograms and save_plot_dir:
             os.makedirs(save_plot_dir, exist_ok=True)
 
+        # Pre-generate all bootstrap indices once
+        # All agents have the same number of paths, so we can do this once for all
+        bootstrap_indices = np.random.randint(0, n_paths, size=(n_bootstraps, n_paths))
+
+        results = []
+
         # Process each agent
         for idx, agent in enumerate(agents):
             agent_name = agent.name
+            agent_label = agent.plot_name.get(language, agent.name)
             price = prices[idx]
 
             # Check if actions are fixed for this agent
@@ -706,9 +711,7 @@ class Environment:
                 if save_actions_path:
                     agent_actions_filename = f"{agent_name}_actions.npy"
                     agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
-                    # Convert TensorFlow tensor to NumPy array
                     val_actions_np = val_actions.numpy()
-                    # Save as .npy
                     np.save(agent_actions_path, val_actions_np)
                     print(f"Saved val_actions for agent '{agent_name}' to '{agent_actions_path}'.")
 
@@ -717,20 +720,22 @@ class Environment:
             error = price + pnl * np.exp(-self.r * self.T)
             error_np = error.numpy()
 
+            agent_results = [agent_label]
+
             # Compute bootstrap confidence intervals for each statistic
-            agent_results = [agent.plot_name.get(language, agent.name)]
             for stat_fn in statistics:
-                # Apply statistic to original sample
-                print('stat:', stat_fn)
+                stat_name = stat_fn.name
+                stat_label = stat_fn.plot_name.get(language)
+                agent_label = agent.plot_name.get(language)
+
+                # Compute the point estimate
                 point_estimate = stat_fn(error_np).numpy()
 
-                # Bootstrap distribution
+                # Compute bootstrap distribution
+                # Instead of sampling indices individually, we use our precomputed bootstrap_indices
                 bootstrap_samples = np.empty(n_bootstraps)
-                n = len(error_np)
                 for b in range(n_bootstraps):
-                    # Sample with replacement
-                    sample_indices = np.random.randint(0, n, size=n)
-                    sample = error_np[sample_indices]
+                    sample = error_np[bootstrap_indices[b, :]]
                     bootstrap_samples[b] = stat_fn(sample)
 
                 # Compute confidence interval
@@ -741,11 +746,9 @@ class Environment:
                 agent_results.extend([point_estimate, lower_bound, upper_bound])
 
                 if plot_histograms:
-                    stat_name = stat_fn.plot_name[language]
-                    agent_name = agent.plot_name[language]
                     plot_labels = {
                         'en': {
-                            'title': "Bootstrap Distribution of {stat_name} for {agent_name}",
+                            'title': "Bootstrap Distribution of {stat_name} for {agent_label}",
                             'xlabel': "{stat_name}",
                             'ylabel': "Frequency",
                             'point_estimate': "Point Estimate",
@@ -753,7 +756,7 @@ class Environment:
                             'ci_upper': "{confidence_level}% CI Upper"
                         },
                         'es': {
-                            'title': "Distribución Bootstrap de '{stat_name}' para errores del {agent_name}",
+                            'title': "Distribución Bootstrap de '{stat_name}' para errores del {agent_label}",
                             'xlabel': "{stat_name}",
                             'ylabel': "Frecuencia",
                             'point_estimate': "Estimación puntual",
@@ -766,8 +769,8 @@ class Environment:
 
                     plt.figure(figsize=(10, 6))
                     plt.hist(bootstrap_samples, bins=30, alpha=0.7, edgecolor='black')
-                    plt.title(labels['title'].format(stat_name=stat_name, agent_name=agent.plot_name.get(language, agent.name)))
-                    plt.xlabel(labels['xlabel'].format(stat_name=stat_name))
+                    plt.title(labels['title'].format(stat_name=stat_label, agent_name=agent_label))
+                    plt.xlabel(labels['xlabel'].format(stat_name=stat_label))
                     plt.ylabel(labels['ylabel'])
 
                     plt.axvline(point_estimate, color='red', linestyle='--', label=labels['point_estimate'])
@@ -778,9 +781,12 @@ class Environment:
 
                     plt.legend()
                     if save_plot_dir:
+                        # Replace spaces or special chars in agent_label and stat_label if needed
+                        safe_agent_label = agent_name.replace(' ', '_')
+                        safe_stat_label = stat_name.replace(' ', '_')
                         histogram_path = os.path.join(
                             save_plot_dir,
-                            f"{agent_name}_{stat_name}_bootstrap_histogram.pdf"
+                            f"{safe_agent_label}_{safe_stat_label}_bootstrap_histogram.pdf"
                         )
                         plt.savefig(histogram_path)
                         print(f"Histogram saved to {histogram_path}")
@@ -788,7 +794,8 @@ class Environment:
                         plt.show()
                     plt.close()
 
-                results.append(agent_results)
+            # After processing all statistics for this agent, append the result
+            results.append(agent_results)
 
         results_df = pd.DataFrame(results, columns=columns)
         return results_df
