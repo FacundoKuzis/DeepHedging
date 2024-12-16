@@ -670,7 +670,7 @@ class Environment:
         # Prepare results storage
         columns = ['Agent']
         for stat_fn in statistics:
-            stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
+            stat_name = stat_fn.name
             columns.extend([
                 f"{stat_name}_point_estimate", 
                 f"{stat_name}_ci_lower", 
@@ -730,7 +730,7 @@ class Environment:
 
             # Compute point estimates
             for stat_fn in statistics:
-                stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
+                stat_name = stat_fn.name
                 point_estimate = stat_fn(error_np)
                 if isinstance(point_estimate, tf.Tensor):
                     point_estimate = point_estimate.numpy().item()
@@ -746,7 +746,7 @@ class Environment:
 
                 # Compute statistics for the current batch
                 for stat_fn in statistics:
-                    stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
+                    stat_name = stat_fn.name
                     # Compute the statistic for each bootstrap sample in the batch
                     # Assuming stat_fn can handle 2D arrays for vectorized operations
                     try:
@@ -763,7 +763,7 @@ class Environment:
             # Compute confidence intervals
             agent_result = {'Agent': agent.plot_name.get(language, agent.name)}
             for stat_fn in statistics:
-                stat_name = getattr(stat_fn, 'name', stat_fn.__name__)
+                stat_name = stat_fn.name
                 stats = np.array(bootstrap_stats[stat_fn], dtype=np.float32)
                 lower_bound = np.percentile(stats, 100 * (1 - confidence_level) / 2)
                 upper_bound = np.percentile(stats, 100 * (1 - (1 - confidence_level) / 2))
