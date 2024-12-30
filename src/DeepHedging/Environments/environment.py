@@ -709,7 +709,7 @@ class Environment:
                 val_actions_np = np.load(fixed_path)
                 val_actions = tf.convert_to_tensor(val_actions_np, dtype=tf.float32)
             else:
-                print(f"Processing batch as fixed actions file for agent '{agent_name}' not found at '{fixed_path}'.")
+                print(f"Processing batch as fixed actions file for agent '{agent_name}' not found.")
                 # Process batch to get val_actions
                 T_minus_t = self.get_T_minus_t(paths.shape[0])
                 val_actions = agent.process_batch(paths, T_minus_t)
