@@ -17,7 +17,7 @@ class DeltaHedgingAgent(BaseAgent):
     is_trainable = False
     plot_name = {
         'en': 'BS European Vanilla Delta',
-        'es': 'Delta de Opción Europea Vanilla'
+        'es': 'Agente delta de opción europea'
     }
 
     def __init__(self, stock_model, option_class):

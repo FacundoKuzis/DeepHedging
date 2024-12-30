@@ -7,8 +7,9 @@ import warnings
 import pandas as pd
 
 class Environment:
-    def __init__(self, agent, T, N, r, instrument_list, n_instruments, contingent_claim, cost_function, risk_measure,
-                 n_epochs, batch_size, learning_rate, optimizer):
+    def __init__(self, agent, T, N, r, instrument_list, n_instruments, contingent_claim, cost_function, 
+                 risk_measure = None,
+                 n_epochs = None, batch_size = None, learning_rate = None, optimizer = None):
         self.agent = agent
         self.T = T # Maturity (in years)
         self.N = N # Number of hedging steps
@@ -21,7 +22,7 @@ class Environment:
         self.risk_measure = risk_measure
         self.n_epochs = n_epochs
         self.batch_size = batch_size
-        self.optimizer = optimizer(learning_rate=learning_rate)
+        self.optimizer = None if not optimizer else optimizer(learning_rate=learning_rate)
 
         self.train_losses = []
         self.val_losses = []
@@ -47,7 +48,6 @@ class Environment:
         data_transposed = tf.transpose(data, perm=[1, 2, 0])
         
         return data_transposed # (n_paths, N+1, n_instruments)
-
 
     def calculate_pnl(self, paths, actions, include_decomposition = False):
         # Calculate the portfolio value at each time step
@@ -164,92 +164,51 @@ class Environment:
         T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [shape, 1])
         return T_minus_t
 
-    def terminal_hedging_error(self, paths_to_test = None, n_paths = None, random_seed = None, 
-                               fixed_price = None, n_paths_for_pricing = None, plot_error = False, 
-                               plot_title = 'Terminal Hedging Error', save_plot_path = None):
-        
-        if paths_to_test:
-            paths = paths_to_test
-        elif n_paths:
-            paths = self.generate_data(n_paths, random_seed = random_seed)
-        else:
-            raise ValueError('Insert either paths_to_test or n_paths.')
-        
-        if fixed_price:
-            price = fixed_price
-        elif n_paths_for_pricing:
-            price_paths = self.generate_data(n_paths)
-            T_minus_t = self.get_T_minus_t(price_paths.shape[0])
-            actions = self.agent.process_batch(paths, T_minus_t)
-            loss = self.loss_function(paths, actions)
-            price = loss * np.exp(-self.r * self.T)
-            print(price)
-        else:
-            raise ValueError('Insert either fixed_price or n_paths_for_pricing.')
-        
-        T_minus_t = self.get_T_minus_t(paths.shape[0])
-        val_actions = self.agent.process_batch(paths, T_minus_t)
-        loss = self.loss_function(paths, val_actions)
-
-        pnl = self.calculate_pnl(paths, val_actions)
-        error = price + pnl * np.exp(-self.r * self.T)
-        mean_error = tf.reduce_mean(error)        
-
-        if plot_error:
-            plt.figure(figsize=(10, 6))
-            plt.hist(error, bins=30, color='blue', alpha=0.7, edgecolor='black')
-            plt.grid(True, linestyle='--', alpha=0.7)
-            plt.title(f'{plot_title}. Mean Error: {mean_error:.4f}', fontsize=14)
-            plt.xlabel('Error', fontsize=12)
-            plt.ylabel('Frequency', fontsize=12)
-
-            if save_plot_path:
-                plt.savefig(save_plot_path)
-                print(f"Plot saved to {save_plot_path}")
-            else:
-                plt.show()
-                
-        return mean_error
-
     def terminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
-        fixed_price=None, plot_error=False, plot_title='Terminal Hedging Error', save_plot_path=None, 
-        colors=None, save_stats_path=None, loss_functions=None, min_x=-0.3, max_x=0.3, language='en',
-        save_actions_path=None, fixed_actions_paths=None):
+            plot_error=False, plot_title='Terminal Hedging Error', save_plot_path=None, 
+            colors=None, save_stats_path=None, loss_functions=None, min_x=-0.3, max_x=0.3, language='en',
+            save_actions_path=None, fixed_actions_paths=None, pricing_method='fixed'):
         """
         Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
 
         Arguments:
         - agents (list): List of agent instances to evaluate.
-        - n_paths (int): Number of paths to generate for evaluation.
-        - random_seed (int or None): Random seed for path generation.
-        - fixed_price (float): The fixed price to use in calculating the hedging error.
-        - plot_error (bool): Whether to plot the error histograms.
-        - plot_title (str): Title of the plot.
-        - save_plot_path (str or None): Path to save the plot image. If None, plot is shown.
-        - colors (list or None): List of colors for the plot. If None, default colors are used.
-        - save_stats_path (str or None): Path to save the statistics as an Excel file.
-        - loss_functions (list of callables or None): List of loss functions to evaluate on the PnL.
-        - min_x (float): Minimum x-axis value for the histogram.
-        - max_x (float): Maximum x-axis value for the histogram.
-        - language (str): Language for labels ('en' for English, 'es' for Spanish).
-        - save_actions_path (str or None): Directory path to save each agent's val_actions as `.npy` files.
-        - fixed_actions_paths (dict or None): Dictionary mapping agent names to fixed actions file paths.
-                                            Example: {'agent1': 'path/to/agent1_actions.npy', ...}
+        - pricing_method (str): 'fixed' to use the price of the first agent for all agents,
+                                'individual' to compute and use each agent's own price.
 
         Returns:
         - mean_errors (list): List of mean errors for each agent.
         - std_errors (list): List of standard deviations of errors for each agent.
         - losses (dict or None): Dictionary of loss function results for each agent.
         """
+        # Remove duplicate agents
+        unique_agents = []
+        seen_agents = set()
+        for agent in agents:
+            if agent.name not in seen_agents:
+                unique_agents.append(agent)
+                seen_agents.add(agent.name)
+        agents = unique_agents
 
         # Generate the data paths
         paths = self.generate_data(n_paths, random_seed=random_seed)
 
-        # Validate fixed_price
-        if fixed_price is not None:
-            price = fixed_price
+        # Compute prices based on the pricing_method
+        if pricing_method == 'fixed':
+            # Use the price of the first agent
+            first_agent = agents[0]
+            price = self.get_agent_price(first_agent, n_paths=n_paths, random_seed=random_seed)
+            prices = [price] * len(agents)
+            print(f"Using fixed price from the first agent: {price}")
+        elif pricing_method == 'individual':
+            # Compute the price for each agent
+            prices = []
+            for agent in agents:
+                price = self.get_agent_price(agent, n_paths=n_paths, random_seed=random_seed)
+                prices.append(price)
+                print(f"Computed price for agent '{agent.name}': {price}")
         else:
-            raise ValueError('Insert fixed_price.')
+            raise ValueError(f"Invalid pricing_method '{pricing_method}'. Choose 'fixed' or 'individual'.")
 
         errors = []
         mean_errors = []
@@ -275,8 +234,9 @@ class Environment:
             if not fixed_actions_paths:
                 fixed_actions_paths = None
 
-        for agent in agents:
-            agent_name = agent.name  # Assuming each agent has a 'name' attribute
+        for idx, agent in enumerate(agents):
+            agent_name = agent.name
+            price = prices[idx]
 
             # Check if actions are fixed for this agent
             if fixed_actions_paths and agent_name in fixed_actions_paths:
@@ -343,7 +303,6 @@ class Environment:
 
             plt.legend()
 
-            # Save or show the plot
             if save_plot_path:
                 os.makedirs(os.path.dirname(save_plot_path), exist_ok=True)
                 plt.savefig(save_plot_path)
@@ -370,6 +329,29 @@ class Environment:
             return df
 
         return mean_errors, std_errors, loss_results if loss_functions else None
+
+    def get_agent_price(self, agent, n_paths=10_000, random_seed=None):
+        """
+        Calculates the price of the agent by computing the expected loss over a set of paths.
+
+        Arguments:
+        - agent: The agent instance whose price we want to compute.
+        - n_paths: Number of paths to generate.
+        - random_seed: Random seed for path generation.
+
+        Returns:
+        - price: The computed price as loss * exp(-r * T)
+        """
+        if agent.is_trainable:
+            paths = self.generate_data(n_paths, random_seed=random_seed)
+            T_minus_t = self.get_T_minus_t(paths.shape[0])
+            actions = agent.process_batch(paths, T_minus_t)
+            pnl = self.calculate_pnl(paths, actions)
+            loss = self.risk_measure.calculate(pnl)
+            price = loss.numpy() * np.exp(-self.r * self.T)
+        else:
+            price = agent.get_model_price()
+        return price
 
     def save_optimizer(self, optimizer_path):
         """
@@ -482,3 +464,347 @@ class Environment:
         else:
             plt.show()
 
+    def compare_hedging_strategy(self, agents, n_paths=1, random_seed=None, 
+                                save_plot_path=None, language='en'):
+        """
+        Compare the hedging strategies of multiple agents by plotting their actions (deltas) over time alongside the stock price.
+
+        Arguments:
+        - agents (list): List of agent instances to compare.
+        - n_paths (int): Number of paths to generate for plotting. Default is 1.
+        - random_seed (int, optional): Seed for random number generator to ensure reproducibility.
+        - save_plot_path (str, optional): File path to save the plot. If None, the plot is only shown.
+        - language (str): Language code for agent labels and plot texts (e.g., 'en' for English, 'es' for Spanish).
+
+        Returns:
+        - None
+        """
+
+        if n_paths < 1:
+            raise ValueError("n_paths must be at least 1.")
+
+        # Define multilingual titles and labels
+        plot_titles = {
+            'en': "Comparison of Hedging Strategies",
+            'es': "Comparación de Estrategias de Cobertura"
+        }
+
+        axis_labels = {
+            'xlabel': {
+                'en': "Timestep",
+                'es': "Paso de Tiempo"
+            },
+            'ylabel_deltas': {
+                'en': "Hedging Actions (Delta)",
+                'es': "Acciones de Cobertura (Delta)"
+            },
+            'ylabel_stock': {
+                'en': "Underlying Asset Price",
+                'es': "Precio del Activo Subyacente"
+            },
+            'stock_label': {
+                'en': "Stock Price",
+                'es': "Precio de la Acción"
+            }
+        }
+
+        legend_labels = {
+            'actions': {
+                'en': "Actions",
+                'es': "Acciones"
+            },
+            'stock': {
+                'en': "Stock Price",
+                'es': "Precio de la Acción"
+            }
+        }
+
+        # Generate the specified number of paths
+        paths = self.generate_data(n_paths, random_seed=random_seed)  # Shape: (n_paths, N+1, n_instruments)
+        
+        # For simplicity, we'll plot the first path
+        path = paths[0]  # Shape: (N+1, n_instruments)
+        stock_prices = path[:, 0].numpy()  # Assuming the first instrument is the stock
+
+        timesteps = np.arange(self.N + 1)
+
+        plt.figure(figsize=(12, 8))
+
+        # Initialize primary axis for deltas
+        ax1 = plt.gca()
+        ax1.set_xlabel(axis_labels['xlabel'].get(language, 'Timestep'), fontsize=14)
+        ax1.set_ylabel(axis_labels['ylabel_deltas'].get(language, 'Hedging Actions (Delta)'), fontsize=14)
+        ax1.set_title(plot_titles.get(language, "Comparison of Hedging Strategies"), fontsize=16)
+        
+        # Iterate over each agent and plot their actions (deltas)
+        for agent in agents:
+            # Get T_minus_t for the path
+            T_minus_t = self.get_T_minus_t(1)  # Shape: (1, N)
+            
+            # Process the batch to get actions
+            actions = agent.process_batch(path[tf.newaxis, ...], T_minus_t)  # Shape: (1, N, n_instruments)
+            actions = actions.numpy()[0, :self.N, 0]  # Assuming actions on the first instrument
+
+            # Prepend a zero action for the initial time step
+            actions = np.insert(actions, 0, 0)
+
+            # Plot the actions (deltas) as step plots
+            ax1.step(timesteps, actions, where='post', label=f"{agent.plot_name.get(language, agent.name)} {legend_labels['actions'].get(language, 'Actions')}", alpha=0.7)
+
+        # Initialize secondary axis for stock price
+        ax2 = ax1.twinx()
+        ax2.set_ylabel(axis_labels['ylabel_stock'].get(language, 'Underlying Asset Price'), fontsize=14)
+        
+        # Plot the stock price on the secondary y-axis
+        ax2.plot(timesteps, stock_prices, label=legend_labels['stock'].get(language, 'Stock Price'), color='grey', linestyle='--', linewidth=2)
+
+        # Combine legends from both axes
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+        plt.grid(True, linestyle='--', alpha=0.7)
+
+        if save_plot_path:
+            directory = os.path.dirname(save_plot_path)
+            filename = os.path.basename(save_plot_path)
+            
+            if os.path.isdir(save_plot_path):
+                raise IsADirectoryError(f"The path '{save_plot_path}' is a directory. Please provide a valid file path.")
+
+            print(f"Attempting to save plot to: {save_plot_path}")
+            os.makedirs(directory, exist_ok=True)
+            plt.savefig(save_plot_path, bbox_inches='tight')
+            print(f"Comparison plot saved to {save_plot_path}")
+        else:
+            plt.show()
+
+    def bootstrap_confidence_intervals(
+        self,
+        agents,
+        statistics, 
+        n_paths=10_000, 
+        n_bootstraps=1_000,
+        confidence_level=0.95,
+        random_seed=None,
+        plot_histograms=False,
+        save_plot_dir=None,
+        language='en',
+        save_actions_path=None,
+        fixed_actions_paths=None,
+        pricing_method='fixed'
+    ):
+        """
+        Compute bootstrap confidence intervals for given statistics applied to the PnL distribution of multiple agents.
+
+        Parameters:
+        - agents (list): List of agent instances to evaluate.
+        - statistics (callable or list of callables): One or multiple statistics to apply to the PnL distribution.
+        Each callable should accept a 1D array of pnl values and return a scalar.
+        - n_paths (int): Number of paths used to generate PnL samples (default: 10,000).
+        - n_bootstraps (int): Number of bootstrap samples (default: 1,000).
+        - confidence_level (float): Confidence level for the interval (default: 0.95).
+        - random_seed (int): Random seed for reproducibility (default: None).
+        - plot_histograms (bool): If True, plot bootstrap distributions for each statistic and agent (default: False).
+        - save_plot_dir (str): Directory to save the histograms if plot_histograms is True (default: None).
+        - language (str): Language for labels (default: 'en').
+        - save_actions_path (str): If provided, directory to save actions of each agent (default: None).
+        - fixed_actions_paths (dict): If provided, dictionary mapping agent_name to path of precomputed actions.
+        - pricing_method (str): 'fixed' or 'individual', same as terminal_hedging_error_multiple_agents method.
+
+        Returns:
+        - results_df (pd.DataFrame): A DataFrame with agents as rows and statistics & confidence intervals as columns.
+        """
+        # Ensure statistics is a list
+        if not isinstance(statistics, list):
+            statistics = [statistics]
+
+        # Remove duplicate agents
+        unique_agents = []
+        seen_agents = set()
+        for agent in agents:
+            if agent.name not in seen_agents:
+                unique_agents.append(agent)
+                seen_agents.add(agent.name)
+        agents = unique_agents
+
+        # Generate the data paths
+        paths = self.generate_data(n_paths, random_seed=random_seed)
+
+        # Compute prices based on the pricing_method
+        if pricing_method == 'fixed':
+            first_agent = agents[0]
+            price = self.get_agent_price(first_agent, n_paths=n_paths, random_seed=random_seed)
+            prices = [price] * len(agents)
+            print(f"Using fixed price from the first agent: {price}")
+        elif pricing_method == 'individual':
+            prices = []
+            for agent in agents:
+                price = self.get_agent_price(agent, n_paths=n_paths, random_seed=random_seed)
+                prices.append(price)
+                print(f"Computed price for agent '{agent.name}': {price}")
+        else:
+            try:
+                price = float(pricing_method)
+                prices = [price] * len(agents)
+                print(f"Using fixed price: {price}")
+            except:
+                raise ValueError(f"Invalid pricing_method '{pricing_method}'. Choose 'fixed' or 'individual'.")
+
+        # Ensure save_actions_path exists if provided
+        if save_actions_path:
+            os.makedirs(save_actions_path, exist_ok=True)
+
+        # If fixed_actions_paths is not provided, check for existing action files in save_actions_path
+        if fixed_actions_paths is None and save_actions_path:
+            fixed_actions_paths = {}
+            for agent in agents:
+                agent_actions_filename = f"{agent.name}_actions.npy"
+                agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
+                print('Agent actions path:', agent_actions_path)
+                if os.path.isfile(agent_actions_path):
+                    fixed_actions_paths[agent.name] = agent_actions_path
+                    print(f"Using existing actions file for agent '{agent.name}' at '{agent_actions_path}'.")
+            # If no existing files are found, set fixed_actions_paths back to None
+            if not fixed_actions_paths:
+                fixed_actions_paths = None
+
+        # Prepare results storage
+        columns = ['Agent']
+        for stat_fn in statistics:
+            stat_name = stat_fn.name
+            columns.extend([
+                f"{stat_name}_point_estimate", 
+                f"{stat_name}_ci_lower", 
+                f"{stat_name}_ci_upper"
+            ])
+
+        # Seed for bootstrap reproducibility
+        if random_seed is not None:
+            np.random.seed(random_seed)
+
+        # Create plot directory if needed
+        if plot_histograms and save_plot_dir:
+            os.makedirs(save_plot_dir, exist_ok=True)
+
+        # Pre-generate all bootstrap indices once
+        # All agents have the same number of paths, so we can do this once for all
+        print('Random choosing indices.')
+        bootstrap_indices = np.random.randint(0, n_paths, size=(n_bootstraps, n_paths))
+        print(f'Chose ({n_bootstraps}, {n_paths}) indices.')
+        results = []
+
+        # Process each agent
+        for idx, agent in enumerate(agents):
+            agent_name = agent.name
+            price = prices[idx]
+
+            # Check if actions are fixed for this agent
+            if fixed_actions_paths and agent_name in fixed_actions_paths:
+                fixed_path = fixed_actions_paths[agent_name]
+                if not os.path.isfile(fixed_path):
+                    raise FileNotFoundError(f"Fixed actions file for agent '{agent_name}' not found at '{fixed_path}'.")
+                # Load val_actions from .npy
+                print(f"Loading fixed actions for agent '{agent_name}' from '{fixed_path}'.")
+                val_actions_np = np.load(fixed_path)
+                val_actions = tf.convert_to_tensor(val_actions_np, dtype=tf.float32)
+            else:
+                print(f"Processing batch as fixed actions file for agent '{agent_name}' not found.")
+                # Process batch to get val_actions
+                T_minus_t = self.get_T_minus_t(paths.shape[0])
+                val_actions = agent.process_batch(paths, T_minus_t)
+
+                # Save val_actions if save_actions_path is provided
+                if save_actions_path:
+                    agent_actions_filename = f"{agent_name}_actions.npy"
+                    agent_actions_path = os.path.join(save_actions_path, agent_actions_filename)
+                    val_actions_np = val_actions.numpy()
+                    np.save(agent_actions_path, val_actions_np)
+                    print(f"Saved val_actions for agent '{agent_name}' to '{agent_actions_path}'.")
+
+            pnl = self.calculate_pnl(paths, val_actions)
+            # Adjusting for present value
+            error = price + pnl * np.exp(-self.r * self.T)
+            error_np = error.numpy()
+
+            agent_results = [agent_name]
+
+            # Compute bootstrap confidence intervals for each statistic
+            for stat_fn in statistics:
+                stat_name = stat_fn.name
+                stat_label = stat_fn.plot_name.get(language)
+                agent_label = agent.plot_name.get(language)
+
+                # Compute the point estimate
+                point_estimate = stat_fn(error_np).numpy()
+
+                # Compute bootstrap distribution
+                # Instead of sampling indices individually, we use our precomputed bootstrap_indices
+                bootstrap_samples = np.empty(n_bootstraps)
+                print(f'Starting {n_bootstraps} calcualtions of {stat_name}')
+                for b in range(n_bootstraps):
+                    sample = error_np[bootstrap_indices[b, :]]
+                    bootstrap_samples[b] = stat_fn(sample)
+                print(f'Finished {n_bootstraps} calcualtions of {stat_name}')
+
+                # Compute confidence interval
+                alpha = (1 - confidence_level) / 2
+                lower_bound = np.percentile(bootstrap_samples, 100 * alpha)
+                upper_bound = np.percentile(bootstrap_samples, 100 * (1 - alpha))
+
+                agent_results.extend([point_estimate, lower_bound, upper_bound])
+
+                if plot_histograms:
+                    plot_labels = {
+                        'en': {
+                            'title': "Bootstrap Distribution of {stat_name} for {agent_label}",
+                            'xlabel': "{stat_name}",
+                            'ylabel': "Frequency",
+                            'point_estimate': "Point Estimate",
+                            'ci_lower': "{confidence_level}% CI Lower",
+                            'ci_upper': "{confidence_level}% CI Upper"
+                        },
+                        'es': {
+                            'title': "Distribución Bootstrap de '{stat_name}' para errores del {agent_label}",
+                            'xlabel': "{stat_name}",
+                            'ylabel': "Frecuencia",
+                            'point_estimate': "Estimación puntual",
+                            'ci_lower': "Límite inferior IC {confidence_level}%",
+                            'ci_upper': "Límite superior IC {confidence_level}%"
+                        }
+                    }
+
+                    labels = plot_labels[language]
+
+                    plt.figure(figsize=(10, 6))
+                    plt.hist(bootstrap_samples, bins=30, alpha=0.7, edgecolor='black')
+                    plt.title(labels['title'].format(stat_name=stat_label, agent_name=agent_label))
+                    plt.xlabel(labels['xlabel'].format(stat_name=stat_label))
+                    plt.ylabel(labels['ylabel'])
+
+                    plt.axvline(point_estimate, color='red', linestyle='--', label=labels['point_estimate'])
+                    plt.axvline(lower_bound, color='green', linestyle='--', 
+                                label=labels['ci_lower'].format(confidence_level=int(confidence_level*100)))
+                    plt.axvline(upper_bound, color='green', linestyle='--', 
+                                label=labels['ci_upper'].format(confidence_level=int(confidence_level*100)))
+
+                    plt.legend()
+                    if save_plot_dir:
+                        # Replace spaces or special chars in agent_label and stat_label if needed
+                        safe_agent_label = agent_name.replace(' ', '_')
+                        safe_stat_label = stat_name.replace(' ', '_')
+                        histogram_path = os.path.join(
+                            save_plot_dir,
+                            f"{safe_agent_label}_{safe_stat_label}_bootstrap_histogram.pdf"
+                        )
+                        plt.savefig(histogram_path)
+                        print(f"Histogram saved to {histogram_path}")
+                    else:
+                        plt.show()
+                    plt.close()
+
+            # After processing all statistics for this agent, append the result
+            results.append(agent_results)
+
+        results_df = pd.DataFrame(results, columns=columns)
+        return results_df

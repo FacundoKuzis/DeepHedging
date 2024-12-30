@@ -21,7 +21,7 @@ from DeepHedging.ContingentClaims import (
     AsianArithmeticCall, AsianArithmeticPut
 )
 from DeepHedging.CostFunctions import ProportionalCost
-from DeepHedging.RiskMeasures import MAE, CVaR, Entropy, WorstCase
+from DeepHedging.RiskMeasures import MAE, CVaR, Entropy, WorstCase, Mean, StdDev
 from DeepHedging.Environments import Environment
 
 AGENTS = {
@@ -79,7 +79,7 @@ def parse_fixed_actions_paths(arg_list):
     return fixed_paths
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Evaluate Deep Hedging agents with specified parameters.")
+    parser = argparse.ArgumentParser(description="Evaluate Deep Hedging agents with bootstrap confidence intervals.")
 
     # Simulation parameters
     parser.add_argument('--T', type=float, default=22/365, help='Time to maturity (default: 22/365)')
@@ -119,10 +119,7 @@ def parse_arguments():
     parser.add_argument('--cvar_alpha', type=float, default=0.5, help='CVaR alpha (default: 0.5)')
 
     # Plot parameters
-    parser.add_argument('--min_x', type=float, default=-2.0, help='Minimum x-axis value for plots (default: -2.0)')
-    parser.add_argument('--max_x', type=float, default=2.0, help='Maximum x-axis value for plots (default: 2.0)')
-    parser.add_argument('--language', type=str, choices=['en', 'es'], default='es', help='Language for labels: "en" for English or "es" for Spanish (default: es)')
-    parser.add_argument('--plot_title', type=str, default=None, help='Title for comparison plot')
+    parser.add_argument('--language', type=str, choices=['en', 'es'], default='es', help='Language for labels: "en" or "es" (default: es)')
 
     # File paths
     parser.add_argument('--model_name', type=str, default='asian_1', help='Model name (default: asian_1)')
@@ -131,10 +128,10 @@ def parse_arguments():
     parser.add_argument('--save_plots_dir', type=str, default='assets/plots', help='Directory to save plots (default: assets/plots)')
     parser.add_argument('--save_stats_dir', type=str, default='assets/csvs', help='Directory to save statistics (default: assets/csvs)')
     parser.add_argument('--save_actions_path', type=str, default=None, 
-                        help='Directory to save each agent\'s actions as CSV files (default: None)')
+                        help='Directory to save each agent\'s actions as npy files (default: None)')
     parser.add_argument('--fixed_actions_paths', type=str, nargs='*', default=None,
-                        help='Fixed actions paths in the format agent_name=path/to/actions.csv. '
-                            'Example: agent1=path/to/agent1_actions.csv agent2=path/to/agent2_actions.csv')
+                        help='Fixed actions paths in the format agent_name=path/to/actions.npy. '
+                             'Example: agent1=path/to/agent1_actions.npy agent2=path/to/agent2_actions.npy')
 
     # New argument for agent-specific model names
     parser.add_argument('--agent_model_names', type=str, nargs='*', default=None,
@@ -142,9 +139,19 @@ def parse_arguments():
                              'Example: agent1=model1 agent2=model2')
 
     # New argument for pricing method
-    parser.add_argument('--pricing_method', type=str, choices=['fixed', 'individual'], default='fixed',
+    parser.add_argument('--pricing_method', type=str, default='fixed',
                         help='Pricing method: "fixed" to charge all agents the price of the first agent, '
                              '"individual" to charge each agent their own price (default: fixed)')
+
+    # Bootstrap parameters
+    parser.add_argument('--n_bootstraps', type=int, default=1000, help='Number of bootstrap samples (default: 1000)')
+    parser.add_argument('--confidence_level', type=float, default=0.95, help='Confidence level for intervals (default: 0.95)')
+    parser.add_argument('--plot_histograms', action='store_true', help='If set, plot bootstrap histograms.')
+    parser.add_argument('--bootstrap_plots_dir', type=str, default='assets/bootstrap_plots', help='Directory to save bootstrap histograms (default: assets/bootstrap_plots)')
+
+    # Statistics to compute
+    parser.add_argument('--statistics', type=str, nargs='+', default=['mean','std'],
+                        help='Statistics to compute. Possible values: mean, std, median. (default: mean std)')
 
     return parser.parse_args()
 
@@ -171,6 +178,30 @@ def get_contingent_claim(claim_type, strike):
     if claim_type not in claims:
         raise ValueError(f"Contingent Claim '{claim_type}' is not recognized. Available claims: {list(claims.keys())}")
     return claims[claim_type]
+
+def get_statistics(statistics):
+    stats_map = {
+        'mean': Mean(),
+        'standard_deviation': StdDev(),
+        'cvar_50': CVaR(0.5),
+        'cvar_95': CVaR(0.95),
+        'cvar_99': CVaR(0.99),
+        'worst_case': WorstCase(),
+        'mae': MAE() 
+    }
+    # Collect all available statistic names for error messaging
+    stats_instances_list = []
+    available_stats = ', '.join(stats_map.keys())
+
+    stats_instances_list = []
+    for stat in statistics:
+        stat_i = stats_map.get(stat.lower())
+        if stat_i is None:
+                f"Unrecognized statistic '{stat}'. Available statistics are: {available_stats}."
+        stats_instances_list.append(stat_i)
+
+    print(stats_instances_list)
+    return stats_instances_list
 
 def load_agent(agent_name, model_name, models_dir, instrument, contingent_claim, bump_size, path_transformation_configs, n_hedging_timesteps):
     # Initialize agent with additional parameters if necessary
@@ -271,72 +302,36 @@ def main():
     print(f"Environment initialized with primary agent: {primary_agent.name}")
     print(agents)
 
-    # Define measures
-    measures = [CVaR(0.5), CVaR(0.95), CVaR(0.99), MAE(), WorstCase()]
-
     # Define directories for saving plots and stats
     os.makedirs(args.save_plots_dir, exist_ok=True)
     os.makedirs(args.save_stats_dir, exist_ok=True)
+    if args.plot_histograms:
+        os.makedirs(args.bootstrap_plots_dir, exist_ok=True)
 
-    # Compare primary agent with other agents
-    for comparison_agent in agents[1:]:
-        print(f"Evaluating {comparison_agent.name} against {primary_agent.name}")
-        
-        # Get colors from the agent attributes or set default
-        try:
-            primary_color = primary_agent.plot_color
-        except AttributeError:
-            primary_color = 'blue'
-
-        try:
-            comparison_color = comparison_agent.plot_color
-        except AttributeError:
-            comparison_color = 'orange'
-
-        plot_title = {
-            'en': 'Terminal Hedging Error',
-            'es': 'Error de Cobertura Final'
-        }
-
-        # Get model names for the agents
-        if agent_model_names and primary_agent.name in agent_model_names:
-            primary_model_name = agent_model_names[primary_agent.name]
-        else:
-            primary_model_name = args.model_name
-
-        if agent_model_names and comparison_agent.name in agent_model_names:
-            comparison_model_name = agent_model_names[comparison_agent.name]
-        else:
-            comparison_model_name = args.model_name
-
-        # Use model names in file paths
-        save_plot_path = os.path.join(
-            args.save_plots_dir,
-            f'{primary_agent.name}_{primary_model_name}_vs_{comparison_agent.name}_{comparison_model_name}_comparison.pdf'
-        )
-        save_stats_path = os.path.join(
-            args.save_stats_dir,
-            f'{primary_agent.name}_{primary_model_name}_vs_{comparison_agent.name}_{comparison_model_name}_comparison.xlsx'
-        )
-
-        q = env.terminal_hedging_error_multiple_agents(
-            agents=[primary_agent, comparison_agent], 
-            n_paths=args.n_paths, 
-            random_seed=args.random_seed, 
-            plot_error=True, 
-            colors=[primary_color, comparison_color],  
-            loss_functions=measures, 
-            plot_title=args.plot_title if args.plot_title else plot_title.get(args.language),
-            save_plot_path=save_plot_path,
-            save_stats_path=save_stats_path,
-            min_x=args.min_x, 
-            max_x=args.max_x,
-            language=args.language,
-            save_actions_path=args.save_actions_path,
-            fixed_actions_paths=parse_fixed_actions_paths(args.fixed_actions_paths),
-            pricing_method=args.pricing_method
-        )
-        print(f"Evaluation result for {comparison_agent.name}: {q}")
+    # Perform bootstrap confidence intervals for all agents
+    print('Statistics:', args.statistics)
+    stats_instances = get_statistics(args.statistics)
+    print("Computing bootstrap confidence intervals...")
+    df = env.bootstrap_confidence_intervals(
+        agents=agents,
+        statistics=stats_instances,
+        n_paths=args.n_paths,
+        n_bootstraps=args.n_bootstraps,
+        confidence_level=args.confidence_level,
+        random_seed=args.random_seed,
+        plot_histograms=args.plot_histograms,
+        save_plot_dir=args.bootstrap_plots_dir,
+        language=args.language,
+        save_actions_path=args.save_actions_path,
+        fixed_actions_paths=parse_fixed_actions_paths(args.fixed_actions_paths),
+        pricing_method=args.pricing_method
+    )
+    agent_names = [agent.name for agent in agents]
+    stat_names = [stat.name for stat in stats_instances]
+    # Save the results
+    results_path = os.path.join(args.save_stats_dir, f"bootstrap_{'_'.join(agent_names)}_{'_'.join(stat_names)}.xlsx")
+    df.to_excel(results_path, index=False)
+    print(f"Bootstrap statistics results saved to {results_path}")
 
     print("All evaluations completed.")
 
