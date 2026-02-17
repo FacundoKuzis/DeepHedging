@@ -25,8 +25,8 @@ from DeepHedging.HedgingInstruments import TimeGANStock
 # Global Config (edit here)
 # ===========================
 S0 = 100.0
-T = 63 / 252
-N = 63
+T = 22 / 252
+N = 22
 R = 0.05
 
 TICKER = "SPY"
@@ -64,7 +64,7 @@ ACF_MAX_LAG = 10
 HIST_BINS = 50
 
 PLOTS_DIR = os.path.join(ROOT_DIR, "assets", "plots", TIMEGAN_DIR)
-METRICS_PATH = os.path.join(ROOT_DIR, "assets", "csvs", TIMEGAN_DIR, "summary_metrics.csv")
+METRICS_PATH = os.path.join(ROOT_DIR, "assets", "csvs", "timegan", "summary_metrics.csv")
 
 
 def normalize_paths(paths: np.ndarray, base: float = 100.0) -> np.ndarray:

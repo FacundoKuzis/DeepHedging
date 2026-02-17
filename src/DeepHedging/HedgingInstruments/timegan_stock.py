@@ -45,8 +45,8 @@ class TimeGANStock(Stock):
         gamma: float = 1.0,
         training_target: str = "log_returns",
         match_return_moments: bool = True,
-        input_return_clip_quantiles: Optional[tuple[float, float]] = (0.01, 0.99),
-        output_return_clip_quantiles: Optional[tuple[float, float]] = (0.01, 0.99),
+        input_return_clip_quantiles: Optional[tuple[float, float]] = None,
+        output_return_clip_quantiles: Optional[tuple[float, float]] = None,
     ):
         super().__init__(S0=S0, T=T, N=N, r=r)
 
