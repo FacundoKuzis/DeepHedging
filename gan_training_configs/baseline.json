@@ -3,8 +3,8 @@
   "t": 0.0873015873015873,
   "n": 22,
   "r": 0.05,
-  "ticker": "SPY",
-  "train_start_date": "2000-01-01",
+  "ticker": "^GSPC",
+  "train_start_date": "2005-01-01",
   "train_end_date": "2019-12-31",
   "test_start_date": "2020-01-01",
   "test_end_date": "2024-12-31",
@@ -14,7 +14,7 @@
   "retrain": true,
   "stride": 1,
   "min_windows": 300,
-  "train_epochs": 1200,
+  "train_epochs": 1000,
   "batch_size": 128,
   "noise_dim": 32,
   "layers_dim": 128,
@@ -34,3 +34,4 @@
   "hist_bins": 50,
   "normalization_base": 100.0
 }
+
