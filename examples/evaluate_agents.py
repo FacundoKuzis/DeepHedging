@@ -48,7 +48,7 @@ def parse_agent_model_names(arg_list):
     if arg_list:
         for item in arg_list:
             try:
-                agent_name, model_name = item.split('=')
+                agent_name, model_name = item.split('=', 1)
                 agent_model_names[agent_name] = model_name
             except ValueError:
                 raise argparse.ArgumentTypeError(
@@ -61,18 +61,18 @@ def parse_agent_model_names(arg_list):
 
 def parse_fixed_actions_paths(arg_list):
     """
-    Parses a list of strings in the format 'agent_name=path/to/actions.csv' into a dictionary.
+    Parses a list of strings in the format 'agent_name=path/to/actions.npy' into a dictionary.
     """
     fixed_paths = {}
     if arg_list:
         for item in arg_list:
             try:
-                agent_name, path = item.split('=')
+                agent_name, path = item.split('=', 1)
                 fixed_paths[agent_name] = path
             except ValueError:
                 raise argparse.ArgumentTypeError(
                     f"Invalid format for fixed_actions_paths: '{item}'. "
-                    "Expected format 'agent_name=path/to/actions.csv'"
+                    "Expected format 'agent_name=path/to/actions.npy'"
                 )
     if fixed_paths == {}:
         fixed_paths = None
@@ -131,10 +131,10 @@ def parse_arguments():
     parser.add_argument('--save_plots_dir', type=str, default='assets/plots', help='Directory to save plots (default: assets/plots)')
     parser.add_argument('--save_stats_dir', type=str, default='assets/csvs', help='Directory to save statistics (default: assets/csvs)')
     parser.add_argument('--save_actions_path', type=str, default=None, 
-                        help='Directory to save each agent\'s actions as CSV files (default: None)')
+                        help='Directory to save each agent\'s actions as NPY files (default: None)')
     parser.add_argument('--fixed_actions_paths', type=str, nargs='*', default=None,
-                        help='Fixed actions paths in the format agent_name=path/to/actions.csv. '
-                            'Example: agent1=path/to/agent1_actions.csv agent2=path/to/agent2_actions.csv')
+                        help='Fixed actions paths in the format agent_name=path/to/actions.npy. '
+                            'Example: agent1=path/to/agent1_actions.npy agent2=path/to/agent2_actions.npy')
 
     # New argument for agent-specific model names
     parser.add_argument('--agent_model_names', type=str, nargs='*', default=None,
@@ -219,6 +219,7 @@ def main():
 
     # Initialize agents with agent-specific model names
     agents = []
+    agent_model_names_resolved = []
     for agent_name in args.agents:
         # Get model_name for this agent
         if agent_model_names and agent_name in agent_model_names:
@@ -237,18 +238,7 @@ def main():
             n_hedging_timesteps=args.N
         )
         agents.append(agent)
-
-    # Define optimizer paths with agent-specific model names
-    optimizer_paths = {}
-    for agent in agents:
-        # Get model_name for this agent
-        if agent_model_names and agent.name in agent_model_names:
-            model_name = agent_model_names[agent.name]
-        else:
-            model_name = args.model_name  # default model_name
-
-        optimizer_path = os.path.join(args.optimizers_dir, agent.name, model_name)
-        optimizer_paths[agent.name] = optimizer_path
+        agent_model_names_resolved.append(model_name)
 
     # Initialize environment with the first agent as primary
     primary_agent = agents[0]
@@ -299,15 +289,8 @@ def main():
         }
 
         # Get model names for the agents
-        if agent_model_names and primary_agent.name in agent_model_names:
-            primary_model_name = agent_model_names[primary_agent.name]
-        else:
-            primary_model_name = args.model_name
-
-        if agent_model_names and comparison_agent.name in agent_model_names:
-            comparison_model_name = agent_model_names[comparison_agent.name]
-        else:
-            comparison_model_name = args.model_name
+        primary_model_name = agent_model_names_resolved[0]
+        comparison_model_name = agent_model_names_resolved[agents.index(comparison_agent)]
 
         # Use model names in file paths
         save_plot_path = os.path.join(

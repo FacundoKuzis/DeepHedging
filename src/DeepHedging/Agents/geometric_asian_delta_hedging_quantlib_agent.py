@@ -23,7 +23,10 @@ class QuantlibAsianGeometricAgent(BaseAgent):
         self.strike = option_class.strike
         self.option_type = option_class.option_type
         self.name = 'quantlib_asian_geometric_continuous'
-        self.plot_name = 'QuantLib Asian Geometric Continuous Delta'
+        self.plot_name = {
+            'en': 'QuantLib Asian Geometric Continuous Delta',
+            'es': 'Delta Asiática Geométrica Continua (QuantLib)'
+        }
 
         # Initialize last delta for delta hedging
         self.last_delta = None

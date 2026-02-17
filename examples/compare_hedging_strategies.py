@@ -52,7 +52,7 @@ def parse_agent_model_names(arg_list):
     if arg_list:
         for item in arg_list:
             try:
-                agent_name, model_name = item.split('=')
+                agent_name, model_name = item.split('=', 1)
                 agent_model_names[agent_name] = model_name
             except ValueError:
                 raise argparse.ArgumentTypeError(
@@ -203,6 +203,7 @@ def main():
 
     # Initialize agents with agent-specific model names
     agents = []
+    model_name_by_agent_name = {}
     for agent_name in args.agents:
         # Get model_name for this agent
         if agent_model_names and agent_name in agent_model_names:
@@ -221,6 +222,7 @@ def main():
             n_hedging_timesteps=args.N
         )
         agents.append(agent)
+        model_name_by_agent_name[agent_name] = model_name
 
     # Initialize environment with the first agent as primary
     primary_agent = agents[0]
@@ -244,10 +246,7 @@ def main():
     print(f"Agents to compare: {[agent.name for agent in agents]}")
 
     # Prepare save plot path
-    comparison_model_names = [
-        agent_model_names.get(agent.name, args.model_name) if agent_model_names else args.model_name 
-        for agent in agents
-    ]
+    comparison_model_names = [model_name_by_agent_name.get(agent_name, args.model_name) for agent_name in args.agents]
     agents_plot_names = '_vs_'.join([f"{agent.name}_{model_name}" for agent, model_name in zip(agents, comparison_model_names)])
     save_plot_filename = f'hedging_comparison_{agents_plot_names}.pdf'
     save_plot_path = os.path.join(args.save_plots_dir, save_plot_filename)

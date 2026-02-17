@@ -11,7 +11,10 @@ class GeometricAsianDeltaHedgingAgent2(DeltaHedgingAgent):
     def __init__(self, stock_model, option_class):
         super().__init__(stock_model, option_class)
         self.name = 'asian_delta_hedging_custom_formula'
-        self.plot_name = 'Geometric Asian Delta (Custom Formula)'
+        self.plot_name = {
+            'en': 'Geometric Asian Delta (Custom Formula)',
+            'es': 'Delta Asiática Geométrica (Fórmula Personalizada)'
+        }
 
     def compute_z(self, S, T_minus_t):
         """

@@ -93,9 +93,10 @@ class Environment:
         return self.risk_measure.calculate(pnl)
 
     def train(self, train_paths, val_paths = 0):
+        if self.optimizer is None:
+            raise ValueError("Optimizer is not initialized. Provide optimizer and learning_rate when creating Environment.")
 
         train_data = self.generate_data(train_paths) # (n_paths, N+1, n_instruments)
-        T_minus_t = self.get_T_minus_t(self.batch_size) # (n_paths, N)
     
         if val_paths > 0:
             val_data = self.generate_data(val_paths)
@@ -106,7 +107,8 @@ class Environment:
             epoch_losses = []
             for i in range(0, train_paths, self.batch_size):
                 batch_paths = train_data[i:i+self.batch_size]
-                loss = self.agent.train_batch(batch_paths, T_minus_t, self.optimizer, self.loss_function)
+                batch_T_minus_t = self.get_T_minus_t(batch_paths.shape[0])
+                loss = self.agent.train_batch(batch_paths, batch_T_minus_t, self.optimizer, self.loss_function)
                 epoch_losses.append(loss.numpy())
 
             avg_train_loss = np.mean(epoch_losses)
@@ -129,12 +131,15 @@ class Environment:
     def test(self, paths_to_test = None, n_paths = None, random_seed = None, 
              plot_pnl = False, plot_title = 'PnL distribution', save_plot_path = None):
         
-        if paths_to_test:
+        if paths_to_test is not None:
             paths = paths_to_test
-        elif n_paths:
-            paths = self.generate_paths(n_paths, random_seed = random_seed)
+        elif n_paths is not None:
+            paths = self.generate_data(n_paths, random_seed = random_seed)
         else:
             raise ValueError('Insert either paths_to_test or n_paths.')
+
+        if not isinstance(paths, tf.Tensor):
+            paths = tf.convert_to_tensor(paths, dtype=tf.float32)
         
         T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [paths.shape[0], 1])
@@ -165,6 +170,14 @@ class Environment:
         T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [shape, 1])
         return T_minus_t
+
+    def _get_agent_plot_name(self, agent, language='en'):
+        plot_name = getattr(agent, 'plot_name', None)
+        if isinstance(plot_name, dict):
+            return plot_name.get(language, agent.name)
+        if isinstance(plot_name, str):
+            return plot_name
+        return getattr(agent, 'name', 'unknown_agent')
 
     def terminal_hedging_error_multiple_agents(self, agents, n_paths=10_000, random_seed=None, 
             plot_error=False, plot_title='Terminal Hedging Error', save_plot_path=None, 
@@ -291,7 +304,7 @@ class Environment:
             # Plot each agent's error histogram
             for i, error in enumerate(errors):
                 plt.hist(error, bins=bins, density=True, color=colors[i], alpha=0.6, edgecolor='black', 
-                        label=f'{agents[i].plot_name.get(language)}')
+                        label=self._get_agent_plot_name(agents[i], language))
 
             plt.grid(True, linestyle='--', alpha=0.7)
             plt.title(plot_title, fontsize=14)
@@ -316,7 +329,7 @@ class Environment:
         if save_stats_path:
             os.makedirs(os.path.dirname(save_stats_path), exist_ok=True)
             data = {
-                'Agent': [agent.plot_name.get(language) for agent in agents],
+                'Agent': [self._get_agent_plot_name(agent, language) for agent in agents],
                 'Mean Error': mean_errors,
                 'Standard Deviation': std_errors,
             }
@@ -362,6 +375,9 @@ class Environment:
         Arguments:
         - optimizer_path (str): Directory path where the optimizer state will be saved.
         """
+        if self.optimizer is None:
+            raise ValueError("Optimizer is not initialized. Cannot save optimizer state.")
+
         # Ensure the directory exists
         os.makedirs(optimizer_path, exist_ok=True)
 
@@ -385,6 +401,9 @@ class Environment:
         if not os.path.exists(optimizer_path):
             warnings.warn(f"Optimizer path '{optimizer_path}' does not exist. Exiting the load function.")
             return
+
+        if self.optimizer is None and only_weights:
+            raise ValueError("Optimizer is not initialized. Initialize Environment with an optimizer before loading only weights.")
 
         variables_index_start = 2
         if not only_weights:
@@ -419,7 +438,7 @@ class Environment:
         """
 
         # Generate a single path
-        single_path = self.generate_paths(1, random_seed = random_seed)  # Shape: (1, N+1)
+        single_path = self.generate_data(1, random_seed = random_seed)  # Shape: (1, N+1, n_instruments)
         T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t_single = tf.expand_dims(T_minus_t_single, axis=0)  # Shape: (1, N)
 
@@ -428,7 +447,7 @@ class Environment:
 
         pnl, portfolio_values, cash, payoff = self.calculate_pnl(single_path, actions, include_decomposition = True)
 
-        net_portfolio_values = portfolio_values + cash
+        net_portfolio_values = tf.reduce_sum(portfolio_values, axis=2) + cash
         net_portfolio_values = net_portfolio_values.numpy()[0]
 
         # Plot the portfolio value over time
@@ -437,7 +456,7 @@ class Environment:
         ax1.bar(timesteps, net_portfolio_values, label="Net Portfolio Values", color='b', alpha=0.6)
 
         # Plot the contingent claim payoff at the final timestep as a bar
-        ax1.bar(self.N, payoff, color='r', alpha=0.6, label="Contingent Claim Payoff")
+        ax1.bar(self.N, payoff.numpy()[0], color='r', alpha=0.6, label="Contingent Claim Payoff")
 
         ax1.set_xlabel("Timestep")
         ax1.set_ylabel("Portfolio Value", color='b')
@@ -445,7 +464,7 @@ class Environment:
 
         # Create a secondary y-axis for the underlying asset price
         ax2 = ax1.twinx()
-        ax2.plot(timesteps, single_path.numpy().flatten(), label="Underlying Asset Path", color='g', alpha=0.6)
+        ax2.plot(timesteps, single_path.numpy()[0, :, 0], label="Underlying Asset Path", color='g', alpha=0.6)
         ax2.set_ylabel("Underlying Asset Price", color='g')
         ax2.tick_params(axis='y', labelcolor='g')
         ax2.axhline(y=self.contingent_claim.strike, color='orange', linestyle='-', label="Strike Price")
@@ -551,7 +570,13 @@ class Environment:
             actions = np.insert(actions, 0, 0)
 
             # Plot the actions (deltas) as step plots
-            ax1.step(timesteps, actions, where='post', label=f"{agent.plot_name.get(language, agent.name)} {legend_labels['actions'].get(language, 'Actions')}", alpha=0.7)
+            ax1.step(
+                timesteps,
+                actions,
+                where='post',
+                label=f"{self._get_agent_plot_name(agent, language)} {legend_labels['actions'].get(language, 'Actions')}",
+                alpha=0.7
+            )
 
         # Initialize secondary axis for stock price
         ax2 = ax1.twinx()
@@ -761,7 +786,7 @@ class Environment:
                     bootstrap_stats[stat_fn].extend(stat_values.tolist())
 
             # Compute confidence intervals
-            agent_result = {'Agent': agent.plot_name.get(language, agent.name)}
+            agent_result = {'Agent': self._get_agent_plot_name(agent, language)}
             for stat_fn in statistics:
                 stat_name = stat_fn.name
                 stats = np.array(bootstrap_stats[stat_fn], dtype=np.float32)
@@ -775,7 +800,7 @@ class Environment:
 
                 if plot_histograms:
                     stat_plot_name = getattr(stat_fn, 'plot_name', stat_fn.__name__)
-                    agent_plot_name = agent.plot_name.get(language, agent.name)
+                    agent_plot_name = self._get_agent_plot_name(agent, language)
                     plot_labels = {
                         'en': {
                             'title': f"Bootstrap Distribution of {stat_plot_name} for {agent_plot_name}",

@@ -48,7 +48,7 @@ def parse_agent_model_names(arg_list):
     if arg_list:
         for item in arg_list:
             try:
-                agent_name, model_name = item.split('=')
+                agent_name, model_name = item.split('=', 1)
                 agent_model_names[agent_name] = model_name
             except ValueError:
                 raise argparse.ArgumentTypeError(
@@ -61,18 +61,18 @@ def parse_agent_model_names(arg_list):
 
 def parse_fixed_actions_paths(arg_list):
     """
-    Parses a list of strings in the format 'agent_name=path/to/actions.csv' into a dictionary.
+    Parses a list of strings in the format 'agent_name=path/to/actions.npy' into a dictionary.
     """
     fixed_paths = {}
     if arg_list:
         for item in arg_list:
             try:
-                agent_name, path = item.split('=')
+                agent_name, path = item.split('=', 1)
                 fixed_paths[agent_name] = path
             except ValueError:
                 raise argparse.ArgumentTypeError(
                     f"Invalid format for fixed_actions_paths: '{item}'. "
-                    "Expected format 'agent_name=path/to/actions.csv'"
+                    "Expected format 'agent_name=path/to/actions.npy'"
                 )
     if fixed_paths == {}:
         fixed_paths = None
@@ -150,8 +150,8 @@ def parse_arguments():
     parser.add_argument('--bootstrap_plots_dir', type=str, default='assets/bootstrap_plots', help='Directory to save bootstrap histograms (default: assets/bootstrap_plots)')
 
     # Statistics to compute
-    parser.add_argument('--statistics', type=str, nargs='+', default=['mean','std'],
-                        help='Statistics to compute. Possible values: mean, std, median. (default: mean std)')
+    parser.add_argument('--statistics', type=str, nargs='+', default=['mean', 'standard_deviation'],
+                        help='Statistics to compute. Possible values: mean, standard_deviation, cvar_50, cvar_95, cvar_99, worst_case, mae.')
 
     return parser.parse_args()
 
@@ -182,6 +182,7 @@ def get_contingent_claim(claim_type, strike):
 def get_statistics(statistics):
     stats_map = {
         'mean': Mean(),
+        'std': StdDev(),
         'standard_deviation': StdDev(),
         'cvar_50': CVaR(0.5),
         'cvar_95': CVaR(0.95),
@@ -190,17 +191,15 @@ def get_statistics(statistics):
         'mae': MAE() 
     }
     # Collect all available statistic names for error messaging
-    stats_instances_list = []
     available_stats = ', '.join(stats_map.keys())
 
     stats_instances_list = []
     for stat in statistics:
         stat_i = stats_map.get(stat.lower())
         if stat_i is None:
-                f"Unrecognized statistic '{stat}'. Available statistics are: {available_stats}."
+            raise ValueError(f"Unrecognized statistic '{stat}'. Available statistics are: {available_stats}.")
         stats_instances_list.append(stat_i)
 
-    print(stats_instances_list)
     return stats_instances_list
 
 def load_agent(agent_name, model_name, models_dir, instrument, contingent_claim, bump_size, path_transformation_configs, n_hedging_timesteps):
@@ -268,18 +267,6 @@ def main():
             n_hedging_timesteps=args.N
         )
         agents.append(agent)
-
-    # Define optimizer paths with agent-specific model names
-    optimizer_paths = {}
-    for agent in agents:
-        # Get model_name for this agent
-        if agent_model_names and agent.name in agent_model_names:
-            model_name = agent_model_names[agent.name]
-        else:
-            model_name = args.model_name  # default model_name
-
-        optimizer_path = os.path.join(args.optimizers_dir, agent.name, model_name)
-        optimizer_paths[agent.name] = optimizer_path
 
     # Initialize environment with the first agent as primary
     primary_agent = agents[0]
