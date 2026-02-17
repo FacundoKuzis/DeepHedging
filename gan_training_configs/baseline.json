@@ -23,7 +23,7 @@
   "gamma": 0.5,
   "random_seed": 42,
   "training_target": "log_returns",
-  "match_return_moments": true,
+  "match_return_moments": false,
   "input_return_clip_quantiles": null,
   "output_return_clip_quantiles": null,
   "n_synth_paths": 500,
