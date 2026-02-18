@@ -30,6 +30,14 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 from DeepHedging.HedgingInstruments import TimeGANStock
+from DeepHedging.utils.timegan_metrics import (
+    cumulative_log_returns,
+    dependence_metrics_df,
+    distribution_vectors_df,
+    max_drawdown,
+    path_risk_metrics_df,
+    tail_metrics_df,
+)
 
 
 def normalize_paths(paths: np.ndarray, base: float) -> np.ndarray:
@@ -478,6 +486,10 @@ def save_training_scores_available(
         {"scope": "testing", "metric": "test_csv_exists_before_run", "value": int(test_csv_exists_before)},
         {"scope": "testing", "metric": "test_csv_exists_after_run", "value": int(test_csv_exists_after)},
         {"scope": "training", "metric": "train_generate_paths_wallclock_seconds", "value": float(train_generate_seconds)},
+        {"scope": "training", "metric": "schema_version", "value": int(get_schema_version(config))},
+        {"scope": "training", "metric": "fit_input_mode", "value": str(config.get("fit_input_mode", "legacy_series"))},
+        {"scope": "training", "metric": "return_transform", "value": str(config.get("return_transform", "minmax"))},
+        {"scope": "training", "metric": "feature_mode", "value": str(config.get("feature_mode", "returns_only"))},
         {"scope": "training", "metric": "train_epochs_requested", "value": int(config["train_epochs"])},
         {"scope": "training", "metric": "batch_size_requested", "value": int(config["batch_size"])},
         {"scope": "training", "metric": "learning_rate_requested", "value": float(config["learning_rate"])},
@@ -499,7 +511,7 @@ def save_training_scores_available(
     pd.DataFrame(rows).to_csv(output_path, index=False)
 
 
-def required_keys() -> set[str]:
+def required_keys_v1() -> set[str]:
     return {
         "s0",
         "t",
@@ -538,6 +550,32 @@ def required_keys() -> set[str]:
     }
 
 
+def required_keys_v2() -> set[str]:
+    return required_keys_v1().union(
+        {
+            "schema_version",
+            "fit_input_mode",
+            "return_transform",
+            "transform_eps",
+            "feature_mode",
+            "feature_rolling_vol_window",
+            "eval_tail_quantiles",
+            "eval_exceedance_thresholds",
+            "eval_metrics_version",
+            "legacy_return_clip",
+        }
+    )
+
+
+def get_schema_version(config: dict[str, Any]) -> int:
+    version = config.get("schema_version", 1)
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ValueError(f"schema_version must be integer 1 or 2. Got {version!r}.")
+    if version not in {1, 2}:
+        raise ValueError(f"Unsupported schema_version={version}. Allowed values: 1, 2.")
+    return int(version)
+
+
 def validate_quantiles(value: Any, key: str) -> None:
     if value is None:
         return
@@ -549,12 +587,36 @@ def validate_quantiles(value: Any, key: str) -> None:
         raise ValueError(f"'{key}' must satisfy 0 <= low < high <= 1.")
 
 
+def validate_float_list(value: Any, key: str, min_len: int, lower_bound: float, upper_bound: float) -> None:
+    if not isinstance(value, list) or len(value) < min_len:
+        raise ValueError(f"'{key}' must be a list with at least {min_len} values.")
+    for item in value:
+        if not isinstance(item, (int, float)):
+            raise ValueError(f"'{key}' must contain only numeric values.")
+        num = float(item)
+        if not (lower_bound < num < upper_bound):
+            raise ValueError(f"'{key}' values must satisfy {lower_bound} < x < {upper_bound}. Got {num}.")
+
+
+def validate_positive_float_list(value: Any, key: str, min_len: int) -> None:
+    if not isinstance(value, list) or len(value) < min_len:
+        raise ValueError(f"'{key}' must be a list with at least {min_len} values.")
+    for item in value:
+        if not isinstance(item, (int, float)):
+            raise ValueError(f"'{key}' must contain only numeric values.")
+        num = float(item)
+        if num <= 0:
+            raise ValueError(f"'{key}' values must be > 0. Got {num}.")
+
+
 def validate_config(config: dict[str, Any]) -> None:
+    schema_version = get_schema_version(config)
+    req = required_keys_v1() if schema_version == 1 else required_keys_v2()
+    allowed = req if schema_version == 2 else req.union({"schema_version"})
     keys = set(config.keys())
-    req = required_keys()
 
     missing = sorted(req - keys)
-    extra = sorted(keys - req)
+    extra = sorted(keys - allowed)
     if missing:
         raise ValueError(f"Missing required keys: {missing}")
     if extra:
@@ -566,6 +628,8 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(f"'{key}' cannot be null.")
 
     bool_keys = {"download_if_missing", "retrain", "match_return_moments"}
+    if schema_version == 2:
+        bool_keys = bool_keys.union({"legacy_return_clip"})
     for key in bool_keys:
         if not isinstance(config[key], bool):
             raise ValueError(f"'{key}' must be boolean.")
@@ -587,12 +651,16 @@ def validate_config(config: dict[str, Any]) -> None:
         "acf_max_lag",
         "hist_bins",
     }
+    if schema_version == 2:
+        int_positive = int_positive.union({"feature_rolling_vol_window"})
     for key in int_positive:
         value = config[key]
         if not isinstance(value, int) or value <= 0:
             raise ValueError(f"'{key}' must be a positive integer.")
 
     float_positive = {"s0", "t", "r", "learning_rate", "gamma", "normalization_base"}
+    if schema_version == 2:
+        float_positive = float_positive.union({"transform_eps"})
     for key in float_positive:
         value = config[key]
         if not isinstance(value, (int, float)):
@@ -610,6 +678,10 @@ def validate_config(config: dict[str, Any]) -> None:
         "price_col",
         "training_target",
     }
+    if schema_version == 2:
+        string_keys = string_keys.union(
+            {"fit_input_mode", "return_transform", "feature_mode", "eval_metrics_version"}
+        )
     for key in string_keys:
         value = config[key]
         if not isinstance(value, str) or not value.strip():
@@ -632,6 +704,37 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("test_start_date must be <= test_end_date.")
     if config["acf_max_lag"] >= config["n"]:
         raise ValueError("acf_max_lag must be < n.")
+
+    if schema_version == 2:
+        if str(config["fit_input_mode"]).strip().lower() not in {"legacy_series", "explicit_windows"}:
+            raise ValueError("fit_input_mode must be 'legacy_series' or 'explicit_windows'.")
+        if str(config["return_transform"]).strip().lower() not in {"minmax", "gaussian_cdf", "empirical_cdf"}:
+            raise ValueError("return_transform must be one of {'minmax','gaussian_cdf','empirical_cdf'}.")
+        if str(config["feature_mode"]).strip().lower() not in {
+            "returns_only",
+            "returns_plus_abs_return",
+            "returns_plus_rolling_vol",
+        }:
+            raise ValueError(
+                "feature_mode must be one of {'returns_only','returns_plus_abs_return','returns_plus_rolling_vol'}."
+            )
+        eps = float(config["transform_eps"])
+        if not (0.0 < eps < 0.5):
+            raise ValueError("transform_eps must satisfy 0 < transform_eps < 0.5.")
+        if str(config["eval_metrics_version"]).strip().lower() != "v2":
+            raise ValueError("eval_metrics_version must be 'v2' for schema_version=2.")
+        validate_float_list(
+            config["eval_tail_quantiles"],
+            key="eval_tail_quantiles",
+            min_len=2,
+            lower_bound=0.0,
+            upper_bound=1.0,
+        )
+        validate_positive_float_list(
+            config["eval_exceedance_thresholds"],
+            key="eval_exceedance_thresholds",
+            min_len=1,
+        )
 
 
 def normalize_config_name(user_input: str) -> str:
@@ -670,6 +773,20 @@ def quantiles_to_tuple(value: Any) -> Any:
     return (float(value[0]), float(value[1]))
 
 
+def parse_float_list(value: Any) -> list[float]:
+    if value is None:
+        return []
+    return [float(x) for x in value]
+
+
+def default_tail_quantiles() -> list[float]:
+    return [0.001, 0.005, 0.01, 0.05, 0.95, 0.99, 0.995, 0.999]
+
+
+def default_exceedance_thresholds() -> list[float]:
+    return [0.01, 0.02, 0.03]
+
+
 def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> None:
     output_root = os.path.normpath(r"G:/Mi unidad/Tesis2026/TimeGanTraining")
     if not os.path.exists(output_root):
@@ -677,6 +794,18 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
             f"Output root does not exist: {output_root}. "
             "Mount/create it first and rerun."
         )
+
+    schema_version = get_schema_version(config)
+    fit_input_mode = str(config.get("fit_input_mode", "legacy_series"))
+    return_transform = str(config.get("return_transform", "minmax"))
+    transform_eps = float(config.get("transform_eps", 1e-6))
+    feature_mode = str(config.get("feature_mode", "returns_only"))
+    feature_rolling_vol_window = int(config.get("feature_rolling_vol_window", 5))
+    legacy_return_clip = bool(config.get("legacy_return_clip", True))
+    eval_tail_quantiles = parse_float_list(config.get("eval_tail_quantiles", default_tail_quantiles()))
+    eval_exceedance_thresholds = parse_float_list(
+        config.get("eval_exceedance_thresholds", default_exceedance_thresholds())
+    )
 
     run_dir = os.path.join(output_root, run_name)
     plots_dir = os.path.join(run_dir, "plots")
@@ -696,6 +825,7 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
     config_copy_path = os.path.join(run_dir, os.path.basename(config_path))
     shutil.copy2(config_path, config_copy_path)
     print(f"[run:{run_name}] Config validated and copied to: {config_copy_path}")
+    print(f"[run:{run_name}] schema_version={schema_version}, fit_input_mode={fit_input_mode}")
 
     ticker = config["ticker"]
     interval = config["interval"]
@@ -714,6 +844,11 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
     train_metrics_path = os.path.join(scores_dir, "summary_metrics_train.csv")
     test_metrics_path = os.path.join(scores_dir, "summary_metrics_test.csv")
     training_scores_path = os.path.join(scores_dir, "training_scores_available.csv")
+    train_manifest_path = os.path.join(scores_dir, "train_manifest.csv")
+    dep_returns_path = os.path.join(scores_dir, "dependence_metrics_returns.csv")
+    dep_squared_path = os.path.join(scores_dir, "dependence_metrics_squared_returns.csv")
+    tail_metrics_path = os.path.join(scores_dir, "tail_metrics.csv")
+    path_risk_metrics_path = os.path.join(scores_dir, "path_risk_metrics.csv")
 
     model_exists_before = os.path.exists(model_path)
     train_csv_exists_before = os.path.exists(train_csv_path)
@@ -752,6 +887,12 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
         match_return_moments=bool(config["match_return_moments"]),
         input_return_clip_quantiles=quantiles_to_tuple(config["input_return_clip_quantiles"]),
         output_return_clip_quantiles=quantiles_to_tuple(config["output_return_clip_quantiles"]),
+        fit_input_mode=fit_input_mode,
+        return_transform=return_transform,
+        transform_eps=transform_eps,
+        feature_mode=feature_mode,
+        feature_rolling_vol_window=feature_rolling_vol_window,
+        legacy_return_clip=legacy_return_clip,
     )
     train_gen_start = time.perf_counter()
     synth_paths = train_instrument.generate_paths(
@@ -763,6 +904,12 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
     train_csv_exists_after = os.path.exists(train_csv_path)
     print(f"[run:{run_name}] Synthetic paths generated: {synth_paths.shape}")
     print(f"[run:{run_name}] Training/generation wallclock seconds: {train_generate_seconds:.3f}")
+
+    manifest_df = train_instrument.get_training_manifest()
+    if manifest_df is not None and not manifest_df.empty:
+        manifest_df.to_csv(train_manifest_path, index=False)
+    else:
+        pd.DataFrame().to_csv(train_manifest_path, index=False)
 
     print(f"[run:{run_name}] Loading train/test real windows for in-sample and out-of-sample comparison...")
     test_instrument = TimeGANStock(
@@ -793,6 +940,12 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
         match_return_moments=bool(config["match_return_moments"]),
         input_return_clip_quantiles=quantiles_to_tuple(config["input_return_clip_quantiles"]),
         output_return_clip_quantiles=quantiles_to_tuple(config["output_return_clip_quantiles"]),
+        fit_input_mode=fit_input_mode,
+        return_transform=return_transform,
+        transform_eps=transform_eps,
+        feature_mode=feature_mode,
+        feature_rolling_vol_window=feature_rolling_vol_window,
+        legacy_return_clip=legacy_return_clip,
     )
     real_paths = test_instrument.get_real_windows(
         int(config["n_real_windows_compare"]),
@@ -878,6 +1031,99 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
     all_summary.to_csv(summary_all_metrics_path, index=False)
     test_split["summary"].to_csv(summary_test_legacy_path, index=False)
 
+    dep_returns = pd.concat(
+        [
+            dependence_metrics_df(
+                train_split["real_paths_norm"],
+                train_split["synth_paths_norm"],
+                "train",
+                int(config["acf_max_lag"]),
+                squared=False,
+            ),
+            dependence_metrics_df(
+                test_split["real_paths_norm"],
+                test_split["synth_paths_norm"],
+                "test",
+                int(config["acf_max_lag"]),
+                squared=False,
+            ),
+        ],
+        ignore_index=True,
+    )
+    dep_squared = pd.concat(
+        [
+            dependence_metrics_df(
+                train_split["real_paths_norm"],
+                train_split["synth_paths_norm"],
+                "train",
+                int(config["acf_max_lag"]),
+                squared=True,
+            ),
+            dependence_metrics_df(
+                test_split["real_paths_norm"],
+                test_split["synth_paths_norm"],
+                "test",
+                int(config["acf_max_lag"]),
+                squared=True,
+            ),
+        ],
+        ignore_index=True,
+    )
+    tail_df = pd.concat(
+        [
+            tail_metrics_df(
+                train_split["real_paths_norm"],
+                train_split["synth_paths_norm"],
+                "train",
+                eval_tail_quantiles,
+                eval_exceedance_thresholds,
+            ),
+            tail_metrics_df(
+                test_split["real_paths_norm"],
+                test_split["synth_paths_norm"],
+                "test",
+                eval_tail_quantiles,
+                eval_exceedance_thresholds,
+            ),
+        ],
+        ignore_index=True,
+    )
+    path_risk_df = pd.concat(
+        [
+            path_risk_metrics_df(train_split["real_paths_norm"], train_split["synth_paths_norm"], "train"),
+            path_risk_metrics_df(test_split["real_paths_norm"], test_split["synth_paths_norm"], "test"),
+        ],
+        ignore_index=True,
+    )
+
+    dep_returns.to_csv(dep_returns_path, index=False)
+    dep_squared.to_csv(dep_squared_path, index=False)
+    tail_df.to_csv(tail_metrics_path, index=False)
+    path_risk_df.to_csv(path_risk_metrics_path, index=False)
+
+    for split_name, split_data in [("train", train_split), ("test", test_split)]:
+        split_dir = os.path.join(data_dir, split_name)
+        os.makedirs(split_dir, exist_ok=True)
+        real_cum = cumulative_log_returns(split_data["real_paths_norm"])
+        synth_cum = cumulative_log_returns(split_data["synth_paths_norm"])
+        real_mdd = max_drawdown(split_data["real_paths_norm"])
+        synth_mdd = max_drawdown(split_data["synth_paths_norm"])
+
+        pd.concat(
+            [
+                distribution_vectors_df(real_cum, split_name, "real", "cumulative_log_return"),
+                distribution_vectors_df(synth_cum, split_name, "synthetic", "cumulative_log_return"),
+            ],
+            ignore_index=True,
+        ).to_csv(os.path.join(split_dir, "dist_cumulative_log_return.csv"), index=False)
+        pd.concat(
+            [
+                distribution_vectors_df(real_mdd, split_name, "real", "max_drawdown"),
+                distribution_vectors_df(synth_mdd, split_name, "synthetic", "max_drawdown"),
+            ],
+            ignore_index=True,
+        ).to_csv(os.path.join(split_dir, "dist_max_drawdown.csv"), index=False)
+
     save_training_scores_available(
         output_path=training_scores_path,
         run_name=run_name,
@@ -898,6 +1144,10 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
     print(f"[run:{run_name}] Saved training metrics: {train_metrics_path}")
     print(f"[run:{run_name}] Saved testing metrics: {test_metrics_path}")
     print(f"[run:{run_name}] Saved training scores: {training_scores_path}")
+    print(f"[run:{run_name}] Saved training manifest: {train_manifest_path}")
+    print(f"[run:{run_name}] Saved dependence metrics: {dep_returns_path} and {dep_squared_path}")
+    print(f"[run:{run_name}] Saved tail metrics: {tail_metrics_path}")
+    print(f"[run:{run_name}] Saved path-risk metrics: {path_risk_metrics_path}")
     print(f"[run:{run_name}] Saved plot-input CSVs: {data_dir}")
     print(f"[run:{run_name}] Saved plots: {plots_dir}")
 

@@ -463,3 +463,69 @@ Key raw values (from `summary_metrics_test.csv`) to understand directionality:
 
 Artifacts:
 - `G:/Mi unidad/Tesis2026/TimeGanTraining/<run_name>/...`
+
+---
+
+## 9) TimeGAN v2 Protocol (Urgent Additions)
+
+### 9.1 Core v2 Changes
+1. Explicit-window fitting:
+   - Training tensor is now built in-repo with shape `(n_windows, seq_len, n_features)` when `fit_input_mode="explicit_windows"`.
+   - This bypasses the internal stride-1 segmentation path from `ydata-synthetic` and preserves configured `stride`.
+2. Return transforms:
+   - Supported transforms: `minmax`, `gaussian_cdf`, `empirical_cdf`.
+   - For `gaussian_cdf` and `empirical_cdf`, numerical clipping is applied only in `u`-space via `transform_eps`.
+   - Legacy return hard-clip is now explicitly controlled by `legacy_return_clip`.
+3. Feature channels:
+   - `returns_only`
+   - `returns_plus_abs_return`
+   - `returns_plus_rolling_vol`
+4. Diagnostics v2:
+   - `dependence_metrics_returns.csv`
+   - `dependence_metrics_squared_returns.csv`
+   - `tail_metrics.csv`
+   - `path_risk_metrics.csv`
+   - `train_manifest.csv`
+
+### 9.2 Schema v2 Config Contract
+New required keys under `schema_version=2`:
+- `fit_input_mode`, `return_transform`, `transform_eps`
+- `feature_mode`, `feature_rolling_vol_window`
+- `eval_tail_quantiles`, `eval_exceedance_thresholds`
+- `eval_metrics_version`, `legacy_return_clip`
+
+Backward compatibility:
+- `schema_version=1` configs remain runnable.
+- If `schema_version` is omitted, v1 validation is applied.
+
+### 9.3 New Experiment Matrix (`baseline_11` ... `baseline_15`)
+All five runs use:
+- `schema_version=2`
+- `fit_input_mode=explicit_windows`
+- `match_return_moments=false`
+- `input_return_clip_quantiles=null`
+- `output_return_clip_quantiles=null`
+- train/test split unchanged (`^GSPC`, 2005-2019 train, 2020-2024 test)
+
+Run intents:
+- `baseline_11`: control for explicit-window fit with `minmax` + `returns_only`.
+- `baseline_12`: isolate effect of `gaussian_cdf` with same hyperparams as 11.
+- `baseline_13`: isolate effect of `empirical_cdf` with same hyperparams as 11.
+- `baseline_14`: add second feature channel (`returns_plus_abs_return`) with `gaussian_cdf`.
+- `baseline_15`: regime-aware variant (`returns_plus_rolling_vol`, higher capacity and epochs) with `empirical_cdf`.
+
+### 9.4 Interpretation Template for Expert Review
+For each v2 run, report:
+1. Training manifold sanity:
+   - `n_windows`, `seq_len`, `n_features`, effective stride from `train_manifest.csv`.
+2. Tail behavior:
+   - quantile-value errors at 1% and 0.1%,
+   - exceedance probability errors at configured thresholds.
+3. Dependence behavior:
+   - mean absolute lag error for log-returns ACF,
+   - mean absolute lag error for squared-log-returns ACF.
+4. Path risk:
+   - cumulative log-return distribution match,
+   - max-drawdown moments and p95 error.
+5. Legacy continuity:
+   - compare `summary_metrics_test.csv` against `baseline_9` to assess trade-offs.
