@@ -16,6 +16,7 @@ import os
 import shutil
 import sys
 import time
+import argparse
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -149,9 +150,19 @@ def plot_hist(
     output_path: str,
     hist_bins: int,
 ) -> None:
+    real = np.asarray(real, dtype=np.float64).reshape(-1)
+    synth = np.asarray(synth, dtype=np.float64).reshape(-1)
+    lower = min(np.min(real), np.min(synth))
+    upper = max(np.max(real), np.max(synth))
+    if not np.isfinite(lower) or not np.isfinite(upper):
+        raise ValueError(f"Non-finite values found while plotting histogram '{title}'.")
+    if upper <= lower:
+        upper = lower + 1e-12
+    edges = np.linspace(lower, upper, hist_bins + 1)
+
     plt.figure(figsize=(10, 6))
-    plt.hist(real, bins=hist_bins, alpha=0.6, density=True, label="Real")
-    plt.hist(synth, bins=hist_bins, alpha=0.6, density=True, label="Synthetic")
+    plt.hist(real, bins=edges, alpha=0.6, density=True, label="Real")
+    plt.hist(synth, bins=edges, alpha=0.6, density=True, label="Synthetic")
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel("Density")
@@ -623,20 +634,25 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("acf_max_lag must be < n.")
 
 
-def require_config_name_only(user_input: str) -> str:
+def normalize_config_name(user_input: str) -> str:
     name = str(user_input).strip()
     if not name:
         raise ValueError("Config file name cannot be empty.")
     if os.path.basename(name) != name:
         raise ValueError("Provide only the file name (no paths).")
     if not name.endswith(".json"):
-        raise ValueError("Config file name must end with '.json'.")
+        name = f"{name}.json"
     return name
 
 
-def load_config(configs_dir: str) -> tuple[str, str, dict[str, Any]]:
-    user_input = input("Enter JSON config file name from 'gan_training_configs' (example: my_run.json): ").strip()
-    config_filename = require_config_name_only(user_input)
+def load_config(configs_dir: str, config_name: str | None = None) -> tuple[str, str, dict[str, Any]]:
+    if config_name is None:
+        user_input = input(
+            "Enter JSON config file name from 'gan_training_configs' (example: my_run.json): "
+        ).strip()
+    else:
+        user_input = str(config_name).strip()
+    config_filename = normalize_config_name(user_input)
     config_path = os.path.join(configs_dir, config_filename)
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found: {config_path}")
@@ -819,7 +835,7 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
         plot_overlay_paths(
             real_paths_norm=split_data["real_paths_norm"],
             synth_paths_norm=split_data["synth_paths_norm"],
-            output_path=os.path.join(split_plots_dir, "overlay_paths_normalized.pdf"),
+            output_path=os.path.join(split_plots_dir, "overlay_paths_normalized.jpg"),
             n_plot_paths=int(config["n_plot_paths"]),
         )
         plot_hist(
@@ -827,7 +843,7 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
             split_data["synth_terminal_returns"],
             title=f"Terminal Returns: Real {split_name.capitalize()} vs Synthetic",
             xlabel="Terminal return",
-            output_path=os.path.join(split_plots_dir, "terminal_returns_hist.pdf"),
+            output_path=os.path.join(split_plots_dir, "terminal_returns_hist.jpg"),
             hist_bins=int(config["hist_bins"]),
         )
         plot_hist(
@@ -835,7 +851,7 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
             split_data["synth_log_returns"].reshape(-1),
             title=f"One-Step Log Returns: Real {split_name.capitalize()} vs Synthetic",
             xlabel="Log return",
-            output_path=os.path.join(split_plots_dir, "one_step_log_returns_hist.pdf"),
+            output_path=os.path.join(split_plots_dir, "one_step_log_returns_hist.jpg"),
             hist_bins=int(config["hist_bins"]),
         )
         plot_hist(
@@ -843,13 +859,13 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
             split_data["synth_rolling_vol"],
             title=f"Rolling Volatility ({config['rolling_vol_window']}): Real {split_name.capitalize()} vs Synthetic",
             xlabel="Rolling volatility",
-            output_path=os.path.join(split_plots_dir, "rolling_volatility_hist.pdf"),
+            output_path=os.path.join(split_plots_dir, "rolling_volatility_hist.jpg"),
             hist_bins=int(config["hist_bins"]),
         )
         plot_acf(
             real_acf=split_data["real_acf"],
             synth_acf=split_data["synth_acf"],
-            output_path=os.path.join(split_plots_dir, "acf_lags.pdf"),
+            output_path=os.path.join(split_plots_dir, "acf_lags.jpg"),
         )
 
     print(f"[run:{run_name}] Saving CSV plot-input datasets and scores...")
@@ -887,11 +903,19 @@ def run_simulation(run_name: str, config_path: str, config: dict[str, Any]) -> N
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Run TimeGAN simulator from JSON config.")
+    parser.add_argument(
+        "config_name",
+        nargs="?",
+        help="Optional JSON config filename in ./gan_training_configs (extension .json optional).",
+    )
+    args = parser.parse_args()
+
     configs_dir = os.path.join(os.getcwd(), "gan_training_configs")
     if not os.path.isdir(configs_dir):
         raise FileNotFoundError(f"Config folder not found: {configs_dir}")
 
-    run_name, config_path, config = load_config(configs_dir)
+    run_name, config_path, config = load_config(configs_dir, config_name=args.config_name)
     print(f"[run:{run_name}] Loaded config: {config_path}")
     validate_config(config)
     run_simulation(run_name=run_name, config_path=config_path, config=config)
