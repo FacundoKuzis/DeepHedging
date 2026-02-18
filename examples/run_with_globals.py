@@ -23,7 +23,7 @@ from DeepHedging.Agents import (
     GeometricAsianNumericalDeltaHedgingAgent, QuantlibAsianGeometricAgent,
     ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent, MonteCarloAgent
 )
-from DeepHedging.HedgingInstruments import GBMStock, TimeGANStock
+from DeepHedging.HedgingInstruments import GBMStock, TimeGANStock, DiffusionStock
 from DeepHedging.ContingentClaims import (
     EuropeanCall, EuropeanPut, AsianGeometricCall, AsianGeometricPut,
     AsianArithmeticCall, AsianArithmeticPut
@@ -45,7 +45,7 @@ R = 0.05
 S0 = 100.0
 SIGMA = 0.2
 STRIKE = 100.0
-INSTRUMENT_NAME = "GBMStock"  # "GBMStock" or "TimeGANStock"
+INSTRUMENT_NAME = "GBMStock"  # "GBMStock" | "TimeGANStock" | "DiffusionStock"
 
 # TimeGAN (used when INSTRUMENT_NAME == "TimeGANStock")
 TIMEGAN_TICKER = "SPY"
@@ -71,6 +71,44 @@ TIMEGAN_TRAINING_TARGET = "log_returns"  # "log_returns" or "price_levels"
 TIMEGAN_MATCH_RETURN_MOMENTS = True
 TIMEGAN_INPUT_RETURN_CLIP_QUANTILES = (0.01, 0.99)
 TIMEGAN_OUTPUT_RETURN_CLIP_QUANTILES = (0.01, 0.99)
+
+# Diffusion (used when INSTRUMENT_NAME == "DiffusionStock")
+DIFFUSION_TICKER = "^GSPC"
+DIFFUSION_START_DATE = "2005-01-01"
+DIFFUSION_END_DATE = "2019-12-31"
+DIFFUSION_INTERVAL = "1d"
+DIFFUSION_PRICE_COL = "Close"
+DIFFUSION_CSV_PATH = os.path.join("assets", "csvs", "diffusion", "gspc_2005_2019_1d.csv")
+DIFFUSION_MODEL_DIR = os.path.join("assets", "models", "diffusion", "gspc_diffusion_N63")
+DIFFUSION_DOWNLOAD_IF_MISSING = True
+DIFFUSION_RETRAIN = False
+DIFFUSION_STRIDE = 2
+DIFFUSION_MIN_WINDOWS = 300
+DIFFUSION_TRAIN_EPOCHS = 250
+DIFFUSION_BATCH_SIZE = 128
+DIFFUSION_LR = 2e-4
+DIFFUSION_WEIGHT_DECAY = 0.0
+DIFFUSION_GRAD_CLIP_NORM = 1.0
+DIFFUSION_USE_EMA = True
+DIFFUSION_EMA_DECAY = 0.999
+DIFFUSION_RANDOM_SEED = 42
+DIFFUSION_TRAINING_TARGET = "log_returns"
+DIFFUSION_RETURN_TRANSFORM = "gaussian_cdf"  # "minmax" | "gaussian_cdf" | "empirical_cdf"
+DIFFUSION_TRANSFORM_EPS = 1e-6
+DIFFUSION_FEATURE_MODE = "returns_only"  # "returns_only" | "returns_plus_abs_return" | "returns_plus_rolling_vol"
+DIFFUSION_FEATURE_ROLLING_VOL_WINDOW = 5
+DIFFUSION_LEGACY_RETURN_CLIP = False
+DIFFUSION_STEPS = 200
+DIFFUSION_BETA_SCHEDULE = "linear"  # "linear" | "cosine"
+DIFFUSION_BETA_START = 1e-4
+DIFFUSION_BETA_END = 0.02
+DIFFUSION_MODEL_HIDDEN_DIM = 128
+DIFFUSION_MODEL_NUM_RES_BLOCKS = 4
+DIFFUSION_MODEL_DROPOUT = 0.1
+DIFFUSION_TIME_EMBEDDING_DIM = 64
+DIFFUSION_SAMPLER_TYPE = "ddpm"  # "ddpm" | "ddim"
+DIFFUSION_SAMPLE_STEPS = 200
+DIFFUSION_DDIM_ETA = 0.0
 
 # Instruments/claim
 CONTINGENT_CLAIM_NAME = "AsianGeometricCall"
@@ -187,9 +225,55 @@ def build_instrument():
             output_return_clip_quantiles=TIMEGAN_OUTPUT_RETURN_CLIP_QUANTILES,
         )
 
+    if INSTRUMENT_NAME == "DiffusionStock":
+        csv_path = os.path.join(ROOT_DIR, DIFFUSION_CSV_PATH)
+        model_dir = os.path.join(ROOT_DIR, DIFFUSION_MODEL_DIR)
+        return DiffusionStock(
+            S0=S0,
+            T=T,
+            N=N,
+            r=R,
+            ticker=DIFFUSION_TICKER,
+            start_date=DIFFUSION_START_DATE,
+            end_date=DIFFUSION_END_DATE,
+            interval=DIFFUSION_INTERVAL,
+            price_col=DIFFUSION_PRICE_COL,
+            csv_path=csv_path,
+            model_dir=model_dir,
+            download_if_missing=DIFFUSION_DOWNLOAD_IF_MISSING,
+            retrain=DIFFUSION_RETRAIN,
+            stride=DIFFUSION_STRIDE,
+            random_seed=DIFFUSION_RANDOM_SEED,
+            min_windows=DIFFUSION_MIN_WINDOWS,
+            train_epochs=DIFFUSION_TRAIN_EPOCHS,
+            batch_size=DIFFUSION_BATCH_SIZE,
+            learning_rate=DIFFUSION_LR,
+            weight_decay=DIFFUSION_WEIGHT_DECAY,
+            grad_clip_norm=DIFFUSION_GRAD_CLIP_NORM,
+            use_ema=DIFFUSION_USE_EMA,
+            ema_decay=DIFFUSION_EMA_DECAY,
+            training_target=DIFFUSION_TRAINING_TARGET,
+            return_transform=DIFFUSION_RETURN_TRANSFORM,
+            transform_eps=DIFFUSION_TRANSFORM_EPS,
+            feature_mode=DIFFUSION_FEATURE_MODE,
+            feature_rolling_vol_window=DIFFUSION_FEATURE_ROLLING_VOL_WINDOW,
+            legacy_return_clip=DIFFUSION_LEGACY_RETURN_CLIP,
+            diffusion_steps=DIFFUSION_STEPS,
+            beta_schedule=DIFFUSION_BETA_SCHEDULE,
+            beta_start=DIFFUSION_BETA_START,
+            beta_end=DIFFUSION_BETA_END,
+            model_hidden_dim=DIFFUSION_MODEL_HIDDEN_DIM,
+            model_num_res_blocks=DIFFUSION_MODEL_NUM_RES_BLOCKS,
+            model_dropout=DIFFUSION_MODEL_DROPOUT,
+            time_embedding_dim=DIFFUSION_TIME_EMBEDDING_DIM,
+            sampler_type=DIFFUSION_SAMPLER_TYPE,
+            sample_steps=DIFFUSION_SAMPLE_STEPS,
+            ddim_eta=DIFFUSION_DDIM_ETA,
+        )
+
     raise ValueError(
         f"Unknown INSTRUMENT_NAME '{INSTRUMENT_NAME}'. "
-        "Available: ['GBMStock', 'TimeGANStock']"
+        "Available: ['GBMStock', 'TimeGANStock', 'DiffusionStock']"
     )
 
 

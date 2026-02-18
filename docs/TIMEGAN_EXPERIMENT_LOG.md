@@ -529,3 +529,68 @@ For each v2 run, report:
    - max-drawdown moments and p95 error.
 5. Legacy continuity:
    - compare `summary_metrics_test.csv` against `baseline_9` to assess trade-offs.
+
+---
+
+## 10) DDPM v1 Protocol (New Track, TimeGAN Preserved)
+
+### 10.1 Objective
+Add a non-adversarial simulator (`DiffusionStock`) based on DDPM/DDIM while keeping TimeGAN fully available.
+
+### 10.2 New Components
+1. `src/DeepHedging/HedgingInstruments/diffusion_stock.py`
+2. `src/DeepHedging/utils/diffusion_schedule.py`
+3. `src/DeepHedging/utils/diffusion_model.py`
+4. `src/DeepHedging/utils/diffusion_training.py`
+5. `src/DeepHedging/utils/diffusion_sampling.py`
+6. `examples/diffusion_simulator_console.py`
+
+### 10.3 DDPM Data Lineage
+1. Train/Test CSV cache resolution stays in:
+   - `G:/Mi unidad/Tesis2026/TimeGanTraining/market_data_cache`
+2. Return features are built from log-returns with configurable `feature_mode`.
+3. Explicit windows are constructed in-repo with configured `stride`:
+   - tensor shape `(n_windows, n, n_features)`.
+4. Feature transforms:
+   - channel 0: configured `return_transform` (`minmax`, `gaussian_cdf`, `empirical_cdf`)
+   - extra channels: `minmax`
+5. DDPM trains on explicit tensor (epsilon prediction MSE).
+6. Sampling:
+   - `sampler_type=ddpm` (full reverse chain) or `sampler_type=ddim`.
+7. Channel 0 inverse-transform -> log-returns -> price paths via cumulative exp.
+
+### 10.4 Diffusion Artifacts
+Per run, under `.../<run_name>/`:
+1. Model files:
+   - `models/diffusion/diffusion_denoiser.keras`
+   - `models/diffusion/diffusion_state.npz`
+   - `models/diffusion/diffusion_metadata.json`
+   - `models/diffusion/diffusion_ema.weights.h5` (if EMA enabled)
+2. Scores:
+   - `csvs/scores/train_manifest.csv`
+   - `csvs/scores/training_loss_history.csv`
+   - `csvs/scores/noise_schedule.csv`
+   - `csvs/scores/dependence_metrics_returns.csv`
+   - `csvs/scores/dependence_metrics_squared_returns.csv`
+   - `csvs/scores/tail_metrics.csv`
+   - `csvs/scores/path_risk_metrics.csv`
+   - legacy-compatible summaries (`summary_metrics_train/test` and aggregated files)
+
+### 10.5 Diffusion Experiment Set
+Config files:
+1. `gan_training_configs/diffusion_1.json`
+2. `gan_training_configs/diffusion_2.json`
+3. `gan_training_configs/diffusion_3.json`
+4. `gan_training_configs/diffusion_4.json`
+5. `gan_training_configs/diffusion_5.json`
+
+Design intent:
+1. `diffusion_1`: control (`minmax`, one feature).
+2. `diffusion_2`: Gaussian-CDF marginal mapping.
+3. `diffusion_3`: empirical-CDF marginal mapping.
+4. `diffusion_4`: add abs-return state feature.
+5. `diffusion_5`: strongest regime-aware setup (`rolling_vol`, cosine schedule, DDIM).
+
+### 10.6 Reproducibility Commands (Diffusion)
+1. `python examples/diffusion_simulator_console.py diffusion_1`
+2. `python examples/diffusion_simulator_console.py diffusion_5.json`
