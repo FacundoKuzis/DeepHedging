@@ -13,8 +13,8 @@ class AsianArithmeticCall(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the Asian arithmetic average call option.
     """
 
-    def __init__(self, strike, amount=1.0):
-        super().__init__(amount)
+    def __init__(self, strike, amount=1.0, underlying_index=0):
+        super().__init__(amount=amount, underlying_index=underlying_index)
         self.strike = strike
         self.option_type = 'call'
 
@@ -48,8 +48,8 @@ class AsianArithmeticPut(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the Asian arithmetic average put option.
     """
 
-    def __init__(self, strike, amount=1.0):
-        super().__init__(amount)
+    def __init__(self, strike, amount=1.0, underlying_index=0):
+        super().__init__(amount=amount, underlying_index=underlying_index)
         self.strike = strike
         self.option_type = 'put'
 
@@ -83,8 +83,8 @@ class AsianGeometricCall(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the Asian geometric average call option.
     """
 
-    def __init__(self, strike, amount=1.0):
-        super().__init__(amount)
+    def __init__(self, strike, amount=1.0, underlying_index=0):
+        super().__init__(amount=amount, underlying_index=underlying_index)
         self.strike = strike
         self.option_type = 'call'
 
@@ -126,8 +126,8 @@ class AsianGeometricPut(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the Asian geometric average put option.
     """
 
-    def __init__(self, strike, amount=1.0):
-        super().__init__(amount)
+    def __init__(self, strike, amount=1.0, underlying_index=0):
+        super().__init__(amount=amount, underlying_index=underlying_index)
         self.strike = strike
         self.option_type = 'put'
 

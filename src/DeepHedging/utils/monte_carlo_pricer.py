@@ -1,5 +1,4 @@
 import tensorflow as tf
-import numpy as np
 from DeepHedging.HedgingInstruments import GBMStock, HestonStock
 from DeepHedging.ContingentClaims import ContingentClaim
 
@@ -36,10 +35,8 @@ class MonteCarloPricer:
         self.num_simulations = num_simulations
         self.seed = seed
 
-        # Set random seed for reproducibility if provided
-        if self.seed is not None:
-            tf.random.set_seed(self.seed)
-            np.random.seed(self.seed)
+        # Random seeds are forwarded to stock_model.generate_paths per call.
+        # Avoid setting global RNG state here.
 
     def simulate_paths(self):
         """

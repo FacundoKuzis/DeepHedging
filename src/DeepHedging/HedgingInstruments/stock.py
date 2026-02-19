@@ -24,6 +24,12 @@ class Stock:
         self.r = r    # Risk-free rate
         self.dt = T / N  # Time increment
 
+    @staticmethod
+    def _make_rng(random_seed=None):
+        if random_seed is None:
+            return np.random.default_rng()
+        return np.random.default_rng(int(random_seed))
+
     def generate_paths(self):
         raise NotImplementedError("Subclasses must implement this method.")
     
@@ -70,11 +76,10 @@ class GBMStock(Stock):
         r = self.r
         sigma = self.sigma
 
-        if random_seed is not None:
-            np.random.seed(random_seed)
+        rng = self._make_rng(random_seed)
 
         # Generate random normal variables for the Brownian motion
-        dW = np.random.normal(0, 1, size=(num_paths, self.N)) * np.sqrt(dt)
+        dW = rng.normal(0.0, 1.0, size=(num_paths, self.N)) * np.sqrt(dt)
         
         # Initialize the matrix of paths
         S = np.zeros((num_paths, self.N + 1))
@@ -141,12 +146,11 @@ class HestonStock(Stock):
         xi = self.xi
         rho = self.rho
 
-        if random_seed is not None:
-            np.random.seed(random_seed)
+        rng = self._make_rng(random_seed)
 
         # Generate correlated random normal variables
-        dW1 = np.random.normal(0, 1, size=(num_paths, self.N)) * np.sqrt(dt)
-        dW2 = rho * dW1 + np.sqrt(1 - rho**2) * np.random.normal(0, 1, size=(num_paths, self.N)) * np.sqrt(dt)
+        dW1 = rng.normal(0.0, 1.0, size=(num_paths, self.N)) * np.sqrt(dt)
+        dW2 = rho * dW1 + np.sqrt(1 - rho**2) * rng.normal(0.0, 1.0, size=(num_paths, self.N)) * np.sqrt(dt)
 
         # Initialize the paths for stock prices and variances
         S = np.zeros((num_paths, self.N + 1))

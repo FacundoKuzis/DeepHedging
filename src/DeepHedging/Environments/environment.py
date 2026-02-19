@@ -5,13 +5,15 @@ import os
 import pickle
 import warnings
 import pandas as pd
+import random
 from tqdm import tqdm  # For progress bars
 
 
 class Environment:
     def __init__(self, agent, T, N, r, instrument_list, n_instruments, contingent_claim, cost_function, 
                  risk_measure = None,
-                 n_epochs = None, batch_size = None, learning_rate = None, optimizer = None):
+                 n_epochs = None, batch_size = None, learning_rate = None, optimizer = None,
+                 resample_each_epoch=False, train_random_seed=None, val_random_seed=None):
         self.agent = agent
         self.T = T # Maturity (in years)
         self.N = N # Number of hedging steps
@@ -25,17 +27,39 @@ class Environment:
         self.n_epochs = n_epochs
         self.batch_size = batch_size
         self.optimizer = None if not optimizer else optimizer(learning_rate=learning_rate)
+        self.resample_each_epoch = bool(resample_each_epoch)
+        self.train_random_seed = train_random_seed
+        self.val_random_seed = val_random_seed
 
         self.train_losses = []
         self.val_losses = []
+
+        if self.risk_measure is None:
+            warnings.warn(
+                "Environment created without risk_measure. "
+                "Training/testing will fail until a valid risk measure is provided."
+            )
+
+    def _derive_seed(self, base_seed, offset):
+        if base_seed is None:
+            return None
+        return int(base_seed) + int(offset)
+
+    def _select_claim_paths(self, paths):
+        if hasattr(self.contingent_claim, "select_underlying_paths"):
+            return self.contingent_claim.select_underlying_paths(paths)
+
+        # Backward-compat fallback.
+        return paths[:, :, 0]
 
     def generate_data(self, n_paths, random_seed=None):
 
         data = tf.TensorArray(dtype=tf.float32, size=self.n_instruments)
         
         i = 0
-        for instrument in self.instrument_list:
-            instrument_data = instrument.generate_paths(n_paths, random_seed=random_seed)
+        for instrument_idx, instrument in enumerate(self.instrument_list):
+            instrument_seed = self._derive_seed(random_seed, instrument_idx)
+            instrument_data = instrument.generate_paths(n_paths, random_seed=instrument_seed)
             if isinstance(instrument_data, tuple):
                 for individual_data in instrument_data:
                     data = data.write(i, individual_data)
@@ -43,6 +67,11 @@ class Environment:
             else:
                 data = data.write(i, instrument_data)
                 i += 1
+
+        if i != self.n_instruments:
+            raise ValueError(
+                f"n_instruments mismatch: expected {self.n_instruments}, generated {i}."
+            )
         
         # Stack all the instrument data into a single tensor
         data = data.stack()
@@ -77,8 +106,9 @@ class Environment:
 
         final_cash_positions = cash[:, -1] # (batch_size)
 
-        # Calculate the payoff of the contingent claim
-        payoff = self.contingent_claim.calculate_payoff(paths[:, :, 0]) # ASSUMPTION: The CC is calculated based on the first instrument
+        # Calculate contingent-claim payoff using explicit underlying mapping.
+        claim_paths = self._select_claim_paths(paths)
+        payoff = self.contingent_claim.calculate_payoff(claim_paths)
         
         # Calculate the PnL
         pnl = final_portfolio_value + final_cash_positions - payoff
@@ -89,20 +119,42 @@ class Environment:
             return pnl
 
     def loss_function(self, paths, actions):
+        if self.risk_measure is None:
+            raise ValueError("risk_measure is not set in Environment.")
         pnl = self.calculate_pnl(paths, actions)
         return self.risk_measure.calculate(pnl)
 
-    def train(self, train_paths, val_paths = 0):
+    def train(self, train_paths, val_paths = 0, random_seed=None, val_random_seed=None):
         if self.optimizer is None:
             raise ValueError("Optimizer is not initialized. Provide optimizer and learning_rate when creating Environment.")
 
-        train_data = self.generate_data(train_paths) # (n_paths, N+1, n_instruments)
-    
+        train_seed = self.train_random_seed if random_seed is None else random_seed
+        val_seed = self.val_random_seed if val_random_seed is None else val_random_seed
+        if val_seed is None:
+            val_seed = self._derive_seed(train_seed, 1_000_000)
+
+        if train_seed is not None:
+            random.seed(int(train_seed))
+            np.random.seed(int(train_seed))
+            tf.random.set_seed(int(train_seed))
+            try:
+                tf.keras.utils.set_random_seed(int(train_seed))
+            except Exception:
+                pass
+
+        train_data = None
+        if not self.resample_each_epoch:
+            train_data = self.generate_data(train_paths, random_seed=train_seed) # (n_paths, N+1, n_instruments)
+
         if val_paths > 0:
-            val_data = self.generate_data(val_paths)
+            val_data = self.generate_data(val_paths, random_seed=val_seed)
             T_minus_t_val =  self.get_T_minus_t(val_paths)
 
         for epoch in range(self.n_epochs):
+            if self.resample_each_epoch:
+                epoch_seed = self._derive_seed(train_seed, epoch)
+                train_data = self.generate_data(train_paths, random_seed=epoch_seed)
+
             # Training
             epoch_losses = []
             for i in range(0, train_paths, self.batch_size):
@@ -196,15 +248,6 @@ class Environment:
         - std_errors (list): List of standard deviations of errors for each agent.
         - losses (dict or None): Dictionary of loss function results for each agent.
         """
-        # Remove duplicate agents
-        unique_agents = []
-        seen_agents = set()
-        for agent in agents:
-            if agent.name not in seen_agents:
-                unique_agents.append(agent)
-                seen_agents.add(agent.name)
-        agents = unique_agents
-
         # Generate the data paths
         paths = self.generate_data(n_paths, random_seed=random_seed)
 
@@ -322,8 +365,9 @@ class Environment:
                 os.makedirs(os.path.dirname(save_plot_path), exist_ok=True)
                 plt.savefig(save_plot_path)
                 print(f"Plot saved to {save_plot_path}")
-
-            plt.show()
+                plt.close()
+            else:
+                plt.show()
 
         # Save statistics to Excel if save_stats_path is provided
         if save_stats_path:
@@ -647,15 +691,6 @@ class Environment:
         # Ensure statistics is a list
         if not isinstance(statistics, list):
             statistics = [statistics]
-
-        # Remove duplicate agents
-        unique_agents = []
-        seen_agents = set()
-        for agent in agents:
-            if agent.name not in seen_agents:
-                unique_agents.append(agent)
-                seen_agents.add(agent.name)
-        agents = unique_agents
 
         # Generate the data paths
         paths = self.generate_data(n_paths, random_seed=random_seed)

@@ -1,6 +1,10 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
 from DeepHedging.Agents import BaseAgent
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 class DeltaHedgingAgent(BaseAgent):
     """
@@ -101,7 +105,7 @@ class DeltaHedgingAgent(BaseAgent):
         self.reset_last_delta(batch_paths.shape[0])
         all_actions = []
         for t in range(batch_paths.shape[1] -1):  # timesteps until T-1
-            print(t)
+            logger.debug("Processing delta hedging timestep %s", t)
             current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
             current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
             action = self.act(current_paths, current_T_minus_t)

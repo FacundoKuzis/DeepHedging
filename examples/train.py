@@ -1,6 +1,8 @@
 import argparse
 import os
 import time
+import inspect
+import numpy as np
 
 import tensorflow as tf
 
@@ -30,20 +32,24 @@ def get_agent(agent_name, path_transformation_configs, n_hedging_timesteps):
             f"Agent '{agent_name}' is not trainable. Available trainable agents: {list(TRAINABLE_AGENTS.keys())}"
         )
     agent_class = TRAINABLE_AGENTS[agent_name]
-    return agent_class(
-        n_hedging_timesteps=n_hedging_timesteps,
-        path_transformation_configs=path_transformation_configs
-    )
+    init_signature = inspect.signature(agent_class.__init__)
+    init_params = init_signature.parameters
+    kwargs = {"path_transformation_configs": path_transformation_configs}
+    if "n_hedging_timesteps" in init_params:
+        kwargs["n_hedging_timesteps"] = n_hedging_timesteps
+    if "n_instruments" in init_params:
+        kwargs["n_instruments"] = 1
+    return agent_class(**kwargs)
 
 
-def get_contingent_claim(claim_type, strike):
+def get_contingent_claim(claim_type, strike, underlying_index=0):
     claims = {
-        "EuropeanCall": EuropeanCall(strike=strike),
-        "EuropeanPut": EuropeanPut(strike=strike),
-        "AsianGeometricCall": AsianGeometricCall(strike=strike),
-        "AsianGeometricPut": AsianGeometricPut(strike=strike),
-        "AsianArithmeticCall": AsianArithmeticCall(strike=strike),
-        "AsianArithmeticPut": AsianArithmeticPut(strike=strike),
+        "EuropeanCall": EuropeanCall(strike=strike, underlying_index=underlying_index),
+        "EuropeanPut": EuropeanPut(strike=strike, underlying_index=underlying_index),
+        "AsianGeometricCall": AsianGeometricCall(strike=strike, underlying_index=underlying_index),
+        "AsianGeometricPut": AsianGeometricPut(strike=strike, underlying_index=underlying_index),
+        "AsianArithmeticCall": AsianArithmeticCall(strike=strike, underlying_index=underlying_index),
+        "AsianArithmeticPut": AsianArithmeticPut(strike=strike, underlying_index=underlying_index),
     }
     if claim_type not in claims:
         raise ValueError(
@@ -56,12 +62,14 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Train a Deep Hedging trainable agent.")
 
     # Simulation parameters
-    parser.add_argument("--T", type=float, default=63 / 252, help="Time to maturity (default: 63/252)")
+    parser.add_argument("--T", type=float, default=None, help="Time to maturity in years. If omitted, uses N / trading_days_per_year.")
     parser.add_argument("--N", type=int, default=63, help="Number of time steps (default: 63)")
+    parser.add_argument("--trading_days_per_year", type=int, default=252, help="Trading-day convention (default: 252)")
     parser.add_argument("--r", type=float, default=0.05, help="Risk-free rate (default: 0.05)")
     parser.add_argument("--S0", type=float, default=100, help="Initial stock price (default: 100)")
     parser.add_argument("--sigma", type=float, default=0.2, help="Volatility (default: 0.2)")
     parser.add_argument("--strike", type=float, default=100, help="Strike price (default: 100)")
+    parser.add_argument("--claim_underlying_index", type=int, default=0, help="Underlying instrument index used by the claim (default: 0)")
 
     # Model parameters
     parser.add_argument(
@@ -97,6 +105,12 @@ def parse_arguments():
     parser.add_argument("--n_epochs", type=int, default=100, help="Number of epochs (default: 100)")
     parser.add_argument("--batch_size", type=int, default=10000, help="Batch size (default: 10000)")
     parser.add_argument("--train_paths", type=int, default=100000, help="Number of training paths (default: 100000)")
+    parser.add_argument(
+        "--resample_each_epoch",
+        action="store_true",
+        help="Regenerate Monte Carlo paths each epoch (default: False).",
+    )
+    parser.add_argument("--random_seed", type=int, default=42, help="Global random seed for reproducibility (default: 42)")
 
     # Cost function parameters
     parser.add_argument("--proportional_cost", type=float, default=0.0, help="Proportional cost (default: 0.0)")
@@ -119,13 +133,23 @@ def parse_arguments():
 
 def main():
     args = parse_arguments()
+    if args.T is None:
+        args.T = args.N / float(args.trading_days_per_year)
+
+    if args.random_seed is not None:
+        np.random.seed(args.random_seed)
+        tf.random.set_seed(args.random_seed)
 
     # Set up instrument
     instrument = GBMStock(S0=args.S0, T=args.T, N=args.N, r=args.r, sigma=args.sigma)
     instruments = [instrument]
 
     # Define contingent claim
-    contingent_claim = get_contingent_claim(args.contingent_claim, strike=args.strike)
+    contingent_claim = get_contingent_claim(
+        args.contingent_claim,
+        strike=args.strike,
+        underlying_index=args.claim_underlying_index,
+    )
 
     path_transformation_configs = [
         {"transformation_type": "log_moneyness", "K": contingent_claim.strike}
@@ -167,6 +191,8 @@ def main():
         batch_size=args.batch_size,
         learning_rate=learning_rate_schedule,
         optimizer=tf.keras.optimizers.Adam,
+        resample_each_epoch=args.resample_each_epoch,
+        train_random_seed=args.random_seed,
     )
 
     print(f"Training started at: {time.ctime()}")
@@ -185,7 +211,7 @@ def main():
         print(f"No existing optimizer found at {optimizer_path}, starting fresh.")
 
     # Train the environment
-    env.train(train_paths=args.train_paths)
+    env.train(train_paths=args.train_paths, random_seed=args.random_seed)
 
     # Save the model and optimizer
     os.makedirs(os.path.dirname(model_path), exist_ok=True)

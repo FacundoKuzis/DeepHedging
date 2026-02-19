@@ -9,6 +9,7 @@ import os
 import pickle
 import warnings
 import pandas as pd
+import inspect
 
 # Import DeepHedging modules (Ensure these are available in your environment)
 from DeepHedging.Agents import (
@@ -67,12 +68,14 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Compare Hedging Strategies of Deep Hedging Agents.")
 
     # Simulation parameters
-    parser.add_argument('--T', type=float, default=22/365, help='Time to maturity in years (default: 22/365)')
+    parser.add_argument('--T', type=float, default=None, help='Time to maturity in years. If omitted, uses N / trading_days_per_year.')
     parser.add_argument('--N', type=int, default=22, help='Number of time steps (default: 22)')
+    parser.add_argument('--trading_days_per_year', type=int, default=252, help='Trading-day convention (default: 252)')
     parser.add_argument('--r', type=float, default=0.05, help='Risk-free rate (default: 0.05)')
     parser.add_argument('--S0', type=float, default=100, help='Initial stock price (default: 100)')
     parser.add_argument('--sigma', type=float, default=0.05, help='Volatility (default: 0.05)')
     parser.add_argument('--strike', type=float, default=100, help='Strike price (default: 100)')
+    parser.add_argument('--claim_underlying_index', type=int, default=0, help='Underlying instrument index used by the claim (default: 0)')
 
     # Contingent claim parameters
     parser.add_argument('--contingent_claim', type=str, default='AsianGeometricCall',
@@ -131,21 +134,27 @@ def get_agent(agent_name, instrument, contingent_claim, path_transformation_conf
     if hasattr(agent_class, 'is_trainable') and agent_class.is_trainable:
         # Define default path transformation configurations for trainable agents
         path_transformation_configs = [{'transformation_type': 'log_moneyness', 'K': contingent_claim.strike}]
-        return agent_class(path_transformation_configs=path_transformation_configs,
-                          n_hedging_timesteps=n_hedging_timesteps)
+        init_signature = inspect.signature(agent_class.__init__)
+        init_params = init_signature.parameters
+        agent_kwargs = {"path_transformation_configs": path_transformation_configs}
+        if "n_hedging_timesteps" in init_params:
+            agent_kwargs["n_hedging_timesteps"] = n_hedging_timesteps
+        if "n_instruments" in init_params:
+            agent_kwargs["n_instruments"] = 1
+        return agent_class(**agent_kwargs)
     return agent_class(instrument, contingent_claim, **kwargs)
 
-def get_contingent_claim(claim_type, strike):
+def get_contingent_claim(claim_type, strike, underlying_index=0):
     """
     Returns an instance of the specified contingent claim type.
     """
     claims = {
-        'EuropeanCall': EuropeanCall(strike=strike),
-        'EuropeanPut': EuropeanPut(strike=strike),
-        'AsianGeometricCall': AsianGeometricCall(strike=strike),
-        'AsianGeometricPut': AsianGeometricPut(strike=strike),
-        'AsianArithmeticCall': AsianArithmeticCall(strike=strike),
-        'AsianArithmeticPut': AsianArithmeticPut(strike=strike)
+        'EuropeanCall': EuropeanCall(strike=strike, underlying_index=underlying_index),
+        'EuropeanPut': EuropeanPut(strike=strike, underlying_index=underlying_index),
+        'AsianGeometricCall': AsianGeometricCall(strike=strike, underlying_index=underlying_index),
+        'AsianGeometricPut': AsianGeometricPut(strike=strike, underlying_index=underlying_index),
+        'AsianArithmeticCall': AsianArithmeticCall(strike=strike, underlying_index=underlying_index),
+        'AsianArithmeticPut': AsianArithmeticPut(strike=strike, underlying_index=underlying_index)
     }
     if claim_type not in claims:
         raise ValueError(f"Contingent Claim '{claim_type}' is not recognized. Available claims: {list(claims.keys())}")
@@ -180,6 +189,12 @@ def load_agent(agent_name, model_name, models_dir, instrument, contingent_claim,
 
 def main():
     args = parse_arguments()
+    if args.T is None:
+        args.T = args.N / float(args.trading_days_per_year)
+
+    if args.random_seed is not None:
+        np.random.seed(args.random_seed)
+        tf.random.set_seed(args.random_seed)
     agent_model_names = parse_agent_model_names(args.agent_model_names)
 
     # Set up instruments
@@ -187,7 +202,11 @@ def main():
     instruments = [instrument1]
 
     # Define contingent claim
-    contingent_claim = get_contingent_claim(args.contingent_claim, strike=args.strike)
+    contingent_claim = get_contingent_claim(
+        args.contingent_claim,
+        strike=args.strike,
+        underlying_index=args.claim_underlying_index,
+    )
 
     # Path transformation configurations
     transformation_type = 'log_moneyness'

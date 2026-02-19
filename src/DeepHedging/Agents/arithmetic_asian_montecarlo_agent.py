@@ -2,6 +2,10 @@ import tensorflow as tf
 import QuantLib as ql
 import numpy as np
 from DeepHedging.Agents import BaseAgent
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 class ArithmeticAsianMonteCarloAgent(BaseAgent):
     """
@@ -185,7 +189,7 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         self.reset_last_delta(batch_paths.shape[0])
         all_actions = []
         for t in range(batch_paths.shape[1] - 1):  # Exclude the terminal timestep
-            print(t)
+            logger.debug("Processing arithmetic asian MC timestep %s", t)
             current_paths = batch_paths[:, t, :]       # Shape: (batch_size, n_instruments)
             current_T_minus_t = batch_T_minus_t[:, t]  # Shape: (batch_size,)
             action = self.act(current_paths, current_T_minus_t)

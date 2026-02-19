@@ -8,6 +8,16 @@ Usage:
 import os
 import sys
 import inspect
+import random
+
+import numpy as np
+
+# Determinism flags must be set before importing TensorFlow.
+os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "1")
+os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import tensorflow as tf
 
@@ -21,12 +31,12 @@ from DeepHedging.Agents import (
     SimpleAgent, RecurrentAgent, LSTMAgent, GRUAgent, WaveNetAgent,
     DeltaHedgingAgent, GeometricAsianDeltaHedgingAgent, GeometricAsianDeltaHedgingAgent2,
     GeometricAsianNumericalDeltaHedgingAgent, QuantlibAsianGeometricAgent,
-    ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent, MonteCarloAgent
+    ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent, MonteCarloAgent,
 )
-from DeepHedging.HedgingInstruments import GBMStock, TimeGANStock, DiffusionStock
+from DeepHedging.HedgingInstruments import GBMStock
 from DeepHedging.ContingentClaims import (
     EuropeanCall, EuropeanPut, AsianGeometricCall, AsianGeometricPut,
-    AsianArithmeticCall, AsianArithmeticPut
+    AsianArithmeticCall, AsianArithmeticPut,
 )
 from DeepHedging.CostFunctions import ProportionalCost
 from DeepHedging.RiskMeasures import MAE, CVaR, WorstCase
@@ -39,78 +49,17 @@ from DeepHedging.Environments import Environment
 RUN_MODE = "train_and_evaluate"  # "train", "evaluate", "train_and_evaluate"
 
 # Market + contract
-T = 63 / 252
 N = 63
+TRADING_DAYS_PER_YEAR = 252
+T = N / TRADING_DAYS_PER_YEAR
 R = 0.05
 S0 = 100.0
 SIGMA = 0.2
 STRIKE = 100.0
-INSTRUMENT_NAME = "GBMStock"  # "GBMStock" | "TimeGANStock" | "DiffusionStock"
+CLAIM_UNDERLYING_INDEX = 0
+GLOBAL_RANDOM_SEED = 42
 
-# TimeGAN (used when INSTRUMENT_NAME == "TimeGANStock")
-TIMEGAN_TICKER = "SPY"
-TIMEGAN_START_DATE = "2019-01-01"
-TIMEGAN_END_DATE = "2024-12-31"
-TIMEGAN_INTERVAL = "1d"
-TIMEGAN_PRICE_COL = "Close"
-TIMEGAN_CSV_PATH = os.path.join("assets", "csvs", "timegan", "spy_2019_2024_1d.csv")
-TIMEGAN_MODEL_PATH = os.path.join("assets", "models", "timegan", "spy_timegan_returns_N63.pkl")
-TIMEGAN_DOWNLOAD_IF_MISSING = True
-TIMEGAN_RETRAIN = False
-TIMEGAN_STRIDE = 1
-TIMEGAN_MIN_WINDOWS = 200
-TIMEGAN_TRAIN_EPOCHS = 300
-TIMEGAN_BATCH_SIZE = 128
-TIMEGAN_NOISE_DIM = 32
-TIMEGAN_LAYERS_DIM = 128
-TIMEGAN_LATENT_DIM = 24
-TIMEGAN_LR = 5e-4
-TIMEGAN_GAMMA = 1.0
-TIMEGAN_RANDOM_SEED = 42
-TIMEGAN_TRAINING_TARGET = "log_returns"  # "log_returns" or "price_levels"
-TIMEGAN_MATCH_RETURN_MOMENTS = True
-TIMEGAN_INPUT_RETURN_CLIP_QUANTILES = (0.01, 0.99)
-TIMEGAN_OUTPUT_RETURN_CLIP_QUANTILES = (0.01, 0.99)
-
-# Diffusion (used when INSTRUMENT_NAME == "DiffusionStock")
-DIFFUSION_TICKER = "^GSPC"
-DIFFUSION_START_DATE = "2005-01-01"
-DIFFUSION_END_DATE = "2019-12-31"
-DIFFUSION_INTERVAL = "1d"
-DIFFUSION_PRICE_COL = "Close"
-DIFFUSION_CSV_PATH = os.path.join("assets", "csvs", "diffusion", "gspc_2005_2019_1d.csv")
-DIFFUSION_MODEL_DIR = os.path.join("assets", "models", "diffusion", "gspc_diffusion_N63")
-DIFFUSION_DOWNLOAD_IF_MISSING = True
-DIFFUSION_RETRAIN = False
-DIFFUSION_STRIDE = 2
-DIFFUSION_MIN_WINDOWS = 300
-DIFFUSION_TRAIN_EPOCHS = 250
-DIFFUSION_BATCH_SIZE = 128
-DIFFUSION_LR = 2e-4
-DIFFUSION_WEIGHT_DECAY = 0.0
-DIFFUSION_GRAD_CLIP_NORM = 1.0
-DIFFUSION_USE_EMA = True
-DIFFUSION_EMA_DECAY = 0.999
-DIFFUSION_RANDOM_SEED = 42
-DIFFUSION_TRAINING_TARGET = "log_returns"
-DIFFUSION_RETURN_TRANSFORM = "gaussian_cdf"  # "minmax" | "gaussian_cdf" | "empirical_cdf"
-DIFFUSION_TRANSFORM_EPS = 1e-6
-DIFFUSION_FEATURE_MODE = "returns_only"  # "returns_only" | "returns_plus_abs_return" | "returns_plus_rolling_vol"
-DIFFUSION_FEATURE_ROLLING_VOL_WINDOW = 5
-DIFFUSION_LEGACY_RETURN_CLIP = False
-DIFFUSION_STEPS = 200
-DIFFUSION_BETA_SCHEDULE = "linear"  # "linear" | "cosine"
-DIFFUSION_BETA_START = 1e-4
-DIFFUSION_BETA_END = 0.02
-DIFFUSION_MODEL_HIDDEN_DIM = 128
-DIFFUSION_MODEL_NUM_RES_BLOCKS = 4
-DIFFUSION_MODEL_DROPOUT = 0.1
-DIFFUSION_TIME_EMBEDDING_DIM = 64
-DIFFUSION_SAMPLER_TYPE = "ddpm"  # "ddpm" | "ddim"
-DIFFUSION_SAMPLE_STEPS = 200
-DIFFUSION_DDIM_ETA = 0.0
-
-# Instruments/claim
+# Claim/risk
 CONTINGENT_CLAIM_NAME = "AsianGeometricCall"
 PROPORTIONAL_COST = 0.0
 CVaR_ALPHA = 0.5
@@ -119,21 +68,21 @@ CVaR_ALPHA = 0.5
 MAIN_AGENT_NAME = "LSTMAgent"
 BUMP_SIZE = 0.001  # Used by numerical agents
 
-# Train settings (used when RUN_MODE includes "train")
-N_EPOCHS = 30
-BATCH_SIZE = 2_000
-TRAIN_PATHS = 20_000
-VAL_PATHS = 2_000
+# Train settings (fast defaults)
+N_EPOCHS = 3
+BATCH_SIZE = 1_000
+TRAIN_PATHS = 4_000
+VAL_PATHS = 1_000
 INITIAL_LR = 0.001
 DECAY_STEPS = 10
 DECAY_RATE = 0.99
+RESAMPLE_EACH_EPOCH = False
 
-# Evaluate settings (used when RUN_MODE includes "evaluate")
+# Evaluate settings (fast defaults)
 COMPARE_AGENT_NAMES = [
     "GeometricAsianDeltaHedgingAgent",
-    "GeometricAsianNumericalDeltaHedgingAgent",
 ]
-EVAL_PATHS = 20_000
+EVAL_PATHS = 4_000
 EVAL_SEED = 33
 PLOT_MIN_X = -2.0
 PLOT_MAX_X = 2.0
@@ -184,97 +133,11 @@ CLAIMS = {
 def build_claim():
     if CONTINGENT_CLAIM_NAME not in CLAIMS:
         raise ValueError(f"Unknown claim '{CONTINGENT_CLAIM_NAME}'. Available: {list(CLAIMS.keys())}")
-    return CLAIMS[CONTINGENT_CLAIM_NAME](strike=STRIKE)
+    return CLAIMS[CONTINGENT_CLAIM_NAME](strike=STRIKE, underlying_index=CLAIM_UNDERLYING_INDEX)
 
 
 def build_instrument():
-    if INSTRUMENT_NAME == "GBMStock":
-        return GBMStock(S0=S0, T=T, N=N, r=R, sigma=SIGMA)
-
-    if INSTRUMENT_NAME == "TimeGANStock":
-        csv_path = os.path.join(ROOT_DIR, TIMEGAN_CSV_PATH)
-        model_path = os.path.join(ROOT_DIR, TIMEGAN_MODEL_PATH)
-
-        return TimeGANStock(
-            S0=S0,
-            T=T,
-            N=N,
-            r=R,
-            ticker=TIMEGAN_TICKER,
-            start_date=TIMEGAN_START_DATE,
-            end_date=TIMEGAN_END_DATE,
-            interval=TIMEGAN_INTERVAL,
-            price_col=TIMEGAN_PRICE_COL,
-            csv_path=csv_path,
-            model_path=model_path,
-            download_if_missing=TIMEGAN_DOWNLOAD_IF_MISSING,
-            retrain=TIMEGAN_RETRAIN,
-            stride=TIMEGAN_STRIDE,
-            random_seed=TIMEGAN_RANDOM_SEED,
-            min_windows=TIMEGAN_MIN_WINDOWS,
-            train_epochs=TIMEGAN_TRAIN_EPOCHS,
-            batch_size=TIMEGAN_BATCH_SIZE,
-            noise_dim=TIMEGAN_NOISE_DIM,
-            layers_dim=TIMEGAN_LAYERS_DIM,
-            latent_dim=TIMEGAN_LATENT_DIM,
-            learning_rate=TIMEGAN_LR,
-            gamma=TIMEGAN_GAMMA,
-            training_target=TIMEGAN_TRAINING_TARGET,
-            match_return_moments=TIMEGAN_MATCH_RETURN_MOMENTS,
-            input_return_clip_quantiles=TIMEGAN_INPUT_RETURN_CLIP_QUANTILES,
-            output_return_clip_quantiles=TIMEGAN_OUTPUT_RETURN_CLIP_QUANTILES,
-        )
-
-    if INSTRUMENT_NAME == "DiffusionStock":
-        csv_path = os.path.join(ROOT_DIR, DIFFUSION_CSV_PATH)
-        model_dir = os.path.join(ROOT_DIR, DIFFUSION_MODEL_DIR)
-        return DiffusionStock(
-            S0=S0,
-            T=T,
-            N=N,
-            r=R,
-            ticker=DIFFUSION_TICKER,
-            start_date=DIFFUSION_START_DATE,
-            end_date=DIFFUSION_END_DATE,
-            interval=DIFFUSION_INTERVAL,
-            price_col=DIFFUSION_PRICE_COL,
-            csv_path=csv_path,
-            model_dir=model_dir,
-            download_if_missing=DIFFUSION_DOWNLOAD_IF_MISSING,
-            retrain=DIFFUSION_RETRAIN,
-            stride=DIFFUSION_STRIDE,
-            random_seed=DIFFUSION_RANDOM_SEED,
-            min_windows=DIFFUSION_MIN_WINDOWS,
-            train_epochs=DIFFUSION_TRAIN_EPOCHS,
-            batch_size=DIFFUSION_BATCH_SIZE,
-            learning_rate=DIFFUSION_LR,
-            weight_decay=DIFFUSION_WEIGHT_DECAY,
-            grad_clip_norm=DIFFUSION_GRAD_CLIP_NORM,
-            use_ema=DIFFUSION_USE_EMA,
-            ema_decay=DIFFUSION_EMA_DECAY,
-            training_target=DIFFUSION_TRAINING_TARGET,
-            return_transform=DIFFUSION_RETURN_TRANSFORM,
-            transform_eps=DIFFUSION_TRANSFORM_EPS,
-            feature_mode=DIFFUSION_FEATURE_MODE,
-            feature_rolling_vol_window=DIFFUSION_FEATURE_ROLLING_VOL_WINDOW,
-            legacy_return_clip=DIFFUSION_LEGACY_RETURN_CLIP,
-            diffusion_steps=DIFFUSION_STEPS,
-            beta_schedule=DIFFUSION_BETA_SCHEDULE,
-            beta_start=DIFFUSION_BETA_START,
-            beta_end=DIFFUSION_BETA_END,
-            model_hidden_dim=DIFFUSION_MODEL_HIDDEN_DIM,
-            model_num_res_blocks=DIFFUSION_MODEL_NUM_RES_BLOCKS,
-            model_dropout=DIFFUSION_MODEL_DROPOUT,
-            time_embedding_dim=DIFFUSION_TIME_EMBEDDING_DIM,
-            sampler_type=DIFFUSION_SAMPLER_TYPE,
-            sample_steps=DIFFUSION_SAMPLE_STEPS,
-            ddim_eta=DIFFUSION_DDIM_ETA,
-        )
-
-    raise ValueError(
-        f"Unknown INSTRUMENT_NAME '{INSTRUMENT_NAME}'. "
-        "Available: ['GBMStock', 'TimeGANStock', 'DiffusionStock']"
-    )
+    return GBMStock(S0=S0, T=T, N=N, r=R, sigma=SIGMA)
 
 
 def build_agent(agent_name, instrument, contingent_claim):
@@ -348,6 +211,26 @@ def main():
     if RUN_MODE not in run_mode_values:
         raise ValueError(f"Invalid RUN_MODE '{RUN_MODE}'. Use one of {run_mode_values}.")
 
+    # Best-effort deterministic execution on CPU.
+    try:
+        tf.config.experimental.enable_op_determinism()
+    except Exception:
+        pass
+    try:
+        tf.config.threading.set_intra_op_parallelism_threads(1)
+        tf.config.threading.set_inter_op_parallelism_threads(1)
+    except Exception:
+        pass
+
+    if GLOBAL_RANDOM_SEED is not None:
+        random.seed(GLOBAL_RANDOM_SEED)
+        np.random.seed(GLOBAL_RANDOM_SEED)
+        tf.random.set_seed(GLOBAL_RANDOM_SEED)
+        try:
+            tf.keras.utils.set_random_seed(GLOBAL_RANDOM_SEED)
+        except Exception:
+            pass
+
     instrument = build_instrument()
     instruments = [instrument]
     contingent_claim = build_claim()
@@ -378,6 +261,8 @@ def main():
         batch_size=BATCH_SIZE,
         learning_rate=learning_rate,
         optimizer=optimizer_cls,
+        resample_each_epoch=RESAMPLE_EACH_EPOCH,
+        train_random_seed=GLOBAL_RANDOM_SEED,
     )
 
     maybe_load_trainable_agent(main_agent, MAIN_AGENT_NAME, env)
@@ -386,7 +271,7 @@ def main():
         if not main_agent.is_trainable:
             raise ValueError(f"Main agent '{MAIN_AGENT_NAME}' is not trainable. Choose a trainable agent for train mode.")
         print("[run] training...")
-        env.train(train_paths=TRAIN_PATHS, val_paths=VAL_PATHS)
+        env.train(train_paths=TRAIN_PATHS, val_paths=VAL_PATHS, random_seed=GLOBAL_RANDOM_SEED)
         maybe_save_trainable_agent(main_agent, MAIN_AGENT_NAME, env)
 
     if RUN_MODE in {"evaluate", "train_and_evaluate"}:
