@@ -59,7 +59,7 @@ q = env.terminal_hedging_error_multiple_agents(
     plot_error=True,
     colors=["orange", "steelblue"],
     loss_functions=measures,
-    plot_title="Terminal Hedging Error",
+    plot_title="Error de Cobertura Terminal",
     save_plot_path=os.path.join(
         os.getcwd(), "assets", "plots", f"asian_geometric_{delta_agent.name}_comparison.pdf"
     ),
@@ -68,6 +68,7 @@ q = env.terminal_hedging_error_multiple_agents(
     ),
     min_x=-2,
     max_x=2,
+    language="es",
 )
 print(q)
 

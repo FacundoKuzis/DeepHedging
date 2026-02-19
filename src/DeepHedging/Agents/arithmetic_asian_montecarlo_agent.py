@@ -1,13 +1,13 @@
 import tensorflow as tf
 import QuantLib as ql
 import numpy as np
-from DeepHedging.Agents import BaseAgent
+from DeepHedging.Agents import DeltaHedgingAgent
 import logging
 
 
 logger = logging.getLogger(__name__)
 
-class ArithmeticAsianMonteCarloAgent(BaseAgent):
+class ArithmeticAsianMonteCarloAgent(DeltaHedgingAgent):
     """
     An agent that uses QuantLib to compute the delta hedging strategy for arithmetic Asian options using numerical methods.
     """
@@ -20,7 +20,7 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         'es': 'Delta de Opción Asiática Aritmética - Monte Carlo'
     }
     
-    def __init__(self, stock_model, option_class, bump_size=0.01):
+    def __init__(self, stock_model, option_class, bump_size=0.01, no_trade_band=0.0):
         """
         Initialize the agent with market and option parameters.
 
@@ -30,17 +30,9 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
         - bump_size (float): The relative size of the bump to compute finite differences.
                              Default is 0.01 (1%).
         """
-        self.S0 = stock_model.S0
-        self.T = stock_model.T  # T is passed as N/252
-        self.r = stock_model.r
-        self.sigma = stock_model.sigma
-        self.strike = option_class.strike
-        self.option_type = option_class.option_type
+        super().__init__(stock_model, option_class, no_trade_band=no_trade_band)
 
         self.bump_size = bump_size  # Relative bump size for finite differences
-
-        # Initialize last delta for delta hedging
-        self.last_delta = None
 
         # Pre-initialize QuantLib objects
         self.day_count = ql.Actual252()
@@ -152,19 +144,9 @@ class ArithmeticAsianMonteCarloAgent(BaseAgent):
             [instrument_paths[:, 0], T_minus_t],
             tf.float32
         )
+        delta.set_shape((instrument_paths.shape[0],))
 
-        # Calculate action as change in delta
-        action = delta - self.last_delta
-        self.last_delta = delta
-
-        # Expand dimensions to match the number of instruments
-        action = tf.expand_dims(action, axis=-1)  # Shape: (batch_size, 1)
-
-        # Assuming only the first instrument is being hedged
-        zeros = tf.zeros((instrument_paths.shape[0], instrument_paths.shape[1] - 1))
-        actions = tf.concat([action, zeros], axis=1)  # Shape: (batch_size, n_instruments)
-
-        return actions
+        return self._to_actions(delta, instrument_paths)
 
     def reset_last_delta(self, batch_size):
         """

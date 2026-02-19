@@ -1,105 +1,137 @@
+import numpy as np
 import tensorflow as tf
-import tensorflow_probability as tfp
-import numpy as np  # For pi
 from DeepHedging.Agents import DeltaHedgingAgent
+from DeepHedging.utils import (
+    geometric_conditional_delta_bump_tf,
+    geometric_conditional_price_tf,
+)
+
 
 class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
     """
-    A delta hedging agent for geometric Asian options.
+    Delta benchmark for discrete geometric Asian options under GBM.
+
+    Uses conditional pricing/delta based on observed fixings up to time t and
+    remaining fixing schedule for t+1..T.
     """
-    plot_color = 'orange' 
-    name = 'asian_delta_hedging'
+
+    plot_color = "orange"
+    name = "asian_delta_hedging"
     is_trainable = False
     plot_name = {
-        'en': 'Geometric Asian Delta',
-        'es': 'Delta de Opción Asiática Geométrica'
+        "en": "Geometric Asian Delta",
+        "es": "Delta de Opcion Asiatica Geometrica",
     }
 
-    def __init__(self, stock_model, option_class):
-        super().__init__(stock_model, option_class)
+    def __init__(self, stock_model, option_class, bump_size=0.01, no_trade_band=0.0):
+        super().__init__(stock_model, option_class, no_trade_band=no_trade_band)
+        self.bump_size = float(bump_size)
+        self.fixing_indices = option_class.resolve_fixing_indices(self.N + 1)
+        self.total_fixings = int(len(self.fixing_indices))
+        self._running_log_sum = None
 
-    def d1(self, S, T_minus_t):
-        """
-        Calculate the d1 component used in the geometric Asian option formula.
-        """
+    def _future_fixing_steps(self, current_step):
+        return np.array(
+            [idx - current_step for idx in self.fixing_indices if idx > current_step],
+            dtype=np.int32,
+        )
 
-        numerator = tf.math.log(S / self.strike) + (T_minus_t / 2) * (self.r + (self.sigma ** 2) / 6)
-        denominator = self.sigma * tf.sqrt(T_minus_t / 3)
-        return numerator / denominator
+    def _is_fixing_step(self, step):
+        return bool(np.any(self.fixing_indices == int(step)))
 
-    def d2(self, S, T_minus_t):
-        """
-        Calculate the d2 component used in the geometric Asian option formula.
-        """
-
-        numerator = tf.math.log(S / self.strike) + (T_minus_t / 2) * (self.r - (self.sigma ** 2) / 2)
-        denominator = self.sigma * tf.sqrt(T_minus_t / 3)
-        return numerator / denominator
+    def reset_running_state(self, batch_size):
+        self._running_log_sum = tf.zeros((batch_size,), dtype=tf.float32)
 
     def delta(self, S, T_minus_t):
         """
-        Calculate the delta of the geometric Asian option.
+        Backward-compatible delta signature.
+        For process_batch(), a stateful conditional delta is used instead.
         """
+        S = tf.convert_to_tensor(S, dtype=tf.float32)
+        T_minus_t = tf.convert_to_tensor(T_minus_t, dtype=tf.float32)
 
-        # Ensure S and T_minus_t are tf.float32 tensors
-        S = tf.cast(S, tf.float32)
-        T_minus_t = tf.cast(T_minus_t, tf.float32)
+        steps_remaining = tf.maximum(
+            tf.cast(tf.round(T_minus_t / tf.constant(self.dt, dtype=tf.float32)), tf.int32),
+            0,
+        )
 
-        d1 = self.d1(S, T_minus_t)
-        d2 = self.d2(S, T_minus_t)
+        def _single_delta(args):
+            s_i, n_i = args
+            n_i = int(n_i)
+            future_steps = np.arange(1, n_i + 1, dtype=np.int32)
+            d_i = geometric_conditional_delta_bump_tf(
+                S=tf.reshape(s_i, (1,)),
+                past_log_sum=tf.zeros((1,), dtype=tf.float32),
+                total_fixings=max(n_i, 1),
+                future_fixing_steps=future_steps,
+                dt=self.dt,
+                r=self.r,
+                sigma=self.sigma,
+                strike=self.strike,
+                option_type=self.option_type,
+                bump_rel=self.bump_size,
+            )[0]
+            return d_i
 
-        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
-        Nd1 = normal_dist.cdf(d1)
-        N_minus_d1 = normal_dist.cdf(-d1)
+        return tf.map_fn(
+            _single_delta,
+            (S, steps_remaining),
+            fn_output_signature=tf.float32,
+        )
 
-        exp_term1 = tf.exp(-((self.r + (self.sigma ** 2) / 6) * (T_minus_t / 2)))
-        exp_term2 = tf.exp(-((self.r * (T_minus_t / 2)) + (T_minus_t * (self.sigma ** 2) / 12) + (d1 ** 2) / 2))
-        exp_term3 = tf.exp(-((self.r * T_minus_t) + (d2 ** 2) / 2))
+    def process_batch(self, batch_paths, batch_T_minus_t):
+        batch_size = batch_paths.shape[0]
+        self.reset_last_delta(batch_size)
+        self.reset_running_state(batch_size)
 
-        if self.option_type == 'call':
-            first_term = exp_term1 * Nd1
-            second_term = (1 / (self.sigma * tf.sqrt(2 * np.pi * T_minus_t / 3))) * (
-                exp_term2 - (self.strike / S) * exp_term3
+        all_actions = []
+        for t in range(batch_paths.shape[1] - 1):  # Hedge up to T-1
+            current_paths = batch_paths[:, t, :]
+            current_spot = tf.maximum(tf.cast(current_paths[:, 0], tf.float32), 1e-12)
+
+            # State at time t includes current fixing if t is in fixing calendar.
+            if self._is_fixing_step(t):
+                self._running_log_sum += tf.math.log(current_spot)
+
+            future_fixings = self._future_fixing_steps(t)
+            target_delta = geometric_conditional_delta_bump_tf(
+                S=current_spot,
+                past_log_sum=self._running_log_sum,
+                total_fixings=self.total_fixings,
+                future_fixing_steps=future_fixings,
+                dt=self.dt,
+                r=self.r,
+                sigma=self.sigma,
+                strike=self.strike,
+                option_type=self.option_type,
+                bump_rel=self.bump_size,
             )
-            delta = first_term + second_term
-        elif self.option_type == 'put':
-            first_term = -exp_term1 * N_minus_d1
-            second_term = (1 / (self.sigma * tf.sqrt(2 * np.pi * T_minus_t / 3))) * (
-                -exp_term2 + (self.strike / S) * exp_term3
-            )
-            delta = first_term + second_term
-        else:
-            raise ValueError("Option type must be either 'call' or 'put'.")
 
-        return delta
+            action = self._to_actions(target_delta, current_paths)
+            all_actions.append(action)
+
+        all_actions = tf.stack(all_actions, axis=1)
+        zero_action = tf.zeros((batch_size, 1, all_actions.shape[-1]), dtype=tf.float32)
+        all_actions = tf.concat([all_actions, zero_action], axis=1)
+        return all_actions
 
     def get_model_price(self):
-        """
-        Calculate the price for the geometric Asian option.
-        """
-        eps = 1e-4
-        T_tilde = self.T + eps  # Total time to maturity
+        spot = tf.constant([float(self.S0)], dtype=tf.float32)
+        past_log_sum = tf.zeros((1,), dtype=tf.float32)
+        if self._is_fixing_step(0):
+            past_log_sum += tf.math.log(tf.maximum(spot, 1e-12))
 
-        # Ensure S and T_tilde are tf.float32 tensors
-        self.S0 = tf.cast(self.S0, tf.float32)
-        T_tilde = tf.cast(T_tilde, tf.float32)
+        future_fixings = self._future_fixing_steps(0)
+        price = geometric_conditional_price_tf(
+            S=spot,
+            past_log_sum=past_log_sum,
+            total_fixings=self.total_fixings,
+            future_fixing_steps=future_fixings,
+            dt=self.dt,
+            r=self.r,
+            sigma=self.sigma,
+            strike=self.strike,
+            option_type=self.option_type,
+        )
+        return price[0]
 
-        d1 = self.d1(self.S0, T_tilde)
-        d2 = self.d2(self.S0, T_tilde)
-
-        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
-        Nd1 = normal_dist.cdf(d1)
-        Nd2 = normal_dist.cdf(d2)
-        N_minus_d1 = normal_dist.cdf(-d1)
-        N_minus_d2 = normal_dist.cdf(-d2)
-
-        exp_term1 = tf.exp(-((self.r + (self.sigma ** 2) / 6) * (T_tilde / 2)))
-
-        if self.option_type == 'call':
-            price = self.S0 * exp_term1 * Nd1 - self.strike * tf.exp(-self.r * T_tilde) * Nd2
-        elif self.option_type == 'put':
-            price = self.strike * tf.exp(-self.r * T_tilde) * N_minus_d2 - self.S0 * exp_term1 * N_minus_d1
-        else:
-            raise ValueError("Option type must be either 'call' or 'put'.")
-
-        return price

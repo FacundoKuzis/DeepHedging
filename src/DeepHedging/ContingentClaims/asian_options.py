@@ -13,8 +13,8 @@ class AsianArithmeticCall(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the Asian arithmetic average call option.
     """
 
-    def __init__(self, strike, amount=1.0, underlying_index=0):
-        super().__init__(amount=amount, underlying_index=underlying_index)
+    def __init__(self, strike, amount=1.0, underlying_index=0, fixing_indices=None):
+        super().__init__(amount=amount, underlying_index=underlying_index, fixing_indices=fixing_indices)
         self.strike = strike
         self.option_type = 'call'
 
@@ -31,7 +31,8 @@ class AsianArithmeticCall(ContingentClaim):
                               Shape is (num_paths,).
         """
         # Calculate the arithmetic average of the underlying asset prices over time
-        average_price = tf.reduce_mean(paths, axis=1)  # Shape: (num_paths,)
+        fixing_paths = self.select_fixing_paths(paths)
+        average_price = tf.reduce_mean(fixing_paths, axis=1)  # Shape: (num_paths,)
 
         payoff = tf.maximum(average_price - self.strike, 0) * self.amount
         return payoff
@@ -48,8 +49,8 @@ class AsianArithmeticPut(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the Asian arithmetic average put option.
     """
 
-    def __init__(self, strike, amount=1.0, underlying_index=0):
-        super().__init__(amount=amount, underlying_index=underlying_index)
+    def __init__(self, strike, amount=1.0, underlying_index=0, fixing_indices=None):
+        super().__init__(amount=amount, underlying_index=underlying_index, fixing_indices=fixing_indices)
         self.strike = strike
         self.option_type = 'put'
 
@@ -66,7 +67,8 @@ class AsianArithmeticPut(ContingentClaim):
                               Shape is (num_paths,).
         """
         # Calculate the arithmetic average of the underlying asset prices over time
-        average_price = tf.reduce_mean(paths, axis=1)  # Shape: (num_paths,)
+        fixing_paths = self.select_fixing_paths(paths)
+        average_price = tf.reduce_mean(fixing_paths, axis=1)  # Shape: (num_paths,)
 
         payoff = tf.maximum(self.strike - average_price, 0) * self.amount
         return payoff
@@ -83,8 +85,8 @@ class AsianGeometricCall(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the Asian geometric average call option.
     """
 
-    def __init__(self, strike, amount=1.0, underlying_index=0):
-        super().__init__(amount=amount, underlying_index=underlying_index)
+    def __init__(self, strike, amount=1.0, underlying_index=0, fixing_indices=None):
+        super().__init__(amount=amount, underlying_index=underlying_index, fixing_indices=fixing_indices)
         self.strike = strike
         self.option_type = 'call'
 
@@ -101,10 +103,11 @@ class AsianGeometricCall(ContingentClaim):
                               Shape is (num_paths,).
         """
         # Number of time steps
-        N = tf.cast(tf.shape(paths)[1], tf.float32)
+        fixing_paths = self.select_fixing_paths(paths)
+        N = tf.cast(tf.shape(fixing_paths)[1], tf.float32)
 
         # Calculate the sum of the log prices
-        log_paths = tf.math.log(paths)
+        log_paths = tf.math.log(fixing_paths)
         sum_log_prices = tf.reduce_sum(log_paths, axis=1)  # Shape: (num_paths,)
 
         # Compute the geometric average using logs
@@ -126,8 +129,8 @@ class AsianGeometricPut(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the Asian geometric average put option.
     """
 
-    def __init__(self, strike, amount=1.0, underlying_index=0):
-        super().__init__(amount=amount, underlying_index=underlying_index)
+    def __init__(self, strike, amount=1.0, underlying_index=0, fixing_indices=None):
+        super().__init__(amount=amount, underlying_index=underlying_index, fixing_indices=fixing_indices)
         self.strike = strike
         self.option_type = 'put'
 
@@ -144,10 +147,11 @@ class AsianGeometricPut(ContingentClaim):
                               Shape is (num_paths,).
         """
         # Number of time steps
-        N = tf.cast(tf.shape(paths)[1], tf.float32)
+        fixing_paths = self.select_fixing_paths(paths)
+        N = tf.cast(tf.shape(fixing_paths)[1], tf.float32)
 
         # Calculate the sum of the log prices
-        log_paths = tf.math.log(paths)
+        log_paths = tf.math.log(fixing_paths)
         sum_log_prices = tf.reduce_sum(log_paths, axis=1)  # Shape: (num_paths,)
 
         # Compute the geometric average using logs

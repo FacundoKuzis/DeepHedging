@@ -1,247 +1,124 @@
-import tensorflow as tf
 import numpy as np
-from DeepHedging.Agents import BaseAgent, DeltaHedgingAgent, GeometricAsianDeltaHedgingAgent
-from DeepHedging.HedgingInstruments import GBMStock, HestonStock
-from DeepHedging.ContingentClaims import (
-    ContingentClaim,
-    AsianArithmeticCall,
-    AsianArithmeticPut,
-    AsianGeometricCall,
-    AsianGeometricPut,
-)
-from DeepHedging.utils import MonteCarloPricer
+import tensorflow as tf
+from DeepHedging.Agents import DeltaHedgingAgent
+from DeepHedging.utils import arithmetic_control_variate_price_delta_crn
+
 
 class ArithmeticAsianControlVariateAgent(DeltaHedgingAgent):
     """
-    An agent that prices and delta hedges an arithmetic Asian option using Monte Carlo simulation with control variate.
+    Arithmetic Asian benchmark:
+    - Conditional MC pricing on remaining fixings
+    - Geometric closed-form control variate
+    - Delta via CRN central finite differences
     """
 
-    plot_color = 'purple'
-    name = 'arithmetic_asian_control_variate'
+    plot_color = "purple"
+    name = "arithmetic_asian_control_variate"
     is_trainable = False
     plot_name = {
-        'en': 'Arithmetic Asian Delta with Control Variate',
-        'es': 'Delta de Asiática Aritmética con Variable de Control'
+        "en": "Arithmetic Asian Delta with Control Variate",
+        "es": "Delta de Asiatica Aritmetica con Variable de Control",
     }
 
-    def __init__(self, stock_model, option_class, num_simulations=10000, bump_size=0.01, seed=33):
-        """
-        Initialize the agent.
+    def __init__(
+        self,
+        stock_model,
+        option_class,
+        num_simulations=10_000,
+        bump_size=0.01,
+        seed=33,
+        no_trade_band=0.0,
+    ):
+        super().__init__(stock_model, option_class, no_trade_band=no_trade_band)
+        self.option_class = option_class
+        self.num_simulations = int(num_simulations)
+        self.bump_size = float(bump_size)
+        self.seed = int(seed)
 
-        Args:
-            stock_model (Stock): An instance of a Stock subclass (e.g., GBMStock).
-            option_class (AsianArithmeticCall or AsianArithmeticPut): An instance of the arithmetic Asian option class.
-            num_simulations (int): Number of Monte Carlo simulations.
-            bump_size (float): Relative size of the bump for finite differences.
-            seed (int): Random seed for reproducibility.
-        """
-        self.stock_model = stock_model
-        self.option_class = option_class  # The arithmetic Asian option
-        self.num_simulations = num_simulations
-        self.bump_size = bump_size
-        self.seed = seed
-
-        self.S0 = stock_model.S0
-        self.T = stock_model.T
-        self.N = stock_model.N
-        self.r = stock_model.r
-        self.sigma = stock_model.sigma
-        self.strike = option_class.strike
-        self.option_type = option_class.option_type
-        self.dt = stock_model.dt
-
-        # Initialize last delta for delta hedging
-        self.last_delta = None
-
-        # Instantiate Monte Carlo Pricer
-        self.pricer = MonteCarloPricer(
-            stock_model=self.stock_model,
-            r=self.r,
-            T=self.T,
-            num_simulations=self.num_simulations,
-            seed=self.seed
-        )
-
-        # Instantiate GeometricAsianDeltaHedgingAgent to get analytical price and delta
-        if self.option_type == 'call':
-            self.geometric_option = AsianGeometricCall(strike=self.strike)
-        elif self.option_type == 'put':
-            self.geometric_option = AsianGeometricPut(strike=self.strike)
-        else:
-            raise ValueError("Option type must be either 'call' or 'put'.")
-
-        self.geometric_agent = GeometricAsianDeltaHedgingAgent(self.stock_model, self.geometric_option)
+        self.fixing_indices = option_class.resolve_fixing_indices(self.N + 1)
+        self.total_fixings = int(len(self.fixing_indices))
+        self._running_sum = None
+        self._running_log_sum = None
 
     def build_model(self):
-        """
-        No neural network model is needed for this agent.
-        """
         pass
 
-    def price(self):
-        """
-        Price the arithmetic Asian option using Monte Carlo simulation with control variate.
+    def _is_fixing_step(self, step):
+        return bool(np.any(self.fixing_indices == int(step)))
 
-        Returns:
-            float: Estimated present value of the arithmetic Asian option using control variate.
-        """
-        # Simulate paths
-        paths = self.pricer.simulate_paths()
+    def reset_running_state(self, batch_size):
+        self._running_sum = tf.zeros((batch_size,), dtype=tf.float32)
+        self._running_log_sum = tf.zeros((batch_size,), dtype=tf.float32)
 
-        # Calculate payoffs of the arithmetic and geometric Asian options
-        arithmetic_payoffs = self.option_class.calculate_payoff(paths)
-        geometric_payoffs = self.geometric_option.calculate_payoff(paths)
+    def _compute_conditional_deltas_np(self, spot_np, past_sum_np, past_log_sum_np, current_step):
+        current_step = int(current_step)
+        deltas = np.zeros_like(spot_np, dtype=np.float32)
+        for i, (s_i, ps_i, pls_i) in enumerate(zip(spot_np, past_sum_np, past_log_sum_np)):
+            _, delta_i = arithmetic_control_variate_price_delta_crn(
+                S_t=float(s_i),
+                past_sum=float(ps_i),
+                past_log_sum=float(pls_i),
+                fixing_indices=self.fixing_indices,
+                current_step=current_step,
+                dt=self.dt,
+                r=self.r,
+                sigma=self.sigma,
+                strike=self.strike,
+                option_type=self.option_type,
+                num_simulations=self.num_simulations,
+                bump_rel=self.bump_size,
+                seed=self.seed + 1_000_003 * current_step + i,
+            )
+            deltas[i] = np.float32(delta_i)
+        return deltas
 
-        # Monte Carlo estimates
-        arithmetic_mc_price = tf.exp(-self.r * self.T) * tf.reduce_mean(arithmetic_payoffs)
-        geometric_mc_price = tf.exp(-self.r * self.T) * tf.reduce_mean(geometric_payoffs)
+    def process_batch(self, batch_paths, batch_T_minus_t):
+        batch_size = batch_paths.shape[0]
+        self.reset_last_delta(batch_size)
+        self.reset_running_state(batch_size)
 
-        # Analytical price of geometric Asian option
-        geometric_analytic_price = self.geometric_agent.get_model_price()
+        all_actions = []
+        for t in range(batch_paths.shape[1] - 1):  # Hedge up to T-1
+            current_paths = batch_paths[:, t, :]
+            current_spot = tf.maximum(tf.cast(current_paths[:, 0], tf.float32), 1e-12)
 
-        # Adjusted price using control variate
-        adjusted_price = arithmetic_mc_price + (geometric_analytic_price - geometric_mc_price)
+            # State at time t includes current fixing if t is in fixing calendar.
+            if self._is_fixing_step(t):
+                self._running_sum += current_spot
+                self._running_log_sum += tf.math.log(current_spot)
 
-        return adjusted_price.numpy()
+            target_delta = tf.numpy_function(
+                self._compute_conditional_deltas_np,
+                [current_spot, self._running_sum, self._running_log_sum, np.int32(t)],
+                tf.float32,
+            )
+            target_delta.set_shape((batch_size,))
 
-    def delta(self, bump_size=0.01):
-        """
-        Estimate the Delta of the option using central finite differences with control variate adjustment.
+            action = self._to_actions(target_delta, current_paths)
+            all_actions.append(action)
 
-        Args:
-            bump_size (float, optional): Relative bump size for finite differences. Default is 1%.
-
-        Returns:
-            float: Estimated Delta of the option.
-        """
-        epsilon = self.stock_model.S0 * bump_size
-
-        # Price at S0 + epsilon
-        original_S0 = self.stock_model.S0
-        self.stock_model.S0 = original_S0 + epsilon
-
-        # Update pricer and agents with bumped S0
-        self.pricer.stock_model.S0 = self.stock_model.S0
-        self.geometric_agent.stock_model.S0 = self.stock_model.S0
-        price_up = self.price()
-
-        # Price at S0 - epsilon
-        self.stock_model.S0 = original_S0 - epsilon
-
-        # Update pricer and agents with bumped S0
-        self.pricer.stock_model.S0 = self.stock_model.S0
-        self.geometric_agent.stock_model.S0 = self.stock_model.S0
-        price_down = self.price()
-
-        # Restore original S0
-        self.stock_model.S0 = original_S0
-        self.pricer.stock_model.S0 = original_S0
-        self.geometric_agent.stock_model.S0 = original_S0
-
-        # Central difference approximation of Delta
-        delta = (price_up - price_down) / (2 * epsilon)
-
-        return delta
-
-    def act(self, instrument_paths, T_minus_t):
-        """
-        Act based on the Monte Carlo delta hedging strategy with control variate.
-
-        Arguments:
-        - instrument_paths (tf.Tensor): Tensor containing the instrument paths at the current timestep.
-                                        Shape: (batch_size, n_instruments)
-        - T_minus_t (tf.Tensor): Tensor representing the time to maturity at the current timestep.
-                                 Shape: (batch_size,)
-
-        Returns:
-        - actions (tf.Tensor): The delta hedging actions for each instrument.
-                               Shape: (batch_size, n_instruments)
-        """
-        # Ensure last_delta is initialized
-        if self.last_delta is None:
-            self.reset_last_delta(instrument_paths.shape[0])
-
-        # Compute delta
-        delta = tf.numpy_function(
-            self.compute_deltas,
-            [instrument_paths[:, 0].numpy(), T_minus_t.numpy()],
-            tf.float32
-        )
-
-        # Set shape information
-        delta.set_shape((instrument_paths.shape[0],))
-
-        # Calculate action as change in delta
-        action = delta - self.last_delta
-        self.last_delta = delta
-
-        # Expand dimensions to match the number of instruments
-        action = tf.expand_dims(action, axis=-1)  # Shape: (batch_size, 1)
-
-        # Assuming only the first instrument is being hedged
-        zeros = tf.zeros((instrument_paths.shape[0], instrument_paths.shape[1] - 1), dtype=tf.float32)
-        actions = tf.concat([action, zeros], axis=1)  # Shape: (batch_size, n_instruments)
-
-        return actions
-
-    def reset_last_delta(self, batch_size):
-        """
-        Reset the last delta to zero for each simulation in the batch.
-
-        Arguments:
-        - batch_size (int): The number of simulations in the batch.
-        """
-        self.last_delta = tf.zeros((batch_size,), dtype=tf.float32)
-
-    def compute_deltas(self, S_values, T_minus_t_values):
-        """
-        Compute the deltas for a batch of stock prices and times to maturity.
-
-        Arguments:
-        - S_values (np.ndarray): Current stock prices. Shape: (batch_size,)
-        - T_minus_t_values (np.ndarray): Time to maturity. Shape: (batch_size,)
-
-        Returns:
-        - deltas (np.ndarray): The computed deltas. Shape: (batch_size,)
-        """
-        deltas = []
-        for S, T in zip(S_values, T_minus_t_values):
-            # Handle cases where T <= 0
-            if T <= 0:
-                deltas.append(0.0)
-                continue
-
-            # Update the stock model's parameters
-            original_S0 = self.stock_model.S0
-            original_T = self.pricer.T
-
-            self.stock_model.S0 = S
-            self.pricer.T = T
-            self.pricer.stock_model.S0 = S
-            self.pricer.T = T
-            self.geometric_agent.stock_model.S0 = S
-            self.geometric_agent.T = T
-
-            # Compute delta using central finite differences
-            delta = self.delta(bump_size=self.bump_size)
-
-            deltas.append(delta)
-
-            # Restore original parameters
-            self.stock_model.S0 = original_S0
-            self.pricer.T = original_T
-            self.pricer.stock_model.S0 = original_S0
-            self.pricer.T = original_T
-            self.geometric_agent.stock_model.S0 = original_S0
-            self.geometric_agent.T = original_T
-
-        return np.array(deltas, dtype=np.float32)
+        all_actions = tf.stack(all_actions, axis=1)
+        zero_action = tf.zeros((batch_size, 1, all_actions.shape[-1]), dtype=tf.float32)
+        all_actions = tf.concat([all_actions, zero_action], axis=1)
+        return all_actions
 
     def get_model_price(self):
-        """
-        Calculate the price of the arithmetic Asian option using the control variate method.
+        past_sum = float(self.S0) if self._is_fixing_step(0) else 0.0
+        past_log_sum = float(np.log(max(self.S0, 1e-12))) if self._is_fixing_step(0) else 0.0
+        price, _ = arithmetic_control_variate_price_delta_crn(
+            S_t=float(self.S0),
+            past_sum=past_sum,
+            past_log_sum=past_log_sum,
+            fixing_indices=self.fixing_indices,
+            current_step=0,
+            dt=self.dt,
+            r=self.r,
+            sigma=self.sigma,
+            strike=self.strike,
+            option_type=self.option_type,
+            num_simulations=self.num_simulations,
+            bump_rel=self.bump_size,
+            seed=self.seed,
+        )
+        return float(price)
 
-        Returns:
-            float: The price of the option.
-        """
-        return self.price()

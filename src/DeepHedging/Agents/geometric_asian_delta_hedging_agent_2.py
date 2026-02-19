@@ -8,8 +8,8 @@ class GeometricAsianDeltaHedgingAgent2(DeltaHedgingAgent):
     A delta hedging agent for geometric Asian options, using the provided option pricing formula.
     """
 
-    def __init__(self, stock_model, option_class):
-        super().__init__(stock_model, option_class)
+    def __init__(self, stock_model, option_class, no_trade_band=0.0):
+        super().__init__(stock_model, option_class, no_trade_band=no_trade_band)
         self.name = 'asian_delta_hedging_custom_formula'
         self.plot_name = {
             'en': 'Geometric Asian Delta (Custom Formula)',

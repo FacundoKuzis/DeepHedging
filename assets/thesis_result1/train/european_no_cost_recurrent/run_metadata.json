@@ -1,0 +1,15 @@
+{
+  "run_name": "european_no_cost_recurrent",
+  "agent_name": "RecurrentAgent",
+  "agent_internal_name": "recurrent",
+  "claim": "EuropeanCall",
+  "proportional_cost": 0.0,
+  "train_paths": 100000,
+  "val_paths": 0,
+  "n_epochs": 100,
+  "batch_size": 10000,
+  "seed": 33,
+  "elapsed_seconds": 513.6914818000514,
+  "model_path": "C:\\Users\\facun\\Downloads\\tesis\\DeepHedging\\DeepHedging\\models\\recurrent\\european_no_cost_recurrent.keras",
+  "optimizer_path": "C:\\Users\\facun\\Downloads\\tesis\\DeepHedging\\DeepHedging\\optimizers\\recurrent\\european_no_cost_recurrent"
+}

@@ -13,8 +13,8 @@ class EuropeanCall(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the European call option.
     """
 
-    def __init__(self, strike, amount=1.0, underlying_index=0):
-        super().__init__(amount=amount, underlying_index=underlying_index)
+    def __init__(self, strike, amount=1.0, underlying_index=0, fixing_indices=None):
+        super().__init__(amount=amount, underlying_index=underlying_index, fixing_indices=fixing_indices)
         self.strike = strike
         self.option_type = 'call'
 
@@ -32,7 +32,8 @@ class EuropeanCall(ContingentClaim):
 
         """
         # The payoff is max(S(T) - K, 0) for a European call option
-        payoff = tf.maximum(paths[:, -1] - self.strike, 0) * self.amount
+        fixing_paths = self.select_fixing_paths(paths)
+        payoff = tf.maximum(fixing_paths[:, -1] - self.strike, 0) * self.amount
         return payoff
 
 class EuropeanPut(ContingentClaim):
@@ -47,8 +48,8 @@ class EuropeanPut(ContingentClaim):
     - calculate_payoff(self, paths): Calculates the payoff of the European put option.
     """
 
-    def __init__(self, strike, amount=1.0, underlying_index=0):
-        super().__init__(amount=amount, underlying_index=underlying_index)
+    def __init__(self, strike, amount=1.0, underlying_index=0, fixing_indices=None):
+        super().__init__(amount=amount, underlying_index=underlying_index, fixing_indices=fixing_indices)
         self.strike = strike
         self.option_type = 'put'
 
@@ -66,6 +67,7 @@ class EuropeanPut(ContingentClaim):
 
         """
         # The payoff is max(K - S(T), 0) for a European put option
-        payoff = tf.maximum(self.strike - paths[:, -1], 0) * self.amount
+        fixing_paths = self.select_fixing_paths(paths)
+        payoff = tf.maximum(self.strike - fixing_paths[:, -1], 0) * self.amount
         return payoff
 

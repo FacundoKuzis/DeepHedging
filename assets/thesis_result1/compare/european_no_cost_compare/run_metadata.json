@@ -1,0 +1,14 @@
+{
+  "run_name": "european_no_cost_compare",
+  "benchmark_agent": "DeltaHedgingAgent",
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "european_no_cost_recurrent"
+    }
+  ],
+  "eval_paths": 100000,
+  "bootstrap_enabled": true,
+  "bootstrap_n_bootstraps": 1000,
+  "bootstrap_confidence_level": 0.95
+}

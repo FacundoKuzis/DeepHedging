@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "model_family": "deep_hedging_result_1",
+  "output_root": "assets/thesis_result1",
+  "s0": 100.0,
+  "n": 21,
+  "trading_days_per_year": 252,
+  "r": 0.05,
+  "sigma": 0.05,
+  "strike": 100.0,
+  "claim_underlying_index": 0,
+  "fixing_indices": null,
+  "risk_measure_name": "CVaR",
+  "cvar_alpha": 0.5,
+  "benchmark_bump_size": 0.001,
+  "benchmark_num_simulations": 10000,
+  "benchmark_seed": 33,
+  "benchmark_no_trade_band": 0.0,
+  "models_dir": "models",
+  "optimizers_dir": "optimizers",
+  "eval_paths": 100000,
+  "eval_seed": 33,
+  "pricing_method": "fixed",
+  "language": "es",
+  "bootstrap_enabled": true,
+  "bootstrap_n_bootstraps": 10000,
+  "bootstrap_confidence_level": 0.95,
+  "bootstrap_batch_size": 100,
+  "run_name": "asian_arith_cost_1pct_compare",
+  "description": "Thesis Result 1 comparison - asian_arith_cost_1pct",
+  "contingent_claim": "AsianArithmeticCall",
+  "proportional_cost": 0.01,
+  "benchmark_agent_name": "ArithmeticAsianControlVariateAgent",
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "asian_arith_cost_1pct_recurrent"
+    },
+    {
+      "agent_name": "LSTMAgent",
+      "model_name": "asian_arith_cost_1pct_lstm"
+    },
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "asian_arith_cost_1pct_wavenet"
+    }
+  ],
+  "plot_min_x": -1.0,
+  "plot_max_x": 5.0,
+  "no_intervention_bound": 0.0,
+  "no_intervention_mode": "absolute"
+}

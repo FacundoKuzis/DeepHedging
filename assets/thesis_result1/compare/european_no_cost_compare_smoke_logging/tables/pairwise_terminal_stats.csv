@@ -1,0 +1,3 @@
+pair_name,Agent,Mean Error,Standard Deviation,CVaR_50,CVaR_95,CVaR_99,MAE,WorstCase
+bs_delta_hedging_vs_recurrent,Agente delta de opción europea,0.01170099,0.09992567,0.87303615,1.0293851,1.1438067,0.79791784,1.2538974
+bs_delta_hedging_vs_recurrent,Agente Recurrente,0.008074651,0.16933127,0.9309963,1.1809543,1.3319302,0.8015593,1.5678253

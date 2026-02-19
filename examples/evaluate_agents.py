@@ -105,6 +105,9 @@ def parse_arguments():
                         choices=list(AGENTS.keys()),
                         help='List of agents to evaluate')
     parser.add_argument('--bump_size', type=float, default=0.001, help='Bump size for numerical delta (default: 0.001)')
+    parser.add_argument('--benchmark_num_simulations', type=int, default=10000, help='MC paths for benchmark agents (default: 10000)')
+    parser.add_argument('--benchmark_seed', type=int, default=33, help='MC seed for benchmark agents (default: 33)')
+    parser.add_argument('--no_trade_band', type=float, default=0.0, help='No-trade band eta for benchmark agents (default: 0.0)')
 
     # Environment parameters
     parser.add_argument('--n_epochs', type=int, default=200, help='Number of epochs (default: 200)')
@@ -151,7 +154,17 @@ def parse_arguments():
 
     return parser.parse_args()
 
-def get_agent(agent_name, instrument, contingent_claim, path_transformation_configs=None, n_hedging_timesteps=None, **kwargs):
+def get_agent(
+    agent_name,
+    instrument,
+    contingent_claim,
+    path_transformation_configs=None,
+    n_hedging_timesteps=None,
+    bump_size=0.001,
+    benchmark_num_simulations=10000,
+    benchmark_seed=33,
+    no_trade_band=0.0,
+):
 
     if agent_name not in AGENTS:
         raise ValueError(f"Agent '{agent_name}' is not recognized. Available agents: {list(AGENTS.keys())}")
@@ -166,7 +179,16 @@ def get_agent(agent_name, instrument, contingent_claim, path_transformation_conf
         if "n_instruments" in init_params:
             agent_kwargs["n_instruments"] = 1
         return agent_class(**agent_kwargs)
-    return agent_class(instrument, contingent_claim, **kwargs)
+    init_signature = inspect.signature(agent_class.__init__)
+    init_params = init_signature.parameters
+    candidate_kwargs = {
+        "bump_size": bump_size,
+        "num_simulations": benchmark_num_simulations,
+        "seed": benchmark_seed,
+        "no_trade_band": no_trade_band,
+    }
+    agent_kwargs = {k: v for k, v in candidate_kwargs.items() if k in init_params}
+    return agent_class(instrument, contingent_claim, **agent_kwargs)
 
 def get_contingent_claim(claim_type, strike, underlying_index=0):
     claims = {
@@ -181,12 +203,31 @@ def get_contingent_claim(claim_type, strike, underlying_index=0):
         raise ValueError(f"Contingent Claim '{claim_type}' is not recognized. Available claims: {list(claims.keys())}")
     return claims[claim_type]
 
-def load_agent(agent_name, model_name, models_dir, instrument, contingent_claim, bump_size, path_transformation_configs, n_hedging_timesteps):
+def load_agent(
+    agent_name,
+    model_name,
+    models_dir,
+    instrument,
+    contingent_claim,
+    bump_size,
+    path_transformation_configs,
+    n_hedging_timesteps,
+    benchmark_num_simulations,
+    benchmark_seed,
+    no_trade_band,
+):
     # Initialize agent with additional parameters if necessary
-    if agent_name in ['GeometricAsianNumericalDeltaHedgingAgent', 'ArithmeticAsianMonteCarloAgent', 'ArithmeticAsianControlVariateAgent']:
-        agent = get_agent(agent_name, instrument, contingent_claim, bump_size=bump_size)
-    else:
-        agent = get_agent(agent_name, instrument, contingent_claim, path_transformation_configs=path_transformation_configs, n_hedging_timesteps=n_hedging_timesteps)
+    agent = get_agent(
+        agent_name,
+        instrument,
+        contingent_claim,
+        path_transformation_configs=path_transformation_configs,
+        n_hedging_timesteps=n_hedging_timesteps,
+        bump_size=bump_size,
+        benchmark_num_simulations=benchmark_num_simulations,
+        benchmark_seed=benchmark_seed,
+        no_trade_band=no_trade_band,
+    )
     
     # Define model path
     model_path = os.path.join(models_dir, agent.name, f'{model_name}.keras')
@@ -254,7 +295,10 @@ def main():
             contingent_claim=contingent_claim,
             bump_size=args.bump_size,
             path_transformation_configs=path_transformation_configs,
-            n_hedging_timesteps=args.N
+            n_hedging_timesteps=args.N,
+            benchmark_num_simulations=args.benchmark_num_simulations,
+            benchmark_seed=args.benchmark_seed,
+            no_trade_band=args.no_trade_band,
         )
         agents.append(agent)
         agent_model_names_resolved.append(model_name)

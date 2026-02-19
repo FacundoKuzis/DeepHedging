@@ -57,6 +57,7 @@ S0 = 100.0
 SIGMA = 0.2
 STRIKE = 100.0
 CLAIM_UNDERLYING_INDEX = 0
+FIXING_INDICES = None  # None = all timesteps; else list like [0, 5, 10, ..., N]
 GLOBAL_RANDOM_SEED = 42
 
 # Claim/risk
@@ -67,6 +68,13 @@ CVaR_ALPHA = 0.5
 # Main agent
 MAIN_AGENT_NAME = "LSTMAgent"
 BUMP_SIZE = 0.001  # Used by numerical agents
+BENCHMARK_NUM_SIMULATIONS = 10_000
+BENCHMARK_MC_SEED = 33
+NO_TRADE_BAND = 0.0
+CALIBRATE_NO_TRADE_BAND = False
+NO_TRADE_BAND_GRID = [0.0, 0.001, 0.002, 0.005, 0.01]
+CALIBRATE_BAND_PATHS = 4_000
+CALIBRATE_BAND_SEED = 7
 
 # Train settings (fast defaults)
 N_EPOCHS = 3
@@ -133,7 +141,11 @@ CLAIMS = {
 def build_claim():
     if CONTINGENT_CLAIM_NAME not in CLAIMS:
         raise ValueError(f"Unknown claim '{CONTINGENT_CLAIM_NAME}'. Available: {list(CLAIMS.keys())}")
-    return CLAIMS[CONTINGENT_CLAIM_NAME](strike=STRIKE, underlying_index=CLAIM_UNDERLYING_INDEX)
+    return CLAIMS[CONTINGENT_CLAIM_NAME](
+        strike=STRIKE,
+        underlying_index=CLAIM_UNDERLYING_INDEX,
+        fixing_indices=FIXING_INDICES,
+    )
 
 
 def build_instrument():
@@ -157,16 +169,49 @@ def build_agent(agent_name, instrument, contingent_claim):
             kwargs["n_instruments"] = 1
         return agent_class(**kwargs)
 
-    kwargs = {}
-    if agent_name in {
-        "GeometricAsianNumericalDeltaHedgingAgent",
-        "ArithmeticAsianMonteCarloAgent",
-        "ArithmeticAsianControlVariateAgent",
-        "MonteCarloAgent",
-    }:
-        kwargs["bump_size"] = BUMP_SIZE
+    init_signature = inspect.signature(agent_class.__init__)
+    init_params = init_signature.parameters
 
+    candidate_kwargs = {
+        "bump_size": BUMP_SIZE,
+        "num_simulations": BENCHMARK_NUM_SIMULATIONS,
+        "seed": BENCHMARK_MC_SEED,
+        "no_trade_band": NO_TRADE_BAND,
+    }
+    kwargs = {k: v for k, v in candidate_kwargs.items() if k in init_params}
     return agent_class(instrument, contingent_claim, **kwargs)
+
+
+def _set_agent_no_trade_band(agent, eta):
+    if hasattr(agent, "set_no_trade_band"):
+        agent.set_no_trade_band(eta)
+        return
+    if hasattr(agent, "no_trade_band"):
+        agent.no_trade_band = float(eta)
+
+
+def calibrate_no_trade_band(env, agent, n_paths, random_seed, eta_grid):
+    if not hasattr(agent, "process_batch"):
+        return None, None
+    if not (hasattr(agent, "set_no_trade_band") or hasattr(agent, "no_trade_band")):
+        return None, None
+
+    paths = env.generate_data(n_paths, random_seed=random_seed)
+    T_minus_t = env.get_T_minus_t(paths.shape[0])
+
+    best_eta = None
+    best_score = None
+    for eta in eta_grid:
+        _set_agent_no_trade_band(agent, eta)
+        actions = agent.process_batch(paths, T_minus_t)
+        pnl = env.calculate_pnl(paths, actions)
+        score = float(env.risk_measure.calculate(pnl).numpy())
+        if best_score is None or score < best_score:
+            best_score = score
+            best_eta = float(eta)
+
+    _set_agent_no_trade_band(agent, best_eta)
+    return best_eta, best_score
 
 
 def get_model_name_for_agent(agent_name):
@@ -287,6 +332,24 @@ def main():
                 else:
                     print(f"[warn] model not found for {agent_name}: {model_path}")
             evaluation_agents.append(compare_agent)
+
+        if PROPORTIONAL_COST > 0.0 and CALIBRATE_NO_TRADE_BAND:
+            print("[run] calibrating no-trade band for benchmark agents...")
+            for agent in evaluation_agents:
+                if agent.is_trainable:
+                    continue
+                best_eta, best_score = calibrate_no_trade_band(
+                    env=env,
+                    agent=agent,
+                    n_paths=CALIBRATE_BAND_PATHS,
+                    random_seed=CALIBRATE_BAND_SEED,
+                    eta_grid=NO_TRADE_BAND_GRID,
+                )
+                if best_eta is not None:
+                    print(
+                        f"[calibration] {agent.name}: eta={best_eta:.6f}, "
+                        f"risk={best_score:.6f}"
+                    )
 
         os.makedirs(os.path.join(ROOT_DIR, PLOTS_DIR), exist_ok=True)
         os.makedirs(os.path.join(ROOT_DIR, STATS_DIR), exist_ok=True)

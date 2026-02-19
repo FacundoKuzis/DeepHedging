@@ -24,7 +24,14 @@ class DeltaHedgingAgent(BaseAgent):
         'es': 'Agente delta de opción europea'
     }
 
-    def __init__(self, stock_model, option_class):
+    def __init__(
+        self,
+        stock_model,
+        option_class,
+        no_trade_band=0.0,
+        no_trade_band_mode="absolute",
+        no_trade_band_eps=1e-8,
+    ):
         self.stock_model = stock_model
         self.S0 = stock_model.S0
         self.T = stock_model.T
@@ -34,6 +41,9 @@ class DeltaHedgingAgent(BaseAgent):
         self.strike = option_class.strike
         self.option_type = option_class.option_type
         self.dt = stock_model.dt
+        self.no_trade_band = float(no_trade_band)
+        self.no_trade_band_eps = float(no_trade_band_eps)
+        self.set_no_trade_band_mode(no_trade_band_mode)
 
     def build_model(self):
         """
@@ -88,13 +98,36 @@ class DeltaHedgingAgent(BaseAgent):
         - action (tf.Tensor): The delta value used as the hedging action.
         """
 
-        delta = self.delta(instrument_paths[:, 0], T_minus_t) # ASSUMPTION: Stock is the first instrument
-        action = delta - self.last_delta
-        self.last_delta = delta
-        #actions_expanded = tf.expand_dims(action, axis=-1)
-        #zeros = tf.zeros_like(instrument_paths)
-        action =  tf.expand_dims(action, axis=-1)
-        zeros = tf.zeros((instrument_paths.shape[0], instrument_paths.shape[1]-1))
+        target_delta = self.delta(instrument_paths[:, 0], T_minus_t) # ASSUMPTION: Stock is the first instrument
+        return self._to_actions(target_delta, instrument_paths)
+
+    def set_no_trade_band(self, no_trade_band):
+        self.no_trade_band = float(no_trade_band)
+
+    def set_no_trade_band_mode(self, no_trade_band_mode):
+        mode = str(no_trade_band_mode).strip().lower()
+        if mode not in {"absolute", "percentage"}:
+            raise ValueError("no_trade_band_mode must be 'absolute' or 'percentage'.")
+        self.no_trade_band_mode = mode
+
+    def _apply_no_trade_band(self, target_delta):
+        if self.no_trade_band <= 0.0:
+            return target_delta
+        diff = tf.abs(target_delta - self.last_delta)
+        if self.no_trade_band_mode == "percentage":
+            scale = tf.maximum(tf.abs(target_delta), tf.abs(self.last_delta))
+            scale = tf.maximum(scale, tf.constant(self.no_trade_band_eps, dtype=tf.float32))
+            relative_diff = diff / scale
+            return tf.where(relative_diff < self.no_trade_band, self.last_delta, target_delta)
+        return tf.where(diff < self.no_trade_band, self.last_delta, target_delta)
+
+    def _to_actions(self, target_delta, instrument_paths):
+        effective_delta = self._apply_no_trade_band(tf.cast(target_delta, tf.float32))
+        action = effective_delta - self.last_delta
+        self.last_delta = effective_delta
+
+        action = tf.expand_dims(action, axis=-1)
+        zeros = tf.zeros((instrument_paths.shape[0], instrument_paths.shape[1] - 1), dtype=tf.float32)
         actions = tf.concat([action, zeros], axis=1)
         return actions
 
