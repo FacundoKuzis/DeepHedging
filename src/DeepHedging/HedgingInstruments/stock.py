@@ -78,21 +78,17 @@ class GBMStock(Stock):
 
         rng = self._make_rng(random_seed)
 
-        # Generate random normal variables for the Brownian motion
+        # Generate random normal variables for the Brownian motion increments.
         dW = rng.normal(0.0, 1.0, size=(num_paths, self.N)) * np.sqrt(dt)
-        
-        # Initialize the matrix of paths
-        S = np.zeros((num_paths, self.N + 1))
-        S[:, 0] = S0
-        
-        # Generate the paths using the GBM formula
-        for t in range(1, self.N + 1):
-            S[:, t] = S[:, t-1] * np.exp((r - 0.5 * sigma**2) * dt + sigma * dW[:, t-1])
-        
-        # Convert the paths to a TensorFlow tensor
-        S_paths = tf.convert_to_tensor(S, dtype=tf.float32)
-        
-        return S_paths
+        drift = (r - 0.5 * sigma**2) * dt
+        increments = drift + sigma * dW
+
+        # Vectorized GBM: log S_t = log S0 + cumulative increments.
+        log_cum = np.cumsum(increments, axis=1)
+        log_full = np.concatenate([np.zeros((num_paths, 1)), log_cum], axis=1)
+        S = S0 * np.exp(log_full)
+
+        return tf.convert_to_tensor(S, dtype=tf.float32)
 
 class HestonStock(Stock):
     """

@@ -39,5 +39,6 @@
   ],
   "plot_min_x": -2.0,
   "plot_max_x": 2.0,
-  "no_intervention_mode": "absolute"
+  "no_intervention_mode": "absolute",
+  "reuse_actions_between_steps": true
 }

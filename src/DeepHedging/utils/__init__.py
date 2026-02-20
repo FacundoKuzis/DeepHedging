@@ -6,4 +6,6 @@ from DeepHedging.utils.asian_pricing import (
     geometric_conditional_price_tf,
     geometric_conditional_delta_bump_tf,
     arithmetic_control_variate_price_delta_crn,
+    arithmetic_control_variate_price_delta_crn_batch,
+    arithmetic_control_variate_price_delta_crn_batch_worker,
 )

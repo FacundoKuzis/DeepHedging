@@ -176,6 +176,397 @@ def _simulate_future_fixings_from_normals(S0, future_steps, dt, r, sigma, normal
     return np.exp(log_paths[:, step_idx])
 
 
+def _normal_cdf_approx(x):
+    """
+    Fast normal CDF approximation (Abramowitz-Stegun style), vectorized in NumPy.
+    Avoids TensorFlow/TFP overhead inside tight Monte Carlo loops.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    sign = np.sign(x)
+    z = np.abs(x) / np.sqrt(2.0)
+    t = 1.0 / (1.0 + 0.3275911 * z)
+    a1 = 0.254829592
+    a2 = -0.284496736
+    a3 = 1.421413741
+    a4 = -1.453152027
+    a5 = 1.061405429
+    erf_approx = 1.0 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * np.exp(-z * z)
+    erf_approx = sign * erf_approx
+    return 0.5 * (1.0 + erf_approx)
+
+
+def _geometric_conditional_price_np_batch(
+    S,
+    past_log_sum,
+    total_fixings,
+    future_fixing_steps,
+    dt,
+    r,
+    sigma,
+    strike,
+    option_type,
+):
+    """
+    NumPy batch equivalent of geometric_conditional_price_tf.
+    Args:
+        S: np.ndarray shape (batch,)
+        past_log_sum: np.ndarray shape (batch,)
+    Returns:
+        np.ndarray shape (batch,)
+    """
+    S = np.asarray(S, dtype=np.float64).reshape(-1)
+    past_log_sum = np.asarray(past_log_sum, dtype=np.float64).reshape(-1)
+    if S.shape != past_log_sum.shape:
+        raise ValueError("S and past_log_sum must have the same shape.")
+
+    option_type = str(option_type).lower()
+    n_future = int(len(future_fixing_steps))
+    total_fixings_f = float(total_fixings)
+    strike_f = float(strike)
+
+    if n_future == 0:
+        deterministic_geo = np.exp(past_log_sum / total_fixings_f)
+        if option_type == "call":
+            return np.maximum(deterministic_geo - strike_f, 0.0)
+        if option_type == "put":
+            return np.maximum(strike_f - deterministic_geo, 0.0)
+        raise ValueError("option_type must be 'call' or 'put'.")
+
+    tau = np.asarray(future_fixing_steps, dtype=np.float64) * float(dt)
+    sum_tau = float(np.sum(tau))
+    sum_min_tau = _sum_min_times(tau)
+    n_future_f = float(n_future)
+
+    drift = float(r) - 0.5 * float(sigma) ** 2
+    mu = (n_future_f / total_fixings_f) * np.log(np.maximum(S, 1e-12))
+    mu = mu + drift * (sum_tau / total_fixings_f)
+    var = (float(sigma) ** 2) * (sum_min_tau / (total_fixings_f**2))
+    var = max(var, 1e-12)
+    std = np.sqrt(var)
+
+    m = (past_log_sum / total_fixings_f) + mu
+    log_k = np.log(strike_f)
+    d1 = (m - log_k + var) / std
+    d2 = (m - log_k) / std
+
+    exp_term = np.exp(m + 0.5 * var)
+    nd1 = _normal_cdf_approx(d1)
+    nd2 = _normal_cdf_approx(d2)
+
+    call_no_disc = exp_term * nd1 - strike_f * nd2
+    put_no_disc = strike_f * _normal_cdf_approx(-d2) - exp_term * _normal_cdf_approx(-d1)
+
+    t_rem = float(np.max(tau))
+    discount = np.exp(-float(r) * t_rem)
+    if option_type == "call":
+        return discount * call_no_disc
+    if option_type == "put":
+        return discount * put_no_disc
+    raise ValueError("option_type must be 'call' or 'put'.")
+
+
+def _prepare_shared_future_factors(future_steps, dt, r, sigma, normals):
+    """
+    Build reusable factors for S-multiplicative future prices under GBM.
+    Returns:
+        sum_factors: shape (num_simulations,)
+        sum_log_factors: shape (num_simulations,)
+    """
+    if len(future_steps) == 0:
+        return np.empty((normals.shape[0],), dtype=np.float64), np.empty((normals.shape[0],), dtype=np.float64)
+
+    max_step = int(np.max(future_steps))
+    z = normals[:, :max_step]
+    drift = (float(r) - 0.5 * float(sigma) ** 2) * float(dt)
+    vol = float(sigma) * np.sqrt(float(dt))
+    log_increments = drift + vol * z
+    log_factors_path = np.cumsum(log_increments, axis=1)
+    step_idx = np.asarray(future_steps, dtype=np.int32) - 1
+    selected_log = log_factors_path[:, step_idx]  # (num_simulations, n_future_fixings)
+    selected = np.exp(selected_log)
+    sum_factors = np.sum(selected, axis=1)
+    sum_log_factors = np.sum(selected_log, axis=1)
+    return sum_factors, sum_log_factors
+
+
+def _arithmetic_cv_adjusted_price_from_shared_factors(
+    spot_vec,
+    past_sum_vec,
+    past_log_sum_vec,
+    total_fixings,
+    n_future,
+    sum_factors,
+    sum_log_factors,
+    r,
+    sigma,
+    dt,
+    future_steps,
+    strike,
+    option_type,
+):
+    """
+    Vectorized adjusted arithmetic-asian price for a batch of states sharing MC factors.
+    """
+    spot_vec = np.asarray(spot_vec, dtype=np.float64).reshape(-1)
+    past_sum_vec = np.asarray(past_sum_vec, dtype=np.float64).reshape(-1)
+    past_log_sum_vec = np.asarray(past_log_sum_vec, dtype=np.float64).reshape(-1)
+    if not (spot_vec.shape == past_sum_vec.shape == past_log_sum_vec.shape):
+        raise ValueError("spot_vec, past_sum_vec and past_log_sum_vec must have the same shape.")
+
+    m = int(sum_factors.shape[0])
+    if m <= 1:
+        raise ValueError("num_simulations must be > 1 for stable control variate covariance.")
+
+    total_fixings_f = float(total_fixings)
+    disc = np.exp(-float(r) * float(np.max(future_steps) * dt))
+
+    spot_col = spot_vec[:, None]
+    past_sum_col = past_sum_vec[:, None]
+    past_log_col = past_log_sum_vec[:, None]
+
+    sum_factors_row = sum_factors[None, :]
+    sum_log_factors_row = sum_log_factors[None, :]
+
+    arith_avg = (past_sum_col + spot_col * sum_factors_row) / total_fixings_f
+    geo_log = (
+        past_log_col
+        + (float(n_future) * np.log(np.maximum(spot_col, 1e-12)))
+        + sum_log_factors_row
+    ) / total_fixings_f
+    geo_avg = np.exp(geo_log)
+
+    option_type = str(option_type).lower()
+    strike_f = float(strike)
+    if option_type == "call":
+        arith_payoff = np.maximum(arith_avg - strike_f, 0.0)
+        geo_payoff = np.maximum(geo_avg - strike_f, 0.0)
+    elif option_type == "put":
+        arith_payoff = np.maximum(strike_f - arith_avg, 0.0)
+        geo_payoff = np.maximum(strike_f - geo_avg, 0.0)
+    else:
+        raise ValueError("option_type must be 'call' or 'put'.")
+
+    arith_disc = disc * arith_payoff
+    geo_disc = disc * geo_payoff
+
+    geo_analytic = _geometric_conditional_price_np_batch(
+        S=spot_vec,
+        past_log_sum=past_log_sum_vec,
+        total_fixings=total_fixings,
+        future_fixing_steps=future_steps,
+        dt=dt,
+        r=r,
+        sigma=sigma,
+        strike=strike,
+        option_type=option_type,
+    )
+
+    arith_mean = np.mean(arith_disc, axis=1)
+    geo_mean = np.mean(geo_disc, axis=1)
+
+    arith_centered = arith_disc - arith_mean[:, None]
+    geo_centered = geo_disc - geo_mean[:, None]
+    cov = np.sum(arith_centered * geo_centered, axis=1) / float(m - 1)
+    var = np.sum(geo_centered * geo_centered, axis=1) / float(m - 1)
+    beta = np.zeros_like(cov)
+    np.divide(cov, var, out=beta, where=var > 1e-12)
+
+    adjusted = arith_mean - beta * (geo_mean - geo_analytic)
+    return adjusted
+
+
+def arithmetic_control_variate_price_delta_crn_batch(
+    S_t,
+    past_sum,
+    past_log_sum,
+    fixing_indices,
+    current_step,
+    dt,
+    r,
+    sigma,
+    strike,
+    option_type,
+    num_simulations=10_000,
+    bump_rel=0.01,
+    seed=33,
+    seed_mode="shared_crn",
+    state_index_offset=0,
+):
+    """
+    Batch version of conditional arithmetic-asian pricing with geometric control variate and CRN delta.
+    Returns:
+        prices: np.ndarray (batch,)
+        deltas: np.ndarray (batch,)
+    """
+    s_arr = np.asarray(S_t, dtype=np.float64).reshape(-1)
+    past_sum_arr = np.asarray(past_sum, dtype=np.float64).reshape(-1)
+    past_log_sum_arr = np.asarray(past_log_sum, dtype=np.float64).reshape(-1)
+    if not (s_arr.shape == past_sum_arr.shape == past_log_sum_arr.shape):
+        raise ValueError("S_t, past_sum and past_log_sum must have same shape.")
+    if int(num_simulations) <= 1:
+        raise ValueError("num_simulations must be > 1.")
+
+    fixings = np.asarray(fixing_indices, dtype=np.int32).reshape(-1)
+    total_fixings = int(len(fixings))
+    if total_fixings <= 0:
+        raise ValueError("fixing_indices must contain at least one fixing.")
+
+    future_steps = _future_fixing_steps(int(current_step), fixings)
+    option_type = str(option_type).lower()
+
+    if len(future_steps) == 0:
+        avg = past_sum_arr / float(total_fixings)
+        if option_type == "call":
+            prices = np.maximum(avg - float(strike), 0.0)
+        elif option_type == "put":
+            prices = np.maximum(float(strike) - avg, 0.0)
+        else:
+            raise ValueError("option_type must be 'call' or 'put'.")
+        deltas = np.zeros_like(prices)
+        return prices.astype(np.float64), deltas.astype(np.float64)
+
+    seed_mode = str(seed_mode).strip().lower()
+    if seed_mode not in {"shared_crn", "per_state"}:
+        raise ValueError("seed_mode must be 'shared_crn' or 'per_state'.")
+
+    eps = np.maximum(np.abs(s_arr) * float(bump_rel), 1e-6)
+    n_future = len(future_steps)
+
+    if seed_mode == "shared_crn":
+        rng = np.random.default_rng(int(seed))
+        max_step = int(np.max(future_steps))
+        normals = rng.normal(0.0, 1.0, size=(int(num_simulations), max_step))
+        sum_factors, sum_log_factors = _prepare_shared_future_factors(
+            future_steps=future_steps,
+            dt=dt,
+            r=r,
+            sigma=sigma,
+            normals=normals,
+        )
+        price_mid = _arithmetic_cv_adjusted_price_from_shared_factors(
+            spot_vec=s_arr,
+            past_sum_vec=past_sum_arr,
+            past_log_sum_vec=past_log_sum_arr,
+            total_fixings=total_fixings,
+            n_future=n_future,
+            sum_factors=sum_factors,
+            sum_log_factors=sum_log_factors,
+            r=r,
+            sigma=sigma,
+            dt=dt,
+            future_steps=future_steps,
+            strike=strike,
+            option_type=option_type,
+        )
+        price_up = _arithmetic_cv_adjusted_price_from_shared_factors(
+            spot_vec=s_arr + eps,
+            past_sum_vec=past_sum_arr,
+            past_log_sum_vec=past_log_sum_arr,
+            total_fixings=total_fixings,
+            n_future=n_future,
+            sum_factors=sum_factors,
+            sum_log_factors=sum_log_factors,
+            r=r,
+            sigma=sigma,
+            dt=dt,
+            future_steps=future_steps,
+            strike=strike,
+            option_type=option_type,
+        )
+        price_down = _arithmetic_cv_adjusted_price_from_shared_factors(
+            spot_vec=np.maximum(s_arr - eps, 1e-8),
+            past_sum_vec=past_sum_arr,
+            past_log_sum_vec=past_log_sum_arr,
+            total_fixings=total_fixings,
+            n_future=n_future,
+            sum_factors=sum_factors,
+            sum_log_factors=sum_log_factors,
+            r=r,
+            sigma=sigma,
+            dt=dt,
+            future_steps=future_steps,
+            strike=strike,
+            option_type=option_type,
+        )
+        deltas = (price_up - price_down) / (2.0 * eps)
+        return price_mid.astype(np.float64), deltas.astype(np.float64)
+
+    prices = np.zeros_like(s_arr, dtype=np.float64)
+    deltas = np.zeros_like(s_arr, dtype=np.float64)
+    for i in range(s_arr.shape[0]):
+        state_seed = int(seed) + int(state_index_offset) + i
+        rng = np.random.default_rng(state_seed)
+        max_step = int(np.max(future_steps))
+        normals = rng.normal(0.0, 1.0, size=(int(num_simulations), max_step))
+        sum_factors, sum_log_factors = _prepare_shared_future_factors(
+            future_steps=future_steps,
+            dt=dt,
+            r=r,
+            sigma=sigma,
+            normals=normals,
+        )
+        spot_i = np.asarray([s_arr[i]], dtype=np.float64)
+        ps_i = np.asarray([past_sum_arr[i]], dtype=np.float64)
+        pls_i = np.asarray([past_log_sum_arr[i]], dtype=np.float64)
+        eps_i = float(eps[i])
+
+        mid_i = _arithmetic_cv_adjusted_price_from_shared_factors(
+            spot_vec=spot_i,
+            past_sum_vec=ps_i,
+            past_log_sum_vec=pls_i,
+            total_fixings=total_fixings,
+            n_future=n_future,
+            sum_factors=sum_factors,
+            sum_log_factors=sum_log_factors,
+            r=r,
+            sigma=sigma,
+            dt=dt,
+            future_steps=future_steps,
+            strike=strike,
+            option_type=option_type,
+        )[0]
+        up_i = _arithmetic_cv_adjusted_price_from_shared_factors(
+            spot_vec=spot_i + eps_i,
+            past_sum_vec=ps_i,
+            past_log_sum_vec=pls_i,
+            total_fixings=total_fixings,
+            n_future=n_future,
+            sum_factors=sum_factors,
+            sum_log_factors=sum_log_factors,
+            r=r,
+            sigma=sigma,
+            dt=dt,
+            future_steps=future_steps,
+            strike=strike,
+            option_type=option_type,
+        )[0]
+        down_i = _arithmetic_cv_adjusted_price_from_shared_factors(
+            spot_vec=np.maximum(spot_i - eps_i, 1e-8),
+            past_sum_vec=ps_i,
+            past_log_sum_vec=pls_i,
+            total_fixings=total_fixings,
+            n_future=n_future,
+            sum_factors=sum_factors,
+            sum_log_factors=sum_log_factors,
+            r=r,
+            sigma=sigma,
+            dt=dt,
+            future_steps=future_steps,
+            strike=strike,
+            option_type=option_type,
+        )[0]
+        prices[i] = mid_i
+        deltas[i] = (up_i - down_i) / (2.0 * eps_i)
+    return prices, deltas
+
+
+def arithmetic_control_variate_price_delta_crn_batch_worker(kwargs):
+    """
+    Process-safe worker wrapper for parallel execution.
+    """
+    return arithmetic_control_variate_price_delta_crn_batch(**kwargs)
+
+
 def arithmetic_control_variate_price_delta_crn(
     S_t,
     past_sum,
@@ -194,77 +585,21 @@ def arithmetic_control_variate_price_delta_crn(
     """
     Conditional arithmetic-asian pricing with geometric control variate and CRN delta.
     """
-    fixings = np.array(fixing_indices, dtype=np.int32)
-    total_fixings = int(len(fixings))
-    future_steps = _future_fixing_steps(int(current_step), fixings)
-    option_type = option_type.lower()
-
-    if len(future_steps) == 0:
-        avg = past_sum / float(total_fixings)
-        if option_type == "call":
-            payoff = max(avg - strike, 0.0)
-        elif option_type == "put":
-            payoff = max(strike - avg, 0.0)
-        else:
-            raise ValueError("option_type must be 'call' or 'put'.")
-        return float(payoff), 0.0
-
-    rng = np.random.default_rng(int(seed))
-    max_step = int(np.max(future_steps))
-    normals = rng.normal(0.0, 1.0, size=(int(num_simulations), max_step))
-    eps = max(abs(float(S_t)) * float(bump_rel), 1e-6)
-
-    def _price_for_spot(spot):
-        fut = _simulate_future_fixings_from_normals(
-            S0=spot,
-            future_steps=future_steps,
-            dt=dt,
-            r=r,
-            sigma=sigma,
-            normals=normals,
-        )
-        arith_avg = (past_sum + fut.sum(axis=1)) / float(total_fixings)
-        geo_log = (past_log_sum + np.log(np.maximum(fut, 1e-12)).sum(axis=1)) / float(total_fixings)
-        geo_avg = np.exp(geo_log)
-
-        if option_type == "call":
-            arith_payoff = np.maximum(arith_avg - strike, 0.0)
-            geo_payoff = np.maximum(geo_avg - strike, 0.0)
-        elif option_type == "put":
-            arith_payoff = np.maximum(strike - arith_avg, 0.0)
-            geo_payoff = np.maximum(strike - geo_avg, 0.0)
-        else:
-            raise ValueError("option_type must be 'call' or 'put'.")
-
-        t_rem = float(np.max(future_steps) * dt)
-        disc = np.exp(-float(r) * t_rem)
-        arith_disc = disc * arith_payoff
-        geo_disc = disc * geo_payoff
-        geo_analytic = float(
-            geometric_conditional_price_tf(
-                tf.constant([spot], dtype=tf.float32),
-                tf.constant([past_log_sum], dtype=tf.float32),
-                total_fixings=total_fixings,
-                future_fixing_steps=future_steps,
-                dt=dt,
-                r=r,
-                sigma=sigma,
-                strike=strike,
-                option_type=option_type,
-            ).numpy()[0]
-        )
-        geo_var = float(np.var(geo_disc, ddof=1)) if geo_disc.size > 1 else 0.0
-        if geo_var > 1e-12 and geo_disc.size > 1:
-            cov = float(np.cov(arith_disc, geo_disc, ddof=1)[0, 1])
-            beta = cov / geo_var
-        else:
-            beta = 0.0
-
-        adjusted = np.mean(arith_disc - beta * (geo_disc - geo_analytic))
-        return float(adjusted)
-
-    price_mid = _price_for_spot(float(S_t))
-    price_up = _price_for_spot(float(S_t) + eps)
-    price_down = _price_for_spot(max(float(S_t) - eps, 1e-8))
-    delta = (price_up - price_down) / (2.0 * eps)
-    return float(price_mid), float(delta)
+    prices, deltas = arithmetic_control_variate_price_delta_crn_batch(
+        S_t=np.asarray([S_t], dtype=np.float64),
+        past_sum=np.asarray([past_sum], dtype=np.float64),
+        past_log_sum=np.asarray([past_log_sum], dtype=np.float64),
+        fixing_indices=fixing_indices,
+        current_step=current_step,
+        dt=dt,
+        r=r,
+        sigma=sigma,
+        strike=strike,
+        option_type=option_type,
+        num_simulations=num_simulations,
+        bump_rel=bump_rel,
+        seed=seed,
+        seed_mode="shared_crn",
+        state_index_offset=0,
+    )
+    return float(prices[0]), float(deltas[0])

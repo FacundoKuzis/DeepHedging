@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from DeepHedging.Agents import BaseAgent, DeltaHedgingAgent
+from DeepHedging.Agents import DeltaHedgingAgent
 from DeepHedging.utils import MonteCarloPricer
 
 class MonteCarloAgent(DeltaHedgingAgent):
@@ -83,7 +83,7 @@ class MonteCarloAgent(DeltaHedgingAgent):
         # Compute delta using Monte Carlo pricer
         delta = tf.numpy_function(
             self.compute_deltas,
-            [instrument_paths[:, 0].numpy(), T_minus_t.numpy()],
+            [instrument_paths[:, 0], T_minus_t],
             tf.float32
         )
         delta.set_shape((instrument_paths.shape[0],))
@@ -101,39 +101,29 @@ class MonteCarloAgent(DeltaHedgingAgent):
         Returns:
         - deltas (np.ndarray): The computed deltas. Shape: (batch_size,)
         """
-        deltas = []
-        for S, T in zip(S_values, T_minus_t_values):
+        S_values = np.asarray(S_values, dtype=np.float64).reshape(-1)
+        T_minus_t_values = np.asarray(T_minus_t_values, dtype=np.float64).reshape(-1)
+        deltas = np.zeros_like(S_values, dtype=np.float32)
+
+        original_T = self.pricer.T
+        for i, (S, T) in enumerate(zip(S_values, T_minus_t_values)):
             # Handle cases where T <= 0
             if T <= 0:
-                deltas.append(0.0)
+                deltas[i] = 0.0
                 continue
 
-            # Update the stock model's parameters
-            original_S0 = self.stock_model.S0
-            original_T = self.pricer.T
-
-            self.stock_model.S0 = S
-            self.pricer.T = T
-
-            # Re-instantiate the pricer with updated T
-            pricer = MonteCarloPricer(
-                stock_model=self.stock_model,
-                r=self.r,
-                T=T,
-                num_simulations=self.num_simulations,
-                seed=self.seed
+            self.pricer.T = float(T)
+            delta = self.pricer.delta_with_S0(
+                contingent_claim=self.option_class,
+                S0=float(S),
+                bump_size=self.bump_size,
+                use_common_random_numbers=True,
+                seed=self.seed + i,
             )
+            deltas[i] = np.float32(delta)
 
-            # Compute Delta
-            delta = pricer.delta(contingent_claim=self.option_class)
-
-            deltas.append(delta)
-
-            # Restore original parameters
-            self.stock_model.S0 = original_S0
-            self.pricer.T = original_T
-
-        return np.array(deltas, dtype=np.float32)
+        self.pricer.T = original_T
+        return deltas.astype(np.float32)
 
     
     def get_model_price(self):

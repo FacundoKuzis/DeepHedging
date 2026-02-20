@@ -246,6 +246,17 @@ def build_agent_from_config(
         "num_simulations": int(config.get("benchmark_num_simulations", 10_000)),
         "seed": int(config.get("benchmark_seed", 33)),
         "no_trade_band": float(no_intervention_bound),
+        "mc_state_chunk_size": int(config.get("benchmark_mc_state_chunk_size", 64)),
+        "mc_seed_mode": str(config.get("benchmark_mc_seed_mode", "shared_crn")),
+        "parallel_enabled": bool(config.get("benchmark_mc_parallel_enabled", False)),
+        "n_workers": int(config.get("benchmark_mc_n_workers", 1)),
+        "parallel_backend": str(config.get("benchmark_mc_parallel_backend", "thread")),
+        "parallel_chunk_size": (
+            None
+            if config.get("benchmark_mc_parallel_chunk_size", None) is None
+            else int(config.get("benchmark_mc_parallel_chunk_size"))
+        ),
+        "parallel_min_states": int(config.get("benchmark_mc_parallel_min_states", 128)),
     }
     kwargs = {k: v for k, v in candidate_kwargs.items() if k in init_params}
     agent = agent_cls(instrument, claim, **kwargs)

@@ -95,6 +95,14 @@ def optional_keys() -> set[str]:
         "benchmark_no_intervention_mode",
         "eval_agent_batch_size",
         "terminal_progress_log_every_agent_batches",
+        "benchmark_mc_state_chunk_size",
+        "benchmark_mc_seed_mode",
+        "benchmark_mc_parallel_enabled",
+        "benchmark_mc_n_workers",
+        "benchmark_mc_parallel_backend",
+        "benchmark_mc_parallel_chunk_size",
+        "benchmark_mc_parallel_min_states",
+        "reuse_actions_between_steps",
     }
 
 
@@ -151,6 +159,30 @@ def validate_config(config: dict[str, Any]) -> None:
     if "terminal_progress_log_every_agent_batches" in config and config["terminal_progress_log_every_agent_batches"] is not None:
         if int(config["terminal_progress_log_every_agent_batches"]) <= 0:
             raise ValueError("terminal_progress_log_every_agent_batches must be null or > 0.")
+    if "benchmark_mc_state_chunk_size" in config and config["benchmark_mc_state_chunk_size"] is not None:
+        if int(config["benchmark_mc_state_chunk_size"]) <= 0:
+            raise ValueError("benchmark_mc_state_chunk_size must be null or > 0.")
+    if "benchmark_mc_seed_mode" in config:
+        mode = str(config["benchmark_mc_seed_mode"]).strip().lower()
+        if mode not in {"shared_crn", "per_state"}:
+            raise ValueError("benchmark_mc_seed_mode must be 'shared_crn' or 'per_state'.")
+    if "benchmark_mc_parallel_enabled" in config and not isinstance(config["benchmark_mc_parallel_enabled"], bool):
+        raise ValueError("benchmark_mc_parallel_enabled must be bool.")
+    if "benchmark_mc_n_workers" in config and config["benchmark_mc_n_workers"] is not None:
+        if int(config["benchmark_mc_n_workers"]) <= 0:
+            raise ValueError("benchmark_mc_n_workers must be null or > 0.")
+    if "benchmark_mc_parallel_backend" in config:
+        backend = str(config["benchmark_mc_parallel_backend"]).strip().lower()
+        if backend not in {"thread", "process"}:
+            raise ValueError("benchmark_mc_parallel_backend must be 'thread' or 'process'.")
+    if "benchmark_mc_parallel_chunk_size" in config and config["benchmark_mc_parallel_chunk_size"] is not None:
+        if int(config["benchmark_mc_parallel_chunk_size"]) <= 0:
+            raise ValueError("benchmark_mc_parallel_chunk_size must be null or > 0.")
+    if "benchmark_mc_parallel_min_states" in config and config["benchmark_mc_parallel_min_states"] is not None:
+        if int(config["benchmark_mc_parallel_min_states"]) <= 0:
+            raise ValueError("benchmark_mc_parallel_min_states must be null or > 0.")
+    if "reuse_actions_between_steps" in config and not isinstance(config["reuse_actions_between_steps"], bool):
+        raise ValueError("reuse_actions_between_steps must be bool.")
     if not isinstance(config["eval_seed"], int):
         raise ValueError("eval_seed must be int.")
     if str(config["pricing_method"]) not in {"fixed", "individual"}:
@@ -238,6 +270,15 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     plot_language = "es"
     eval_agent_batch_size = config.get("eval_agent_batch_size")
     terminal_progress_every = config.get("terminal_progress_log_every_agent_batches")
+    reuse_actions_between_steps = bool(config.get("reuse_actions_between_steps", True))
+    actions_cache_dir = (
+        os.path.join(run_dirs["run_dir"], "actions_cache")
+        if reuse_actions_between_steps
+        else None
+    )
+    if actions_cache_dir is not None:
+        os.makedirs(actions_cache_dir, exist_ok=True)
+        print(f"[run:{run_name}] Action cache enabled: {actions_cache_dir}")
 
     instrument = build_instrument_from_config(config)
     claim = build_claim_from_config(config)
@@ -309,6 +350,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             pricing_method=str(config["pricing_method"]),
             agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
             progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
+            save_actions_path=actions_cache_dir,
         )
         pair_df.insert(0, "pair_name", pair_name)
         pairwise_rows.append(pair_df)
@@ -336,6 +378,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         pricing_method=str(config["pricing_method"]),
         agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
         progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
+        save_actions_path=actions_cache_dir,
     )
     point_rows = []
     for i, agent in enumerate(all_agents):
@@ -364,6 +407,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             language=plot_language,
             pricing_method=str(config["pricing_method"]),
             batch_size=int(config["bootstrap_batch_size"]),
+            save_actions_path=actions_cache_dir,
         )
         boot_csv = os.path.join(run_dirs["tables_dir"], "bootstrap_metrics_wide.csv")
         boot_df.to_csv(boot_csv, index=False)

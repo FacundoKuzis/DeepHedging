@@ -16,6 +16,13 @@
   "benchmark_num_simulations": 10000,
   "benchmark_seed": 33,
   "benchmark_no_trade_band": 0.0,
+  "benchmark_mc_state_chunk_size": 64,
+  "benchmark_mc_seed_mode": "shared_crn",
+  "benchmark_mc_parallel_enabled": true,
+  "benchmark_mc_n_workers": 4,
+  "benchmark_mc_parallel_backend": "thread",
+  "benchmark_mc_parallel_chunk_size": 64,
+  "benchmark_mc_parallel_min_states": 128,
   "models_dir": "models",
   "optimizers_dir": "optimizers",
   "eval_paths": 10000,
@@ -41,6 +48,7 @@
   "plot_max_x": 2.0,
   "no_intervention_mode": "absolute",
   "eval_agent_batch_size": 1000,
-  "terminal_progress_log_every_agent_batches": 1
+  "terminal_progress_log_every_agent_batches": 1,
+  "reuse_actions_between_steps": true
 
 }

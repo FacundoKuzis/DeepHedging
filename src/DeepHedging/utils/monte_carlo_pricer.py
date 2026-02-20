@@ -1,149 +1,136 @@
+import numpy as np
 import tensorflow as tf
+
 from DeepHedging.HedgingInstruments import GBMStock, HestonStock
-from DeepHedging.ContingentClaims import ContingentClaim
+
 
 class MonteCarloPricer:
     """
-    A Monte Carlo pricer for options using TensorFlow.
-
-    This class simulates asset price paths using a provided Stock model,
-    computes option payoffs using a provided ContingentClaim class, and estimates
-    option prices and Greeks (e.g., Delta) using finite difference methods.
-
-    Attributes:
-        stock_model (Stock): An instance of a subclass of Stock for path simulation.
-        r (tf.Tensor): Risk-free interest rate as a float32 tensor.
-        T (tf.Tensor): Time to maturity in years as a float32 tensor.
-        num_simulations (int): Number of Monte Carlo simulations.
-        seed (int, optional): Random seed for reproducibility.
+    Monte Carlo option pricer with finite-difference delta.
     """
 
     def __init__(self, stock_model, r, T, num_simulations=10_000, seed=None):
+        self.stock_model = stock_model
+        self.r = float(r)
+        self.T = float(T)
+        self.num_simulations = int(num_simulations)
+        self.seed = None if seed is None else int(seed)
+
+    def _discount_factor(self):
+        return float(np.exp(-self.r * self.T))
+
+    def _simulate_gbm_paths_from_dW(self, S0, dW):
         """
-        Initializes the Monte Carlo pricer with a stock model and market parameters.
-
-        Args:
-            stock_model (Stock): An instance of a subclass of Stock for path simulation.
-            r (float): Risk-free interest rate.
-            T (float): Time to maturity in years.
-            num_simulations (int, optional): Number of Monte Carlo simulations. Default is 10,000.
-            seed (int, optional): Random seed for reproducibility. Default is None.
+        Fast vectorized GBM path generator given Brownian increments dW.
         """
-        self.stock_model = stock_model  # Instance of Stock subclass (e.g., GBMStock, HestonStock)
-        self.r = tf.constant(r, dtype=tf.float32)
-        self.T = tf.constant(T, dtype=tf.float32)
-        self.num_simulations = num_simulations
-        self.seed = seed
+        dt = float(self.stock_model.dt)
+        r = float(self.stock_model.r)
+        sigma = float(self.stock_model.sigma)
+        drift = (r - 0.5 * sigma**2) * dt
+        increments = drift + sigma * dW
+        log_cum = np.cumsum(increments, axis=1)
+        log_full = np.concatenate(
+            [np.zeros((log_cum.shape[0], 1), dtype=np.float64), log_cum],
+            axis=1,
+        )
+        paths = float(S0) * np.exp(log_full)
+        return tf.convert_to_tensor(paths, dtype=tf.float32)
 
-        # Random seeds are forwarded to stock_model.generate_paths per call.
-        # Avoid setting global RNG state here.
+    def _draw_gbm_dW(self, seed=None):
+        rng = np.random.default_rng(self.seed if seed is None else int(seed))
+        dt = float(self.stock_model.dt)
+        return rng.normal(
+            loc=0.0,
+            scale=np.sqrt(dt),
+            size=(self.num_simulations, int(self.stock_model.N)),
+        )
 
-    def simulate_paths(self):
+    def simulate_paths(self, seed=None, S0=None, dW=None):
         """
-        Simulates asset price paths using the provided stock model.
-
-        Returns:
-            tf.Tensor: Simulated asset paths of shape (num_simulations, N+1).
-                       For models returning multiple paths (e.g., Heston), only the stock paths are returned.
+        Simulates asset paths using stock_model. For GBM, allows reusing dW across bumps.
         """
-        if isinstance(self.stock_model, HestonStock):
-            # If the stock model returns variance paths, discard them
-            S_paths, _ = self.stock_model.generate_paths(num_paths=self.num_simulations, random_seed=self.seed)
-            return S_paths  # Shape: (num_simulations, N+1)
-        else:
-            # For models that return only stock paths
-            S_paths = self.stock_model.generate_paths(num_paths=self.num_simulations, random_seed=self.seed)
-            return S_paths  # Shape: (num_simulations, N+1)
+        if isinstance(self.stock_model, GBMStock):
+            if dW is None:
+                dW = self._draw_gbm_dW(seed=seed)
+            s0 = float(self.stock_model.S0 if S0 is None else S0)
+            return self._simulate_gbm_paths_from_dW(s0, dW)
 
-    def price(self, contingent_claim, paths = None):
-        """
-        Prices the option using Monte Carlo simulation.
+        # Fallback for non-GBM models.
+        original_S0 = getattr(self.stock_model, "S0", None)
+        if S0 is not None and original_S0 is not None:
+            self.stock_model.S0 = float(S0)
+        try:
+            draw_seed = self.seed if seed is None else int(seed)
+            if isinstance(self.stock_model, HestonStock):
+                S_paths, _ = self.stock_model.generate_paths(
+                    num_paths=self.num_simulations,
+                    random_seed=draw_seed,
+                )
+                return S_paths
+            return self.stock_model.generate_paths(
+                num_paths=self.num_simulations,
+                random_seed=draw_seed,
+            )
+        finally:
+            if S0 is not None and original_S0 is not None:
+                self.stock_model.S0 = original_S0
 
-        Args:
-            contingent_claim (ContingentClaim): An instance of a class inheriting from ContingentClaim,
-                                               which defines the option payoff.
-
-        Returns:
-            float: Estimated present value of the option.
-        """
-        if paths is None:
-            # Simulate asset paths
-            paths = self.simulate_paths()  # Shape: (num_simulations, N+1)
-
-        # Calculate payoffs using the contingent claim's calculate_payoff method
-        payoffs = contingent_claim.calculate_payoff(paths)  # Shape: (num_simulations,)
-
-        # Ensure payoffs are float32
-        payoffs = tf.cast(payoffs, tf.float32)
-
-        # Average the payoffs and discount to present value
-        discounted_payoff = tf.exp(-self.r * self.T) * tf.reduce_mean(payoffs)
-
-        return discounted_payoff.numpy()
-
-    def delta(self, contingent_claim, bump_size=0.01):
-        """
-        Estimates the Delta of the option using central finite differences.
-
-        Args:
-            contingent_claim (ContingentClaim): An instance of a class inheriting from ContingentClaim,
-                                               which defines the option payoff.
-            bump_size (float, optional): Relative bump size for finite differences. Default is 1%.
-
-        Returns:
-            float: Estimated Delta of the option.
-        """
-        # Calculate epsilon based on bump_size
-        epsilon = self.stock_model.S0 * bump_size
-
-        # Price at S0 + epsilon
-        original_S0 = self.stock_model.S0  # Store original S0
-        self.stock_model.S0 += epsilon
-        price_up = self.price(contingent_claim)
-
-        # Price at S0 - epsilon
-        self.stock_model.S0 = original_S0 - epsilon
-        price_down = self.price(contingent_claim)
-
-        # Restore original S0
-        self.stock_model.S0 = original_S0
-
-        # Central difference approximation of Delta
-        delta = (price_up - price_down) / (2 * epsilon)
-
-        return delta
-
-    def price_with_S0(self, contingent_claim, S0, paths=None):
-        """
-        Prices the option using Monte Carlo simulation with a specified initial asset price.
-
-        Args:
-            contingent_claim (ContingentClaim): An instance of a class inheriting from ContingentClaim,
-                                               which defines the option payoff.
-            S0 (float): Initial asset price for this pricing.
-            paths (tf.Tensor, optional): Pre-simulated paths with the new S0. If provided, these paths are used.
-
-        Returns:
-            float: Estimated present value of the option with the given S0.
-        """
-        # Temporarily set the stock model's S0 to the new value
-        original_S0 = self.stock_model.S0
-        self.stock_model.S0 = S0
-
-        # Simulate asset paths
+    def price(self, contingent_claim, paths=None):
         if paths is None:
             paths = self.simulate_paths()
-
-        # Calculate payoffs using the contingent claim's calculate_payoff method
-        payoffs = contingent_claim.calculate_payoff(paths)  # Shape: (num_simulations,)
-
-        # Ensure payoffs are float32
+        payoffs = contingent_claim.calculate_payoff(paths)
         payoffs = tf.cast(payoffs, tf.float32)
+        discounted_payoff = self._discount_factor() * tf.reduce_mean(payoffs)
+        return float(discounted_payoff.numpy())
 
-        # Average the payoffs and discount to present value
-        discounted_payoff = tf.exp(-self.r * self.T) * tf.reduce_mean(payoffs)
+    def delta(self, contingent_claim, bump_size=0.01, use_common_random_numbers=True, seed=None):
+        base_S0 = float(self.stock_model.S0)
+        epsilon = max(abs(base_S0) * float(bump_size), 1e-8)
+        return self.delta_with_S0(
+            contingent_claim=contingent_claim,
+            S0=base_S0,
+            bump_size=bump_size,
+            use_common_random_numbers=use_common_random_numbers,
+            seed=seed,
+            epsilon=epsilon,
+        )
 
-        # Restore the original S0
-        self.stock_model.S0 = original_S0
+    def delta_with_S0(
+        self,
+        contingent_claim,
+        S0,
+        bump_size=0.01,
+        use_common_random_numbers=True,
+        seed=None,
+        epsilon=None,
+    ):
+        s0 = float(S0)
+        eps = max(abs(s0) * float(bump_size), 1e-8) if epsilon is None else float(epsilon)
+        up_s0 = s0 + eps
+        down_s0 = max(s0 - eps, 1e-8)
 
-        return discounted_payoff.numpy()
+        if isinstance(self.stock_model, GBMStock):
+            if use_common_random_numbers:
+                dW = self._draw_gbm_dW(seed=seed)
+                paths_up = self.simulate_paths(S0=up_s0, dW=dW)
+                paths_down = self.simulate_paths(S0=down_s0, dW=dW)
+            else:
+                paths_up = self.simulate_paths(S0=up_s0, seed=seed)
+                down_seed = None if seed is None else int(seed) + 1_000_003
+                paths_down = self.simulate_paths(S0=down_s0, seed=down_seed)
+            price_up = self.price(contingent_claim, paths=paths_up)
+            price_down = self.price(contingent_claim, paths=paths_down)
+            return float((price_up - price_down) / (2.0 * eps))
+
+        # Fallback for non-GBM models.
+        price_up = self.price_with_S0(contingent_claim, up_s0)
+        price_down = self.price_with_S0(contingent_claim, down_s0)
+        return float((price_up - price_down) / (2.0 * eps))
+
+    def price_with_S0(self, contingent_claim, S0, paths=None):
+        if paths is None:
+            paths = self.simulate_paths(S0=float(S0))
+        payoffs = contingent_claim.calculate_payoff(paths)
+        payoffs = tf.cast(payoffs, tf.float32)
+        discounted_payoff = self._discount_factor() * tf.reduce_mean(payoffs)
+        return float(discounted_payoff.numpy())
