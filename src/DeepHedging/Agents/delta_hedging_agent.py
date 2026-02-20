@@ -64,9 +64,40 @@ class DeltaHedgingAgent(BaseAgent):
         """
 
         eps = 1e-4
-        return (tf.math.log(S / self.strike) + (self.r + 0.5 * self.sigma ** 2) * (T_minus_t + eps)) / (self.sigma * tf.sqrt(T_minus_t + eps))
+        return self._d1_with_rate(S=S, T_minus_t=T_minus_t, rate=self.r, sigma=self.sigma)
 
-    def delta(self, S, T_minus_t):
+    def _normalize_rate_input(self, rate, batch_size):
+        return self._normalize_vector_input(rate, batch_size, field_name="rate")
+
+    def _normalize_sigma_input(self, sigma, batch_size):
+        sigma_tensor = self._normalize_vector_input(sigma, batch_size, field_name="sigma")
+        return tf.maximum(sigma_tensor, tf.constant(1e-8, dtype=tf.float32))
+
+    def _normalize_vector_input(self, values, batch_size, field_name):
+        values_tensor = tf.convert_to_tensor(values, dtype=tf.float32)
+        if values_tensor.shape.rank == 0:
+            return values_tensor
+        values_tensor = tf.reshape(values_tensor, (-1,))
+        expected = None if batch_size is None else int(batch_size)
+        observed = None if values_tensor.shape[0] is None else int(values_tensor.shape[0])
+        if expected is not None and observed is not None and observed != expected:
+            raise ValueError(
+                f"{field_name} length mismatch: expected {expected}, got {observed}."
+            )
+        return values_tensor
+
+    def _d1_with_rate(self, S, T_minus_t, rate, sigma):
+        S = tf.convert_to_tensor(S, dtype=tf.float32)
+        T_minus_t = tf.convert_to_tensor(T_minus_t, dtype=tf.float32)
+        r_eff = self._normalize_rate_input(rate, tf.shape(S)[0] if S.shape.rank > 0 else None)
+        sigma_eff = self._normalize_sigma_input(sigma, tf.shape(S)[0] if S.shape.rank > 0 else None)
+        eps = tf.constant(1e-4, dtype=tf.float32)
+        return (
+            tf.math.log(S / self.strike)
+            + (r_eff + 0.5 * tf.square(sigma_eff)) * (T_minus_t + eps)
+        ) / (sigma_eff * tf.sqrt(T_minus_t + eps))
+
+    def delta(self, S, T_minus_t, rate=None, sigma=None):
         """
         Calculate the delta of the option.
 
@@ -77,7 +108,11 @@ class DeltaHedgingAgent(BaseAgent):
         Returns:
         - delta (tf.Tensor): The delta value.
         """
-        d1 = self.d1(S, T_minus_t)
+        sigma_eff = self.sigma if sigma is None else sigma
+        if rate is None:
+            d1 = self._d1_with_rate(S=S, T_minus_t=T_minus_t, rate=self.r, sigma=sigma_eff)
+        else:
+            d1 = self._d1_with_rate(S=S, T_minus_t=T_minus_t, rate=rate, sigma=sigma_eff)
         normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
         if self.option_type == 'call':
             return normal_dist.cdf(d1)
@@ -86,7 +121,7 @@ class DeltaHedgingAgent(BaseAgent):
         else:
             raise ValueError("Option type must be either 'call' or 'put'.")
 
-    def act(self, instrument_paths, T_minus_t):
+    def act(self, instrument_paths, T_minus_t, rate=None, sigma=None):
         """
         Act based on the delta hedging strategy.
 
@@ -98,7 +133,12 @@ class DeltaHedgingAgent(BaseAgent):
         - action (tf.Tensor): The delta value used as the hedging action.
         """
 
-        target_delta = self.delta(instrument_paths[:, 0], T_minus_t) # ASSUMPTION: Stock is the first instrument
+        target_delta = self.delta(
+            instrument_paths[:, 0],
+            T_minus_t,
+            rate=rate,
+            sigma=sigma,
+        ) # ASSUMPTION: Stock is the first instrument
         return self._to_actions(target_delta, instrument_paths)
 
     def set_no_trade_band(self, no_trade_band):
@@ -134,14 +174,27 @@ class DeltaHedgingAgent(BaseAgent):
     def reset_last_delta(self, batch_size):
         self.last_delta = tf.zeros((batch_size,), dtype=tf.float32)
 
-    def process_batch(self, batch_paths, batch_T_minus_t):
+    def process_batch(self, batch_paths, batch_T_minus_t, batch_path_r=None, batch_path_sigma=None):
+        if batch_path_r is not None:
+            rate_vector = self._normalize_rate_input(batch_path_r, batch_paths.shape[0])
+        else:
+            rate_vector = None
+        if batch_path_sigma is not None:
+            sigma_vector = self._normalize_sigma_input(batch_path_sigma, batch_paths.shape[0])
+        else:
+            sigma_vector = None
         self.reset_last_delta(batch_paths.shape[0])
         all_actions = []
         for t in range(batch_paths.shape[1] -1):  # timesteps until T-1
             logger.debug("Processing delta hedging timestep %s", t)
             current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
             current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
-            action = self.act(current_paths, current_T_minus_t)
+            action = self.act(
+                current_paths,
+                current_T_minus_t,
+                rate=rate_vector,
+                sigma=sigma_vector,
+            )
             all_actions.append(action)
 
         all_actions = tf.stack(all_actions, axis=1)
@@ -157,17 +210,60 @@ class DeltaHedgingAgent(BaseAgent):
         Returns:
         - price (tf.Tensor): The Black-Scholes price of the option.
         """
-        d1 = self.d1(self.S0, self.T)
-        d2 = d1 - self.sigma * tf.sqrt(self.T)
-        
-        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
-        if self.option_type == 'call':
-            price = (self.S0 * normal_dist.cdf(d1) - 
-                     self.strike * tf.exp(-self.r * self.T) * normal_dist.cdf(d2))
-        elif self.option_type == 'put':
-            price = (self.strike * tf.exp(-self.r * self.T) * normal_dist.cdf(-d2) - 
-                     self.S0 * normal_dist.cdf(-d1))
+        price = self.get_model_price_batch(
+            path_s0=tf.constant([float(self.S0)], dtype=tf.float32),
+            path_r=tf.constant([float(self.r)], dtype=tf.float32),
+            path_sigma=tf.constant([float(self.sigma)], dtype=tf.float32),
+        )
+        return price[0]
+
+    def get_model_price_batch(self, path_s0=None, path_r=None, path_sigma=None):
+        """
+        Vectorized Black-Scholes pricing for path-specific inputs.
+
+        Arguments:
+        - path_s0 (tensor/array/scalar|None): initial spot per path; defaults to self.S0.
+        - path_r (tensor/array/scalar|None): risk-free rate per path; defaults to self.r.
+        - path_sigma (tensor/array/scalar|None): volatility per path; defaults to self.sigma.
+
+        Returns:
+        - prices (tf.Tensor): shape (n_paths,)
+        """
+        if path_s0 is None:
+            S = tf.constant([float(self.S0)], dtype=tf.float32)
         else:
-            raise ValueError("Option type must be either 'call' or 'put'.")
-        
-        return price
+            S = tf.reshape(tf.convert_to_tensor(path_s0, dtype=tf.float32), (-1,))
+
+        n_paths = int(S.shape[0])
+        r_eff = self._normalize_rate_input(self.r if path_r is None else path_r, n_paths)
+        sigma_eff = tf.convert_to_tensor(
+            float(self.sigma) if path_sigma is None else path_sigma,
+            dtype=tf.float32,
+        )
+        if sigma_eff.shape.rank == 0:
+            sigma_eff = tf.fill((n_paths,), sigma_eff)
+        else:
+            sigma_eff = tf.reshape(sigma_eff, (-1,))
+            if sigma_eff.shape[0] is not None and int(sigma_eff.shape[0]) != n_paths:
+                raise ValueError(
+                    f"sigma length mismatch: expected {n_paths}, got {int(sigma_eff.shape[0])}."
+                )
+
+        T = tf.constant(float(self.T), dtype=tf.float32)
+        strike = tf.constant(float(self.strike), dtype=tf.float32)
+        eps = tf.constant(1e-8, dtype=tf.float32)
+        sqrt_T = tf.sqrt(T + eps)
+        sigma_safe = tf.maximum(sigma_eff, eps)
+        d1 = (
+            tf.math.log(tf.maximum(S, eps) / strike)
+            + (r_eff + 0.5 * tf.square(sigma_safe)) * (T + eps)
+        ) / (sigma_safe * sqrt_T)
+        d2 = d1 - sigma_safe * sqrt_T
+
+        normal_dist = tfp.distributions.Normal(loc=0.0, scale=1.0)
+        disc = tf.exp(-r_eff * T)
+        if self.option_type == 'call':
+            return S * normal_dist.cdf(d1) - strike * disc * normal_dist.cdf(d2)
+        if self.option_type == 'put':
+            return strike * disc * normal_dist.cdf(-d2) - S * normal_dist.cdf(-d1)
+        raise ValueError("Option type must be either 'call' or 'put'.")

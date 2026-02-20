@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import pickle
+import inspect
 import warnings
 import pandas as pd
 import random
@@ -81,7 +82,32 @@ class Environment:
         
         return data_transposed # (n_paths, N+1, n_instruments)
 
-    def calculate_pnl(self, paths, actions, include_decomposition = False):
+    def _resolve_path_rate_growth(self, path_r, batch_size):
+        """
+        Resolve per-path risk-free rates into growth factors per hedging step.
+
+        Returns:
+            tf.Tensor with shape (batch_size, 1), representing (1+r)^dt.
+        """
+        if path_r is None:
+            growth = tf.constant((1.0 + float(self.r)) ** float(self.dt), dtype=tf.float32)
+            return tf.reshape(growth, (1, 1)) * tf.ones((batch_size, 1), dtype=tf.float32)
+
+        r_tensor = tf.convert_to_tensor(path_r, dtype=tf.float32)
+        if len(r_tensor.shape) == 0:
+            growth = tf.pow(1.0 + r_tensor, tf.constant(float(self.dt), dtype=tf.float32))
+            return tf.reshape(growth, (1, 1)) * tf.ones((batch_size, 1), dtype=tf.float32)
+
+        if len(r_tensor.shape) != 1:
+            raise ValueError("path_r must be scalar or rank-1 tensor/array.")
+        if int(r_tensor.shape[0]) != int(batch_size):
+            raise ValueError(
+                f"path_r length mismatch: expected {batch_size}, got {int(r_tensor.shape[0])}."
+            )
+        growth = tf.pow(1.0 + r_tensor, tf.constant(float(self.dt), dtype=tf.float32))
+        return tf.reshape(growth, (-1, 1))
+
+    def calculate_pnl(self, paths, actions, include_decomposition = False, path_r=None):
         # Calculate the portfolio value at each time step
         portfolio_values = tf.cumsum(actions, axis=1) * paths # (batch_size, N+1, n_instruments)        
         final_portfolio_value = portfolio_values[:, -1, :] # (batch_size, n_instruments)
@@ -94,15 +120,16 @@ class Environment:
         purchases_cashflows = -actions * paths - costs
         purchases_cashflows = tf.reduce_sum(purchases_cashflows, axis = 2)
 
-        # Calculate the factor for compounding cash positions
-        factor = (1 + self.r) ** self.dt - 1
+        # Calculate per-path compounding factor for cash positions.
+        growth = self._resolve_path_rate_growth(path_r=path_r, batch_size=int(paths.shape[0]))
+        factor = growth - 1.0
 
         # Initialize the cash tensor with the first cash flow
         cash = purchases_cashflows[:, 0:1]
 
         # Iterate over the remaining time steps to accumulate cash values
         for t in range(1, purchases_cashflows.shape[1]):
-            current_cash = cash[:, -1:] * (1 + factor) + purchases_cashflows[:, t:t+1]
+            current_cash = cash[:, -1:] * (1.0 + factor) + purchases_cashflows[:, t:t+1]
             cash = tf.concat([cash, current_cash], axis=1)
 
         final_cash_positions = cash[:, -1] # (batch_size)
@@ -119,10 +146,10 @@ class Environment:
         else:
             return pnl
 
-    def loss_function(self, paths, actions):
+    def loss_function(self, paths, actions, path_r=None):
         if self.risk_measure is None:
             raise ValueError("risk_measure is not set in Environment.")
-        pnl = self.calculate_pnl(paths, actions)
+        pnl = self.calculate_pnl(paths, actions, path_r=path_r)
         return self.risk_measure.calculate(pnl)
 
     def train(
@@ -210,7 +237,11 @@ class Environment:
 
             # Validation
             if val_paths > 0:
-                val_actions = self.agent.process_batch(val_data, T_minus_t_val)
+                val_actions = self._process_agent_batch_actions(
+                    self.agent,
+                    val_data,
+                    T_minus_t_val,
+                )
                 val_loss = self.loss_function(val_data, val_actions)
                 self.val_losses.append(val_loss.numpy())
                 print(
@@ -260,6 +291,7 @@ class Environment:
             return self.train_losses
 
     def test(self, paths_to_test = None, n_paths = None, random_seed = None, 
+             path_r=None, path_sigma=None,
              plot_pnl = False, plot_title = 'Distribucion de PnL', save_plot_path = None):
         
         if paths_to_test is not None:
@@ -275,8 +307,14 @@ class Environment:
         T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [paths.shape[0], 1])
 
-        val_actions = self.agent.process_batch(paths, T_minus_t)
-        loss = self.loss_function(paths, val_actions)
+        val_actions = self._process_agent_batch_actions(
+            self.agent,
+            paths,
+            T_minus_t,
+            batch_path_r=path_r,
+            batch_path_sigma=path_sigma,
+        )
+        loss = self.loss_function(paths, val_actions, path_r=path_r)
 
         if plot_pnl:
             pnl = self.calculate_pnl(paths, val_actions)
@@ -322,11 +360,98 @@ class Environment:
         cmap = plt.cm.get_cmap("tab10", 10)
         return cmap(idx % 10)
 
+    def _process_agent_batch_actions(
+        self,
+        agent,
+        batch_paths,
+        batch_T_minus_t,
+        batch_path_r=None,
+        batch_path_sigma=None,
+    ):
+        """
+        Call agent.process_batch with optional per-path parameters only when
+        the target agent supports them (backward compatible).
+        """
+        if batch_path_r is None and batch_path_sigma is None:
+            return agent.process_batch(batch_paths, batch_T_minus_t)
+
+        try:
+            params = inspect.signature(agent.process_batch).parameters
+        except (TypeError, ValueError):
+            params = {}
+
+        kwargs = {}
+        if batch_path_r is not None:
+            if "batch_path_r" in params:
+                kwargs["batch_path_r"] = batch_path_r
+            elif "path_r" in params:
+                kwargs["path_r"] = batch_path_r
+
+        if batch_path_sigma is not None:
+            if "batch_path_sigma" in params:
+                kwargs["batch_path_sigma"] = batch_path_sigma
+            elif "path_sigma" in params:
+                kwargs["path_sigma"] = batch_path_sigma
+
+        if kwargs:
+            return agent.process_batch(batch_paths, batch_T_minus_t, **kwargs)
+        return agent.process_batch(batch_paths, batch_T_minus_t)
+
+    def _format_price_for_log(self, price):
+        price_t = tf.convert_to_tensor(price, dtype=tf.float32)
+        if price_t.shape.rank == 0:
+            return f"{float(price_t.numpy()):.8g}"
+        arr = tf.reshape(price_t, (-1,)).numpy()
+        if arr.size == 0:
+            return "empty"
+        return (
+            f"vector(n={arr.size}, mean={float(np.mean(arr)):.8g}, "
+            f"std={float(np.std(arr)):.8g}, min={float(np.min(arr)):.8g}, "
+            f"max={float(np.max(arr)):.8g})"
+        )
+
+    def _supports_pathwise_window_pricing(self, agent):
+        return (
+            getattr(agent, "name", None) == "bs_delta_hedging"
+            and hasattr(agent, "get_model_price_batch")
+        )
+
+    def _compute_agent_price(
+        self,
+        agent,
+        n_paths,
+        random_seed,
+        paths=None,
+        per_path_r=None,
+        per_path_sigma=None,
+    ):
+        """
+        Compute scalar or pathwise prices for an agent.
+        Pathwise pricing is enabled for benchmarks that support it.
+        """
+        if (
+            paths is not None
+            and self._supports_pathwise_window_pricing(agent)
+            and (per_path_r is not None or per_path_sigma is not None)
+        ):
+            spot_vector = tf.cast(paths[:, 0, 0], tf.float32)
+            kwargs = {"path_s0": spot_vector}
+            if per_path_r is not None:
+                kwargs["path_r"] = per_path_r
+            if per_path_sigma is not None:
+                kwargs["path_sigma"] = per_path_sigma
+            return agent.get_model_price_batch(**kwargs)
+
+        return self.get_agent_price(agent, n_paths=n_paths, random_seed=random_seed)
+
     def terminal_hedging_error_multiple_agents(
         self,
         agents,
         n_paths=10_000,
         random_seed=None,
+        paths_to_test=None,
+        per_path_r=None,
+        per_path_sigma=None,
         plot_error=False,
         plot_title='Error de Cobertura Terminal',
         save_plot_path=None,
@@ -341,6 +466,7 @@ class Environment:
         pricing_method='fixed',
         agent_eval_batch_size=None,
         progress_log_every_agent_batches=5,
+        return_errors=False,
     ):
         """
         Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
@@ -357,27 +483,76 @@ class Environment:
         """
         eval_start_time = time.perf_counter()
 
-        # Generate the data paths
-        paths = self.generate_data(n_paths, random_seed=random_seed)
+        # Generate/load evaluation paths.
+        if paths_to_test is not None:
+            paths = tf.convert_to_tensor(paths_to_test, dtype=tf.float32)
+            if len(paths.shape) != 3:
+                raise ValueError(
+                    f"paths_to_test must have rank 3. Got rank={len(paths.shape)}."
+                )
+            if int(paths.shape[1]) != int(self.N + 1):
+                raise ValueError(
+                    f"paths_to_test timestep mismatch: expected {self.N + 1}, got {int(paths.shape[1])}."
+                )
+            if int(paths.shape[2]) != int(self.n_instruments):
+                raise ValueError(
+                    f"paths_to_test instrument mismatch: expected {self.n_instruments}, got {int(paths.shape[2])}."
+                )
+            n_paths = int(paths.shape[0])
+        else:
+            paths = self.generate_data(n_paths, random_seed=random_seed)
+            n_paths = int(paths.shape[0])
         print(
             f"[terminal] Paths generated: shape={tuple(paths.shape)}, "
             f"n_paths={n_paths}, n_agents={len(agents)}"
         )
+        if per_path_r is not None:
+            per_path_r = np.asarray(per_path_r, dtype=np.float32).reshape(-1)
+            if per_path_r.shape[0] != int(n_paths):
+                raise ValueError(
+                    f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
+                )
+        if per_path_sigma is not None:
+            per_path_sigma = np.asarray(per_path_sigma, dtype=np.float32).reshape(-1)
+            if per_path_sigma.shape[0] != int(n_paths):
+                raise ValueError(
+                    f"per_path_sigma length mismatch: expected {n_paths}, got {per_path_sigma.shape[0]}."
+                )
 
         # Compute prices based on the pricing_method
         if pricing_method == 'fixed':
             # Use the price of the first agent
             first_agent = agents[0]
-            price = self.get_agent_price(first_agent, n_paths=n_paths, random_seed=random_seed)
+            price = self._compute_agent_price(
+                first_agent,
+                n_paths=n_paths,
+                random_seed=random_seed,
+                paths=paths,
+                per_path_r=per_path_r,
+                per_path_sigma=per_path_sigma,
+            )
             prices = [price] * len(agents)
-            print(f"Using fixed price from the first agent: {price}")
+            print(
+                "Using fixed price from the first agent: "
+                f"{self._format_price_for_log(price)}"
+            )
         elif pricing_method == 'individual':
             # Compute the price for each agent
             prices = []
             for agent in agents:
-                price = self.get_agent_price(agent, n_paths=n_paths, random_seed=random_seed)
+                price = self._compute_agent_price(
+                    agent,
+                    n_paths=n_paths,
+                    random_seed=random_seed,
+                    paths=paths,
+                    per_path_r=per_path_r,
+                    per_path_sigma=per_path_sigma,
+                )
                 prices.append(price)
-                print(f"Computed price for agent '{agent.name}': {price}")
+                print(
+                    f"Computed price for agent '{agent.name}': "
+                    f"{self._format_price_for_log(price)}"
+                )
         else:
             raise ValueError(f"Invalid pricing_method '{pricing_method}'. Choose 'fixed' or 'individual'.")
 
@@ -439,7 +614,13 @@ class Environment:
                         f"(n_paths={total_paths})."
                     )
                     T_minus_t = self.get_T_minus_t(total_paths)
-                    val_actions = agent.process_batch(paths, T_minus_t)
+                    val_actions = self._process_agent_batch_actions(
+                        agent,
+                        paths,
+                        T_minus_t,
+                        batch_path_r=per_path_r,
+                        batch_path_sigma=per_path_sigma,
+                    )
                 else:
                     n_batches = int(np.ceil(total_paths / float(batch_size_eval)))
                     progress_step = max(1, int(progress_log_every_agent_batches))
@@ -453,7 +634,17 @@ class Environment:
                         end = min((b_idx + 1) * batch_size_eval, total_paths)
                         batch_paths = paths[start:end]
                         batch_t_minus_t = self.get_T_minus_t(end - start)
-                        action_chunks.append(agent.process_batch(batch_paths, batch_t_minus_t))
+                        batch_path_r = None if per_path_r is None else per_path_r[start:end]
+                        batch_path_sigma = None if per_path_sigma is None else per_path_sigma[start:end]
+                        action_chunks.append(
+                            self._process_agent_batch_actions(
+                                agent,
+                                batch_paths,
+                                batch_t_minus_t,
+                                batch_path_r=batch_path_r,
+                                batch_path_sigma=batch_path_sigma,
+                            )
+                        )
 
                         done = b_idx + 1
                         if done % progress_step == 0 or done == n_batches:
@@ -475,8 +666,14 @@ class Environment:
 
             actions_elapsed = time.perf_counter() - agent_start_time
             print(f"[terminal] agent={agent_id}: actions ready in {actions_elapsed:.2f}s. Calculating PnL...")
-            pnl = self.calculate_pnl(paths, val_actions)
-            error = price + pnl * np.exp(-self.r * self.T)
+            pnl = self.calculate_pnl(paths, val_actions, path_r=per_path_r)
+            if per_path_r is None:
+                discount = tf.constant(np.exp(-self.r * self.T), dtype=tf.float32)
+            else:
+                discount = tf.exp(
+                    -tf.convert_to_tensor(per_path_r, dtype=tf.float32) * float(self.T)
+                )
+            error = tf.cast(price, tf.float32) + pnl * discount
 
             errors.append(error)
             mean_errors.append(tf.reduce_mean(error).numpy())
@@ -494,8 +691,41 @@ class Environment:
         if plot_error:
             plt.figure(figsize=(10, 6))
 
-            # Define the bins for the histogram
+            # Define histogram bins. If the configured range excludes all values,
+            # fall back to an automatic range from finite errors.
             bins = np.linspace(min_x, max_x, 60)  # 60 bins across the specified range
+            error_arrays = [np.asarray(error, dtype=np.float64).reshape(-1) for error in errors]
+            finite_errors = [arr[np.isfinite(arr)] for arr in error_arrays]
+            in_range_counts = [
+                int(np.count_nonzero((arr >= float(min_x)) & (arr <= float(max_x))))
+                for arr in finite_errors
+            ]
+            if sum(in_range_counts) == 0:
+                combined = np.concatenate([arr for arr in finite_errors if arr.size > 0], axis=0)
+                if combined.size > 0:
+                    auto_lo = float(np.quantile(combined, 0.005))
+                    auto_hi = float(np.quantile(combined, 0.995))
+                    if not np.isfinite(auto_lo) or not np.isfinite(auto_hi) or auto_lo >= auto_hi:
+                        center = float(np.nanmean(combined))
+                        auto_lo = center - 1.0
+                        auto_hi = center + 1.0
+                    bins = np.linspace(auto_lo, auto_hi, 60)
+                    print(
+                        "[terminal][warning] Histogram range had zero in-range samples. "
+                        f"Auto-adjusted range to [{auto_lo:.6g}, {auto_hi:.6g}]."
+                    )
+            else:
+                total_counts = [int(arr.size) for arr in finite_errors]
+                low_coverage_agents = [
+                    i for i, (in_count, total) in enumerate(zip(in_range_counts, total_counts))
+                    if total > 0 and (in_count / float(total)) < 0.05
+                ]
+                if low_coverage_agents:
+                    print(
+                        "[terminal][warning] Most samples are outside the configured histogram range "
+                        f"[{float(min_x):.6g}, {float(max_x):.6g}] for agent indices {low_coverage_agents}. "
+                        "Plot may look sparse."
+                    )
 
             # Use explicit colors if provided; otherwise prioritize each agent.plot_color.
             if colors is None:
@@ -560,11 +790,16 @@ class Environment:
             print(f"Statistics saved to {save_stats_path}")
             total_elapsed = time.perf_counter() - eval_start_time
             print(f"[terminal] Completed multi-agent terminal evaluation in {total_elapsed:.2f}s.")
+            if return_errors:
+                return df, errors
             return df
 
         total_elapsed = time.perf_counter() - eval_start_time
         print(f"[terminal] Completed multi-agent terminal evaluation in {total_elapsed:.2f}s.")
-        return mean_errors, std_errors, loss_results if loss_functions else None
+        payload = (mean_errors, std_errors, loss_results if loss_functions else None)
+        if return_errors:
+            return payload, errors
+        return payload
 
     def get_agent_price(self, agent, n_paths=10_000, random_seed=None):
         """
@@ -837,12 +1072,17 @@ class Environment:
         n_bootstraps=1_000,
         confidence_level=0.95,
         random_seed=None,
+        paths_to_test=None,
+        per_path_r=None,
+        per_path_sigma=None,
         plot_histograms=False,
         save_plot_dir=None,
         language='es',
         save_actions_path=None,
         fixed_actions_paths=None,
         pricing_method='fixed',
+        bootstrap_method='iid',
+        moving_block_size=None,
         batch_size=100,  # New parameter for batch processing
         progress_log_every_batches=None,
         progress_log_every_seconds=15.0,
@@ -877,21 +1117,78 @@ class Environment:
         if not isinstance(statistics, list):
             statistics = [statistics]
 
-        # Generate the data paths
-        paths = self.generate_data(n_paths, random_seed=random_seed)
+        # Generate/load evaluation paths.
+        if paths_to_test is not None:
+            paths = tf.convert_to_tensor(paths_to_test, dtype=tf.float32)
+            if len(paths.shape) != 3:
+                raise ValueError(
+                    f"paths_to_test must have rank 3. Got rank={len(paths.shape)}."
+                )
+            if int(paths.shape[1]) != int(self.N + 1):
+                raise ValueError(
+                    f"paths_to_test timestep mismatch: expected {self.N + 1}, got {int(paths.shape[1])}."
+                )
+            if int(paths.shape[2]) != int(self.n_instruments):
+                raise ValueError(
+                    f"paths_to_test instrument mismatch: expected {self.n_instruments}, got {int(paths.shape[2])}."
+                )
+            n_paths = int(paths.shape[0])
+        else:
+            paths = self.generate_data(n_paths, random_seed=random_seed)
+            n_paths = int(paths.shape[0])
+
+        if per_path_r is not None:
+            per_path_r = np.asarray(per_path_r, dtype=np.float32).reshape(-1)
+            if per_path_r.shape[0] != int(n_paths):
+                raise ValueError(
+                    f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
+                )
+        if per_path_sigma is not None:
+            per_path_sigma = np.asarray(per_path_sigma, dtype=np.float32).reshape(-1)
+            if per_path_sigma.shape[0] != int(n_paths):
+                raise ValueError(
+                    f"per_path_sigma length mismatch: expected {n_paths}, got {per_path_sigma.shape[0]}."
+                )
+
+        bootstrap_method = str(bootstrap_method).strip().lower()
+        if bootstrap_method not in {"iid", "moving_block"}:
+            raise ValueError("bootstrap_method must be 'iid' or 'moving_block'.")
+        if moving_block_size is None:
+            moving_block_size = max(2, int(np.sqrt(max(2, n_paths))))
+        moving_block_size = max(1, min(int(moving_block_size), int(n_paths)))
 
         # Compute prices based on the pricing_method
         if pricing_method == 'fixed':
             first_agent = agents[0]
-            price = self.get_agent_price(first_agent, n_paths=n_paths, random_seed=random_seed)
+            price = self._compute_agent_price(
+                first_agent,
+                n_paths=n_paths,
+                random_seed=random_seed,
+                paths=paths,
+                per_path_r=per_path_r,
+                per_path_sigma=per_path_sigma,
+            )
             prices = [price] * len(agents)
-            print(f"Using fixed price from the first agent: {price}")
+            print(
+                "Using fixed price from the first agent: "
+                f"{self._format_price_for_log(price)}"
+            )
         elif pricing_method == 'individual':
             prices = []
             for agent in agents:
-                price = self.get_agent_price(agent, n_paths=n_paths, random_seed=random_seed)
+                price = self._compute_agent_price(
+                    agent,
+                    n_paths=n_paths,
+                    random_seed=random_seed,
+                    paths=paths,
+                    per_path_r=per_path_r,
+                    per_path_sigma=per_path_sigma,
+                )
                 prices.append(price)
-                print(f"Computed price for agent '{agent.name}': {price}")
+                print(
+                    f"Computed price for agent '{agent.name}': "
+                    f"{self._format_price_for_log(price)}"
+                )
         else:
             raise ValueError(f"Invalid pricing_method '{pricing_method}'. Choose 'fixed' or 'individual'.")
 
@@ -966,7 +1263,13 @@ class Environment:
             else:
                 # Process batch to get val_actions
                 T_minus_t = self.get_T_minus_t(paths.shape[0])
-                val_actions = agent.process_batch(paths, T_minus_t)
+                val_actions = self._process_agent_batch_actions(
+                    agent,
+                    paths,
+                    T_minus_t,
+                    batch_path_r=per_path_r,
+                    batch_path_sigma=per_path_sigma,
+                )
 
                 # Save val_actions if save_actions_path is provided
                 if save_actions_path:
@@ -979,9 +1282,15 @@ class Environment:
                     print(f"Saved val_actions for agent '{agent_id}' to '{agent_actions_path}'.")
 
             # Calculate PnL and error
-            pnl = self.calculate_pnl(paths, val_actions)
-            # Adjusting for present value
-            error = price + pnl * np.exp(-self.r * self.T)
+            pnl = self.calculate_pnl(paths, val_actions, path_r=per_path_r)
+            # Adjusting for present value.
+            if per_path_r is None:
+                discount = tf.constant(np.exp(-self.r * self.T), dtype=tf.float32)
+            else:
+                discount = tf.exp(
+                    -tf.convert_to_tensor(per_path_r, dtype=tf.float32) * float(self.T)
+                )
+            error = tf.cast(price, tf.float32) + pnl * discount
             error_np = error.numpy().astype(np.float32)  # Use float32 to save memory
             tqdm.write(
                 f"[bootstrap] agent={agent_id}: pnl/error ready "
@@ -1005,7 +1314,16 @@ class Environment:
             for batch_idx in range(n_batches):
                 current_batch_size = min(batch_size, n_bootstraps - batch_idx * batch_size)
                 # Generate bootstrap indices for the current batch
-                bootstrap_indices = rng.integers(0, n_paths, size=(current_batch_size, n_paths))
+                if bootstrap_method == "iid":
+                    bootstrap_indices = rng.integers(0, n_paths, size=(current_batch_size, n_paths))
+                else:
+                    block = int(moving_block_size)
+                    starts_max = max(1, n_paths - block + 1)
+                    n_blocks = int(np.ceil(n_paths / float(block)))
+                    block_starts = rng.integers(0, starts_max, size=(current_batch_size, n_blocks))
+                    offsets = np.arange(block, dtype=np.int32).reshape(1, 1, -1)
+                    bootstrap_indices = (block_starts[:, :, None] + offsets).reshape(current_batch_size, -1)
+                    bootstrap_indices = bootstrap_indices[:, :n_paths]
                 # Extract bootstrap samples
                 bootstrap_samples = error_np[bootstrap_indices]  # Shape: (current_batch_size, n_paths)
 

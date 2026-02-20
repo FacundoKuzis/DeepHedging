@@ -27,6 +27,11 @@ class MonteCarloAgent(DeltaHedgingAgent):
         bump_size=0.01,
         seed=33,
         no_trade_band=0.0,
+        mc_use_vectorized=True,
+        mc_chunk_size=64,
+        mc_parallel_enabled=False,
+        mc_n_workers=1,
+        mc_parallel_backend="thread",
     ):
         """
         Initialize the agent with market and option parameters.
@@ -53,8 +58,14 @@ class MonteCarloAgent(DeltaHedgingAgent):
             r=self.r,
             T=self.T,
             num_simulations=self.num_simulations,
-            seed=self.seed
+            seed=self.seed,
+            use_vectorized=bool(mc_use_vectorized),
+            chunk_size=int(mc_chunk_size),
+            parallel_enabled=bool(mc_parallel_enabled),
+            n_workers=int(mc_n_workers),
+            parallel_backend=str(mc_parallel_backend),
         )
+        self._mc_profile_rows = []
 
     def build_model(self):
         """
@@ -103,26 +114,26 @@ class MonteCarloAgent(DeltaHedgingAgent):
         """
         S_values = np.asarray(S_values, dtype=np.float64).reshape(-1)
         T_minus_t_values = np.asarray(T_minus_t_values, dtype=np.float64).reshape(-1)
+
         deltas = np.zeros_like(S_values, dtype=np.float32)
+        alive_mask = T_minus_t_values > 0.0
+        if not np.any(alive_mask):
+            return deltas.astype(np.float32)
 
-        original_T = self.pricer.T
-        for i, (S, T) in enumerate(zip(S_values, T_minus_t_values)):
-            # Handle cases where T <= 0
-            if T <= 0:
-                deltas[i] = 0.0
-                continue
-
-            self.pricer.T = float(T)
-            delta = self.pricer.delta_with_S0(
-                contingent_claim=self.option_class,
-                S0=float(S),
-                bump_size=self.bump_size,
-                use_common_random_numbers=True,
-                seed=self.seed + i,
-            )
-            deltas[i] = np.float32(delta)
-
-        self.pricer.T = original_T
+        alive_idx = np.where(alive_mask)[0]
+        alive_S = S_values[alive_mask]
+        alive_T = T_minus_t_values[alive_mask]
+        deltas_alive, profile_row = self.pricer.delta_batch_with_S0(
+            contingent_claim=self.option_class,
+            S0_values=alive_S,
+            T_values=alive_T,
+            bump_size=self.bump_size,
+            use_common_random_numbers=True,
+            seed=self.seed,
+            profile=True,
+        )
+        self._mc_profile_rows.append(profile_row)
+        deltas[alive_idx] = deltas_alive.astype(np.float32)
         return deltas.astype(np.float32)
 
     
