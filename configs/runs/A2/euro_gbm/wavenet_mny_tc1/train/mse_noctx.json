@@ -1,0 +1,7 @@
+{
+  "extends": "../../wavenet_mny/train/mse_noctx.json",
+  "run_name": "a2_wav_mny_mse_noctx_tc1",
+  "model_name": "a2_wav_mny_mse_noctx_tc1",
+  "description": "A2 train: WaveNet log-moneyness, no context, objective MSE. (tc=1%)",
+  "proportional_cost": 0.01
+}

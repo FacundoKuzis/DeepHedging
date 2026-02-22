@@ -1,0 +1,9 @@
+{
+  "extends": "mae_seen.json",
+  "run_name": "a2_wav_mny_mae_ctxgen",
+  "model_name": "a2_wav_mny_mae_ctxgen",
+  "description": "A2 train: WaveNet log-moneyness, generated-only context, objective MAE.",
+  "use_price_history_context": true,
+  "context_length": 42,
+  "context_for_path_generation_only": true
+}

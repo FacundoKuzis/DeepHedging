@@ -1,0 +1,6 @@
+{
+  "extends": "thesis_result1b_configs/train/euro_train_gbm_fixed_recurrent_log_moneyness_increased_vol_ctxgen_only_42.json",
+  "run_name": "euro_gbm_rec_ctxgen",
+  "model_name": "euro_gbm_rec_ctxgen",
+  "description": "Euro GBM fixed vol, recurrent, context generated only for path simulation."
+}

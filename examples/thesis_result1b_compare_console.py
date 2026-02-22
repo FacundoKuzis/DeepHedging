@@ -40,6 +40,7 @@ from examples.thesis_result1_common import (  # noqa: E402
     load_config_by_name,
     set_global_determinism,
     strict_validate_keys,
+    get_config_relative_stem,
     validate_agent_name,
 )
 from DeepHedging.HedgingInstruments import GBMStock  # noqa: E402
@@ -59,17 +60,19 @@ from DeepHedging.utils.historical_windows import (  # noqa: E402
 )
 
 
-RESULT1B_ROOT = os.path.join(THESIS_MODELS_ROOT, "thesis_result1b")
+RESULT1B_ROOT = THESIS_MODELS_ROOT
 
 
 
-def _run_dirs(run_name: str) -> dict[str, str]:
-    run_dir = os.path.join(RESULT1B_ROOT, "compare", run_name)
+def _run_dirs(run_name: str, config_path: str) -> dict[str, str]:
+    _ = run_name
+    rel_stem = get_config_relative_stem(config_path)
+    run_dir = os.path.normpath(os.path.join(RESULT1B_ROOT, rel_stem))
     plots_dir = os.path.join(run_dir, "plots")
     tables_dir = os.path.join(run_dir, "tables")
     logs_dir = os.path.join(run_dir, "logs")
     market_cache_dir = os.path.join(RESULT1B_ROOT, "market_data_cache")
-    models_root = os.path.join(RESULT1B_ROOT, "models")
+    models_root = RESULT1B_ROOT
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(plots_dir, exist_ok=True)
     os.makedirs(tables_dir, exist_ok=True)
@@ -147,6 +150,14 @@ def required_keys() -> set[str]:
 
 def optional_keys() -> set[str]:
     return {
+        "price_computation_mode",
+        "path_transformation_type",
+        "include_log_strike_feature",
+        "gbm_sigma_per_path_mode",
+        "gbm_sigma_uniform_low",
+        "gbm_sigma_uniform_high",
+        "gbm_sigma_discrete_values",
+        "gbm_sigma_discrete_probs",
         "benchmark_no_trade_band",
         "no_intervention_bound",
         "benchmark_no_intervention_bound",
@@ -164,6 +175,11 @@ def optional_keys() -> set[str]:
         "reuse_actions_between_steps",
         "sigma_mode",
         "historical_sigma_window_days",
+        "use_price_history_context",
+        "context_length",
+        "context_feature_mode",
+        "context_pre_ttm_mode",
+        "context_for_path_generation_only",
         "option_quotes_csv",
         "option_quote_date_col",
         "option_expiry_col",
@@ -215,9 +231,20 @@ def validate_config(config: dict[str, Any]) -> None:
 
     if str(config["pricing_method"]).strip().lower() not in {"fixed", "individual"}:
         raise ValueError("pricing_method must be 'fixed' or 'individual'.")
+    price_mode = str(config.get("price_computation_mode", "pathwise_if_available")).strip().lower()
+    if price_mode == "pathwise":
+        price_mode = "pathwise_if_available"
+    if price_mode not in {"pathwise_if_available", "scalar"}:
+        raise ValueError("price_computation_mode must be 'pathwise_if_available' or 'scalar'.")
 
     if str(config["language"]).strip().lower() not in {"es", "en"}:
         raise ValueError("language must be 'es' or 'en'.")
+
+    if "include_log_strike_feature" in config and not isinstance(config["include_log_strike_feature"], bool):
+        raise ValueError("include_log_strike_feature must be bool when provided.")
+    path_t = str(config.get("path_transformation_type", "log_moneyness")).strip().lower()
+    if path_t not in {"none", "log", "log_moneyness"}:
+        raise ValueError("path_transformation_type must be one of {'none','log','log_moneyness'}.")
 
     if not isinstance(config["bootstrap_enabled"], bool):
         raise ValueError("bootstrap_enabled must be bool.")
@@ -300,6 +327,58 @@ def validate_config(config: dict[str, Any]) -> None:
     if str(config["test_data_mode"]).strip().lower() not in {"historical_windows", "simulated"}:
         raise ValueError("test_data_mode must be 'historical_windows' or 'simulated'.")
 
+    sigma_path_mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
+    if sigma_path_mode not in {"fixed", "uniform", "discrete"}:
+        raise ValueError("gbm_sigma_per_path_mode must be one of {'fixed','uniform','discrete'}.")
+    if sigma_path_mode == "uniform":
+        if "gbm_sigma_uniform_low" not in config or "gbm_sigma_uniform_high" not in config:
+            raise ValueError(
+                "gbm_sigma_uniform_low and gbm_sigma_uniform_high are required when gbm_sigma_per_path_mode='uniform'."
+            )
+        lo = float(config["gbm_sigma_uniform_low"])
+        hi = float(config["gbm_sigma_uniform_high"])
+        if lo <= 0.0 or hi <= 0.0 or lo >= hi:
+            raise ValueError("Require 0 < gbm_sigma_uniform_low < gbm_sigma_uniform_high.")
+    if sigma_path_mode == "discrete":
+        values = config.get("gbm_sigma_discrete_values")
+        if not isinstance(values, list) or len(values) == 0:
+            raise ValueError(
+                "gbm_sigma_discrete_values must be a non-empty list when gbm_sigma_per_path_mode='discrete'."
+            )
+        for v in values:
+            if float(v) <= 0.0:
+                raise ValueError("gbm_sigma_discrete_values must contain values > 0.")
+        probs = config.get("gbm_sigma_discrete_probs")
+        if probs is not None:
+            if not isinstance(probs, list) or len(probs) != len(values):
+                raise ValueError(
+                    "gbm_sigma_discrete_probs must be a list with same length as gbm_sigma_discrete_values."
+                )
+            if any(float(p) < 0.0 for p in probs):
+                raise ValueError("gbm_sigma_discrete_probs must be >= 0.")
+            if sum(float(p) for p in probs) <= 0.0:
+                raise ValueError("gbm_sigma_discrete_probs must sum to > 0.")
+
+    use_context = bool(config.get("use_price_history_context", False))
+    if "context_for_path_generation_only" in config and not isinstance(config["context_for_path_generation_only"], bool):
+        raise ValueError("context_for_path_generation_only must be bool when provided.")
+    context_pre_ttm_mode = str(config.get("context_pre_ttm_mode", "calculated")).strip().lower()
+    if context_pre_ttm_mode == "extended":
+        context_pre_ttm_mode = "calculated"
+    if context_pre_ttm_mode not in {"calculated", "zero"}:
+        raise ValueError("context_pre_ttm_mode must be 'calculated' or 'zero'.")
+    if use_context:
+        if "context_length" not in config:
+            raise ValueError("context_length is required when use_price_history_context=true.")
+        if int(config["context_length"]) <= 0:
+            raise ValueError("context_length must be > 0 when use_price_history_context=true.")
+        mode = str(config.get("context_feature_mode", "")).strip().lower()
+        if mode not in {"log_returns", "log_moneyness"}:
+            raise ValueError("context_feature_mode must be 'log_returns' or 'log_moneyness'.")
+    else:
+        if "context_length" in config and int(config["context_length"]) < 0:
+            raise ValueError("context_length must be >= 0.")
+
     if int(config["historical_stride"]) <= 0:
         raise ValueError("historical_stride must be > 0")
     if config["max_test_windows"] is not None and int(config["max_test_windows"]) <= 0:
@@ -338,7 +417,26 @@ def _display_name(agent, language: str) -> str:
 
 
 def _model_path(agent, model_name: str) -> str:
-    return os.path.join(RESULT1B_ROOT, "models", agent.name, f"{model_name}.keras")
+    target_name = f"{model_name}.keras"
+    matches: list[str] = []
+    for root, _, files in os.walk(RESULT1B_ROOT):
+        if target_name not in files:
+            continue
+        full = os.path.join(root, target_name)
+        parent = os.path.basename(os.path.dirname(full))
+        if parent == str(agent.name):
+            matches.append(full)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) == 0:
+        raise FileNotFoundError(
+            f"Model not found for trained agent {agent.name} and model_name='{model_name}' under {RESULT1B_ROOT}."
+        )
+    rels = [os.path.relpath(p, RESULT1B_ROOT) for p in matches]
+    raise FileNotFoundError(
+        f"Multiple model matches found for agent={agent.name}, model_name='{model_name}'. "
+        f"Use unique model_name. Matches: {rels}"
+    )
 
 
 
@@ -485,10 +583,29 @@ def _historical_sigma_window_days(config: dict[str, Any]) -> int:
     return int(raw)
 
 
+def _gbm_sigma_kwargs(config: dict[str, Any], base_sigma: float) -> dict[str, Any]:
+    mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
+    kwargs: dict[str, Any] = {
+        "sigma": float(base_sigma),
+        "sigma_per_path_mode": mode,
+    }
+    if mode == "uniform":
+        kwargs["sigma_uniform_low"] = float(config["gbm_sigma_uniform_low"])
+        kwargs["sigma_uniform_high"] = float(config["gbm_sigma_uniform_high"])
+    elif mode == "discrete":
+        kwargs["sigma_discrete_values"] = [float(v) for v in config["gbm_sigma_discrete_values"]]
+        if config.get("gbm_sigma_discrete_probs") is not None:
+            kwargs["sigma_discrete_probs"] = [float(p) for p in config["gbm_sigma_discrete_probs"]]
+    return kwargs
+
+
 
 def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> None:
-    dirs = _run_dirs(run_name)
+    dirs = _run_dirs(run_name, config_path=config_path)
     copied_cfg = copy_config_snapshot(config_path, dirs["run_dir"])
+    resolved_cfg_path = os.path.join(dirs["run_dir"], "resolved_config.json")
+    with open(resolved_cfg_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
     print(f"[run:{run_name}] Config validated and copied to: {copied_cfg}")
     print(f"[run:{run_name}] Storage root: {RESULT1B_ROOT}")
 
@@ -519,7 +636,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         T=float(n / float(trading_days)),
         N=n,
         r=float(calib.r_train),
-        sigma=float(calib.sigma_train),
+        **_gbm_sigma_kwargs(config=config, base_sigma=float(calib.sigma_train)),
     )
 
     cfg_for_builders = dict(config)
@@ -564,6 +681,10 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         optimizer_cls=tf.keras.optimizers.Adam,
         resample_each_epoch=False,
         train_seed=eval_seed,
+        use_price_history_context=bool(config.get("use_price_history_context", False)),
+        context_length=int(config.get("context_length", 0)),
+        context_feature_mode=str(config.get("context_feature_mode", "log_returns")),
+        context_visible_to_agent=not bool(config.get("context_for_path_generation_only", False)),
     )
 
     eval_paths_tensor = None
@@ -749,13 +870,24 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "benchmark_agent": str(config["benchmark_agent_name"]),
             "trained_agents": config["trained_agents"],
             "pricing_method": str(config["pricing_method"]),
+            "price_computation_mode": str(config.get("price_computation_mode", "pathwise_if_available")),
             "test_data_mode": str(config["test_data_mode"]),
             "risk_free_source": str(config["risk_free_source"]),
             "risk_free_mode": str(config["risk_free_mode"]),
             "per_path_r_signature": _vector_signature(per_path_r),
             "sigma_source": str(config["sigma_source"]),
             "sigma_mode": _sigma_mode(config),
+            "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
+            "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
+            "gbm_sigma_uniform_high": config.get("gbm_sigma_uniform_high"),
+            "gbm_sigma_discrete_values": config.get("gbm_sigma_discrete_values"),
+            "gbm_sigma_discrete_probs": config.get("gbm_sigma_discrete_probs"),
             "per_path_sigma_signature": _vector_signature(per_path_sigma),
+            "use_price_history_context": bool(config.get("use_price_history_context", False)),
+            "context_for_path_generation_only": bool(config.get("context_for_path_generation_only", False)),
+            "context_length": int(config.get("context_length", 0)),
+            "context_feature_mode": str(config.get("context_feature_mode", "log_returns")),
+            "context_pre_ttm_mode": str(config.get("context_pre_ttm_mode", "calculated")),
             "paths_signature": None if eval_paths_tensor is None else _paths_signature(eval_paths_tensor),
         }
         _ensure_actions_cache_consistency(
@@ -789,6 +921,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             max_x=float(config["plot_max_x"]),
             language="es",
             pricing_method=str(config["pricing_method"]),
+            price_computation_mode=str(config.get("price_computation_mode", "pathwise_if_available")),
             agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
             progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
             save_actions_path=actions_cache_dir,
@@ -818,6 +951,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         max_x=float(config["plot_max_x"]),
         language="es",
         pricing_method=str(config["pricing_method"]),
+        price_computation_mode=str(config.get("price_computation_mode", "pathwise_if_available")),
         agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
         progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
         save_actions_path=actions_cache_dir,
@@ -883,6 +1017,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             plot_histograms=False,
             language="es",
             pricing_method=str(config["pricing_method"]),
+            price_computation_mode=str(config.get("price_computation_mode", "pathwise_if_available")),
             batch_size=int(config["bootstrap_batch_size"]),
             bootstrap_method=str(config["bootstrap_method"]),
             moving_block_size=None if config["moving_block_size"] is None else int(config["moving_block_size"]),
@@ -904,6 +1039,16 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 "sigma_source": str(config["sigma_source"]),
                 "sigma_mode": _sigma_mode(config),
                 "historical_sigma_window_days": _historical_sigma_window_days(config),
+                "use_price_history_context": bool(config.get("use_price_history_context", False)),
+                "context_for_path_generation_only": bool(config.get("context_for_path_generation_only", False)),
+                "context_length": int(config.get("context_length", 0)),
+                "context_feature_mode": str(config.get("context_feature_mode", "log_returns")),
+                "context_pre_ttm_mode": str(config.get("context_pre_ttm_mode", "calculated")),
+                "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
+                "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
+                "gbm_sigma_uniform_high": config.get("gbm_sigma_uniform_high"),
+                "gbm_sigma_discrete_values": json.dumps(config.get("gbm_sigma_discrete_values")),
+                "gbm_sigma_discrete_probs": json.dumps(config.get("gbm_sigma_discrete_probs")),
                 "risk_free_source": str(config["risk_free_source"]),
                 "risk_free_mode": str(config["risk_free_mode"]),
                 "sigma_train": float(calib.sigma_train),
@@ -928,6 +1073,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         "trained_agents": config["trained_agents"],
         "eval_paths_requested": int(config["eval_paths"]),
         "test_data_mode": str(config["test_data_mode"]),
+        "price_computation_mode": str(config.get("price_computation_mode", "pathwise_if_available")),
         "sigma_mode": _sigma_mode(config),
         "historical_sigma_window_days": _historical_sigma_window_days(config),
         "bootstrap_enabled": bool(config["bootstrap_enabled"]),

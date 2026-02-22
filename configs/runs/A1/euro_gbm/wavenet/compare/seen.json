@@ -1,0 +1,14 @@
+{
+  "extends": "../../../../../bases/A1/compare/euro_gbm_wavenet_s02_compare_base.json",
+  "run_name": "a1_wav_s02_seen_cmp",
+  "description": "A1 compare: WaveNet sigma 0.2 con contexto generado y visto vs DeltaHedging.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a1_wav_s02_seen"
+    }
+  ],
+  "use_price_history_context": true,
+  "context_length": 42,
+  "context_for_path_generation_only": false
+}

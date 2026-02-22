@@ -9,13 +9,17 @@ import pandas as pd
 import random
 import time
 from tqdm import tqdm  # For progress bars
+from DeepHedging.utils.history_context import build_causal_history_features
 
 
 class Environment:
     def __init__(self, agent, T, N, r, instrument_list, n_instruments, contingent_claim, cost_function, 
                  risk_measure = None,
                  n_epochs = None, batch_size = None, learning_rate = None, optimizer = None,
-                 resample_each_epoch=False, train_random_seed=None, val_random_seed=None):
+                 resample_each_epoch=False, train_random_seed=None, val_random_seed=None,
+                 history_context_length=0, history_feature_mode="log_returns",
+                 history_underlying_index=None, history_strike=None,
+                 history_context_visible_to_agent=True):
         self.agent = agent
         self.T = T # Maturity (in years)
         self.N = N # Number of hedging steps
@@ -32,6 +36,27 @@ class Environment:
         self.resample_each_epoch = bool(resample_each_epoch)
         self.train_random_seed = train_random_seed
         self.val_random_seed = val_random_seed
+        self.history_context_length = int(history_context_length)
+        self.history_feature_mode = str(history_feature_mode).strip().lower()
+        self.history_context_visible_to_agent = bool(history_context_visible_to_agent)
+        if history_underlying_index is None:
+            history_underlying_index = getattr(contingent_claim, "underlying_index", 0)
+        self.history_underlying_index = int(history_underlying_index)
+        if history_strike is None:
+            history_strike = getattr(contingent_claim, "strike", None)
+        self.history_strike = history_strike
+        if self.history_context_length < 0:
+            raise ValueError("history_context_length must be >= 0.")
+        if self.history_context_length > 0 and self.history_feature_mode not in {"log_returns", "log_moneyness"}:
+            raise ValueError("history_feature_mode must be 'log_returns' or 'log_moneyness'.")
+        if self.history_context_length > 0 and self.history_feature_mode == "log_moneyness":
+            if self.history_strike is None:
+                raise ValueError(
+                    "history_strike (or contingent_claim.strike) is required for history_feature_mode='log_moneyness'."
+                )
+        self._history_context_counter = 0
+        self._history_context_seed_base = self._derive_seed(self.train_random_seed, 50_000_000)
+        self._last_generated_path_sigma = None
 
         self.train_losses = []
         self.val_losses = []
@@ -47,12 +72,154 @@ class Environment:
             return None
         return int(base_seed) + int(offset)
 
+    def _next_history_context_seed(self):
+        if self._history_context_seed_base is None:
+            self._history_context_counter += 1
+            return None
+        seed = int(self._history_context_seed_base) + int(self._history_context_counter)
+        self._history_context_counter += 1
+        return seed
+
+    def _sample_batch_prehistory_prices(
+        self,
+        batch_paths,
+        batch_path_r=None,
+        batch_path_sigma=None,
+        simulate_pre_history=False,
+    ):
+        if not bool(simulate_pre_history):
+            return None
+        if self.history_context_length <= 0:
+            return None
+        if len(batch_paths.shape) != 3:
+            return None
+        if int(batch_paths.shape[2]) <= self.history_underlying_index:
+            return None
+        if len(self.instrument_list) == 0:
+            return None
+
+        first_instrument = self.instrument_list[0]
+        sigma_default = getattr(first_instrument, "sigma", None)
+        if sigma_default is None and batch_path_sigma is None:
+            return None
+
+        n_batch = int(batch_paths.shape[0])
+        hist_len = int(self.history_context_length)
+        dt = float(self.dt)
+        if dt <= 0.0:
+            return None
+
+        s0 = (
+            tf.convert_to_tensor(batch_paths[:, 0, self.history_underlying_index], dtype=tf.float32)
+            .numpy()
+            .reshape(-1)
+            .astype(np.float64)
+        )
+        if np.any(~np.isfinite(s0)) or np.any(s0 <= 0.0):
+            return None
+
+        if batch_path_r is None:
+            r_vec = np.full((n_batch,), float(self.r), dtype=np.float64)
+        else:
+            r_vec = np.asarray(batch_path_r, dtype=np.float64).reshape(-1)
+            if r_vec.shape[0] != n_batch:
+                raise ValueError(
+                    f"batch_path_r length mismatch for prehistory generation: expected {n_batch}, got {r_vec.shape[0]}."
+                )
+
+        if batch_path_sigma is None:
+            sigma_vec = np.full((n_batch,), float(sigma_default), dtype=np.float64)
+        else:
+            sigma_vec = np.asarray(batch_path_sigma, dtype=np.float64).reshape(-1)
+            if sigma_vec.shape[0] != n_batch:
+                raise ValueError(
+                    "batch_path_sigma length mismatch for prehistory generation: "
+                    f"expected {n_batch}, got {sigma_vec.shape[0]}."
+                )
+        sigma_vec = np.maximum(sigma_vec, 1e-8)
+
+        rng = np.random.default_rng(self._next_history_context_seed())
+        z = rng.normal(0.0, 1.0, size=(n_batch, hist_len))
+        increments = (
+            (r_vec[:, None] - 0.5 * np.square(sigma_vec[:, None])) * dt
+            + sigma_vec[:, None] * np.sqrt(dt) * z
+        )
+
+        # Build prehistory ending at S0:
+        # S_-1 = S0 / exp(r0), S_-2 = S_-1 / exp(r-1), ...
+        rev_inc = increments[:, ::-1]
+        rev_cumsum = np.cumsum(rev_inc, axis=1)
+        pre_rev = s0[:, None] * np.exp(-rev_cumsum)  # (S_-1, S_-2, ...)
+        pre = pre_rev[:, ::-1]  # oldest -> newest
+        return tf.convert_to_tensor(pre.astype(np.float32), dtype=tf.float32)
+
+    def _build_batch_history_features(
+        self,
+        batch_paths,
+        batch_path_r=None,
+        batch_path_sigma=None,
+        simulate_pre_history=False,
+        pre_history_prices=None,
+    ):
+        if self.history_context_length <= 0:
+            return None
+        if pre_history_prices is None:
+            pre_history_prices = self._sample_batch_prehistory_prices(
+                batch_paths=batch_paths,
+                batch_path_r=batch_path_r,
+                batch_path_sigma=batch_path_sigma,
+                simulate_pre_history=simulate_pre_history,
+            )
+        elif not isinstance(pre_history_prices, tf.Tensor):
+            pre_history_prices = tf.convert_to_tensor(pre_history_prices, dtype=tf.float32)
+        return build_causal_history_features(
+            paths=batch_paths,
+            context_length=self.history_context_length,
+            feature_mode=self.history_feature_mode,
+            strike=self.history_strike,
+            underlying_index=self.history_underlying_index,
+            pre_history_prices=pre_history_prices,
+        )
+
+    def _agent_uses_temporal_context_prefix(self, agent):
+        return bool(getattr(agent, "context_as_timesteps", False))
+
+    def _agent_should_see_context(self, agent):
+        _ = agent
+        return bool(self.history_context_visible_to_agent)
+
     def _select_claim_paths(self, paths):
         if hasattr(self.contingent_claim, "select_underlying_paths"):
             return self.contingent_claim.select_underlying_paths(paths)
 
         # Backward-compat fallback.
         return paths[:, :, 0]
+
+    def _capture_last_generated_path_sigma(self, n_paths):
+        self._last_generated_path_sigma = None
+        if len(self.instrument_list) != 1 or int(self.n_instruments) != 1:
+            return
+        instrument = self.instrument_list[0]
+        if not hasattr(instrument, "get_last_sampled_sigmas"):
+            return
+        sigma_vec = instrument.get_last_sampled_sigmas()
+        if sigma_vec is None:
+            return
+        sigma_vec = np.asarray(sigma_vec, dtype=np.float32).reshape(-1)
+        if sigma_vec.shape[0] != int(n_paths):
+            return
+        self._last_generated_path_sigma = sigma_vec
+
+    def _infer_per_path_sigma_if_available(self, per_path_sigma, n_paths):
+        if per_path_sigma is not None:
+            return per_path_sigma
+        sigma_vec = self._last_generated_path_sigma
+        if sigma_vec is None:
+            return None
+        sigma_vec = np.asarray(sigma_vec, dtype=np.float32).reshape(-1)
+        if sigma_vec.shape[0] != int(n_paths):
+            return None
+        return sigma_vec
 
     def generate_data(self, n_paths, random_seed=None):
 
@@ -79,8 +246,55 @@ class Environment:
         data = data.stack()
 
         data_transposed = tf.transpose(data, perm=[1, 2, 0])
+        self._capture_last_generated_path_sigma(n_paths=n_paths)
         
         return data_transposed # (n_paths, N+1, n_instruments)
+
+    def _generate_data_and_context(self, n_paths, random_seed=None):
+        """
+        Generate hedge-window paths and optional pre-history prices in one shot.
+
+        Returns:
+            paths: tf.Tensor shape (n_paths, N+1, n_instruments)
+            pre_history_prices: tf.Tensor shape (n_paths, history_context_length) or None
+        """
+        if (
+            self.history_context_length > 0
+            and len(self.instrument_list) == 1
+            and int(self.n_instruments) == 1
+            and hasattr(self.instrument_list[0], "generate_paths_with_context")
+        ):
+            instrument = self.instrument_list[0]
+            instrument_seed = self._derive_seed(random_seed, 0)
+            full_paths = instrument.generate_paths_with_context(
+                n_paths,
+                n_context_steps=self.history_context_length,
+                random_seed=instrument_seed,
+            )
+            full_paths = tf.convert_to_tensor(full_paths, dtype=tf.float32)
+            expected_timesteps = int(self.N + self.history_context_length + 1)
+            if len(full_paths.shape) != 2:
+                raise ValueError(
+                    "generate_paths_with_context must return rank-2 tensor "
+                    f"(n_paths, timesteps). Got shape={full_paths.shape}."
+                )
+            if int(full_paths.shape[0]) != int(n_paths):
+                raise ValueError(
+                    "generate_paths_with_context n_paths mismatch: "
+                    f"expected {n_paths}, got {int(full_paths.shape[0])}."
+                )
+            if int(full_paths.shape[1]) != expected_timesteps:
+                raise ValueError(
+                    "generate_paths_with_context timestep mismatch: "
+                    f"expected {expected_timesteps}, got {int(full_paths.shape[1])}."
+                )
+            pre_history_prices = full_paths[:, : self.history_context_length]
+            hedge_paths = full_paths[:, self.history_context_length :]
+            hedge_paths = tf.expand_dims(hedge_paths, axis=-1)
+            self._capture_last_generated_path_sigma(n_paths=n_paths)
+            return hedge_paths, pre_history_prices
+
+        return self.generate_data(n_paths, random_seed=random_seed), None
 
     def _resolve_path_rate_growth(self, path_r, batch_size):
         """
@@ -176,13 +390,21 @@ class Environment:
                 tf.keras.utils.set_random_seed(int(train_seed))
             except Exception:
                 pass
+        self._history_context_counter = 0
 
         train_data = None
+        train_pre_history = None
         if not self.resample_each_epoch:
-            train_data = self.generate_data(train_paths, random_seed=train_seed) # (n_paths, N+1, n_instruments)
+            train_data, train_pre_history = self._generate_data_and_context(
+                train_paths,
+                random_seed=train_seed,
+            ) # (n_paths, N+1, n_instruments)
 
         if val_paths > 0:
-            val_data = self.generate_data(val_paths, random_seed=val_seed)
+            val_data, val_pre_history = self._generate_data_and_context(
+                val_paths,
+                random_seed=val_seed,
+            )
             T_minus_t_val =  self.get_T_minus_t(val_paths)
 
         total_epochs = int(self.n_epochs)
@@ -222,14 +444,40 @@ class Environment:
         while epoch < total_epochs:
             if self.resample_each_epoch:
                 epoch_seed = self._derive_seed(train_seed, epoch)
-                train_data = self.generate_data(train_paths, random_seed=epoch_seed)
+                train_data, train_pre_history = self._generate_data_and_context(
+                    train_paths,
+                    random_seed=epoch_seed,
+                )
 
             # Training
             epoch_losses = []
             for i in range(0, train_paths, self.batch_size):
                 batch_paths = train_data[i:i+self.batch_size]
                 batch_T_minus_t = self.get_T_minus_t(batch_paths.shape[0])
-                loss = self.agent.train_batch(batch_paths, batch_T_minus_t, self.optimizer, self.loss_function)
+                batch_pre_history = None
+                if train_pre_history is not None:
+                    batch_pre_history = train_pre_history[i:i+self.batch_size]
+                context_visible = self._agent_should_see_context(self.agent)
+                use_temporal_prefix = (
+                    context_visible and
+                    batch_pre_history is not None
+                    and self._agent_uses_temporal_context_prefix(self.agent)
+                )
+                batch_history_features = None
+                if context_visible and not use_temporal_prefix:
+                    batch_history_features = self._build_batch_history_features(
+                        batch_paths,
+                        simulate_pre_history=(train_pre_history is None),
+                        pre_history_prices=batch_pre_history,
+                    )
+                loss = self.agent.train_batch(
+                    batch_paths,
+                    batch_T_minus_t,
+                    self.optimizer,
+                    self.loss_function,
+                    batch_history_features=batch_history_features,
+                    batch_pre_history_prices=batch_pre_history if use_temporal_prefix else None,
+                )
                 epoch_losses.append(loss.numpy())
 
             avg_train_loss = np.mean(epoch_losses)
@@ -237,10 +485,25 @@ class Environment:
 
             # Validation
             if val_paths > 0:
+                context_visible = self._agent_should_see_context(self.agent)
+                use_temporal_prefix = (
+                    context_visible and
+                    val_pre_history is not None
+                    and self._agent_uses_temporal_context_prefix(self.agent)
+                )
+                val_history_features = None
+                if context_visible and not use_temporal_prefix:
+                    val_history_features = self._build_batch_history_features(
+                        val_data,
+                        simulate_pre_history=(val_pre_history is None),
+                        pre_history_prices=val_pre_history,
+                    )
                 val_actions = self._process_agent_batch_actions(
                     self.agent,
                     val_data,
                     T_minus_t_val,
+                    batch_history_features=val_history_features,
+                    batch_pre_history_prices=val_pre_history if use_temporal_prefix else None,
                 )
                 val_loss = self.loss_function(val_data, val_actions)
                 self.val_losses.append(val_loss.numpy())
@@ -294,18 +557,46 @@ class Environment:
              path_r=None, path_sigma=None,
              plot_pnl = False, plot_title = 'Distribucion de PnL', save_plot_path = None):
         
+        generated_internally = False
         if paths_to_test is not None:
             paths = paths_to_test
+            pre_history_prices = None
+            simulate_pre_history = False
         elif n_paths is not None:
-            paths = self.generate_data(n_paths, random_seed = random_seed)
+            paths, pre_history_prices = self._generate_data_and_context(
+                n_paths,
+                random_seed=random_seed,
+            )
+            simulate_pre_history = pre_history_prices is None
+            generated_internally = True
         else:
             raise ValueError('Insert either paths_to_test or n_paths.')
 
         if not isinstance(paths, tf.Tensor):
             paths = tf.convert_to_tensor(paths, dtype=tf.float32)
+        if generated_internally:
+            path_sigma = self._infer_per_path_sigma_if_available(
+                per_path_sigma=path_sigma,
+                n_paths=int(paths.shape[0]),
+            )
         
         T_minus_t_single = tf.range(self.N, 0, -1, dtype=tf.float32) * self.dt
         T_minus_t = tf.tile(tf.expand_dims(T_minus_t_single, axis=0), [paths.shape[0], 1])
+        context_visible = self._agent_should_see_context(self.agent)
+        use_temporal_prefix = (
+            context_visible and
+            pre_history_prices is not None
+            and self._agent_uses_temporal_context_prefix(self.agent)
+        )
+        history_features = None
+        if context_visible and not use_temporal_prefix:
+            history_features = self._build_batch_history_features(
+                paths,
+                batch_path_r=path_r,
+                batch_path_sigma=path_sigma,
+                simulate_pre_history=simulate_pre_history,
+                pre_history_prices=pre_history_prices,
+            )
 
         val_actions = self._process_agent_batch_actions(
             self.agent,
@@ -313,6 +604,8 @@ class Environment:
             T_minus_t,
             batch_path_r=path_r,
             batch_path_sigma=path_sigma,
+            batch_history_features=history_features,
+            batch_pre_history_prices=pre_history_prices if use_temporal_prefix else None,
         )
         loss = self.loss_function(paths, val_actions, path_r=path_r)
 
@@ -367,12 +660,19 @@ class Environment:
         batch_T_minus_t,
         batch_path_r=None,
         batch_path_sigma=None,
+        batch_history_features=None,
+        batch_pre_history_prices=None,
     ):
         """
         Call agent.process_batch with optional per-path parameters only when
         the target agent supports them (backward compatible).
         """
-        if batch_path_r is None and batch_path_sigma is None:
+        if (
+            batch_path_r is None
+            and batch_path_sigma is None
+            and batch_history_features is None
+            and batch_pre_history_prices is None
+        ):
             return agent.process_batch(batch_paths, batch_T_minus_t)
 
         try:
@@ -392,6 +692,17 @@ class Environment:
                 kwargs["batch_path_sigma"] = batch_path_sigma
             elif "path_sigma" in params:
                 kwargs["path_sigma"] = batch_path_sigma
+
+        if batch_history_features is not None:
+            if "batch_history_features" in params:
+                kwargs["batch_history_features"] = batch_history_features
+            elif "history_features" in params:
+                kwargs["history_features"] = batch_history_features
+        if batch_pre_history_prices is not None:
+            if "batch_pre_history_prices" in params:
+                kwargs["batch_pre_history_prices"] = batch_pre_history_prices
+            elif "pre_history_prices" in params:
+                kwargs["pre_history_prices"] = batch_pre_history_prices
 
         if kwargs:
             return agent.process_batch(batch_paths, batch_T_minus_t, **kwargs)
@@ -424,15 +735,24 @@ class Environment:
         paths=None,
         per_path_r=None,
         per_path_sigma=None,
+        price_computation_mode="pathwise_if_available",
     ):
         """
         Compute scalar or pathwise prices for an agent.
         Pathwise pricing is enabled for benchmarks that support it.
         """
+        mode = str(price_computation_mode).strip().lower()
+        if mode == "pathwise":
+            mode = "pathwise_if_available"
+        if mode not in {"pathwise_if_available", "scalar"}:
+            raise ValueError(
+                "price_computation_mode must be 'pathwise_if_available' or 'scalar'."
+            )
+
         if (
-            paths is not None
+            mode == "pathwise_if_available"
+            and paths is not None
             and self._supports_pathwise_window_pricing(agent)
-            and (per_path_r is not None or per_path_sigma is not None)
         ):
             spot_vector = tf.cast(paths[:, 0, 0], tf.float32)
             kwargs = {"path_s0": spot_vector}
@@ -464,6 +784,7 @@ class Environment:
         save_actions_path=None,
         fixed_actions_paths=None,
         pricing_method='fixed',
+        price_computation_mode='pathwise_if_available',
         agent_eval_batch_size=None,
         progress_log_every_agent_batches=5,
         return_errors=False,
@@ -486,6 +807,9 @@ class Environment:
         # Generate/load evaluation paths.
         if paths_to_test is not None:
             paths = tf.convert_to_tensor(paths_to_test, dtype=tf.float32)
+            pre_history_prices_global = None
+            simulate_pre_history_global = False
+            generated_internally = False
             if len(paths.shape) != 3:
                 raise ValueError(
                     f"paths_to_test must have rank 3. Got rank={len(paths.shape)}."
@@ -500,8 +824,14 @@ class Environment:
                 )
             n_paths = int(paths.shape[0])
         else:
-            paths = self.generate_data(n_paths, random_seed=random_seed)
+            paths, pre_history_prices_global = self._generate_data_and_context(
+                n_paths,
+                random_seed=random_seed,
+            )
             n_paths = int(paths.shape[0])
+            simulate_pre_history_global = pre_history_prices_global is None
+            generated_internally = True
+        self._history_context_counter = 0
         print(
             f"[terminal] Paths generated: shape={tuple(paths.shape)}, "
             f"n_paths={n_paths}, n_agents={len(agents)}"
@@ -518,6 +848,17 @@ class Environment:
                 raise ValueError(
                     f"per_path_sigma length mismatch: expected {n_paths}, got {per_path_sigma.shape[0]}."
                 )
+        elif generated_internally:
+            inferred_sigma = self._infer_per_path_sigma_if_available(
+                per_path_sigma=None,
+                n_paths=n_paths,
+            )
+            if inferred_sigma is not None:
+                per_path_sigma = inferred_sigma
+                print(
+                    f"[terminal] Inferred per-path sigma from generated GBM paths "
+                    f"(n={int(per_path_sigma.shape[0])})."
+                )
 
         # Compute prices based on the pricing_method
         if pricing_method == 'fixed':
@@ -530,6 +871,7 @@ class Environment:
                 paths=paths,
                 per_path_r=per_path_r,
                 per_path_sigma=per_path_sigma,
+                price_computation_mode=price_computation_mode,
             )
             prices = [price] * len(agents)
             print(
@@ -547,6 +889,7 @@ class Environment:
                     paths=paths,
                     per_path_r=per_path_r,
                     per_path_sigma=per_path_sigma,
+                    price_computation_mode=price_computation_mode,
                 )
                 prices.append(price)
                 print(
@@ -614,12 +957,29 @@ class Environment:
                         f"(n_paths={total_paths})."
                     )
                     T_minus_t = self.get_T_minus_t(total_paths)
+                    context_visible = self._agent_should_see_context(agent)
+                    use_temporal_prefix = (
+                        context_visible and
+                        pre_history_prices_global is not None
+                        and self._agent_uses_temporal_context_prefix(agent)
+                    )
+                    history_features = None
+                    if context_visible and not use_temporal_prefix:
+                        history_features = self._build_batch_history_features(
+                            paths,
+                            batch_path_r=per_path_r,
+                            batch_path_sigma=per_path_sigma,
+                            simulate_pre_history=simulate_pre_history_global,
+                            pre_history_prices=pre_history_prices_global,
+                        )
                     val_actions = self._process_agent_batch_actions(
                         agent,
                         paths,
                         T_minus_t,
                         batch_path_r=per_path_r,
                         batch_path_sigma=per_path_sigma,
+                        batch_history_features=history_features,
+                        batch_pre_history_prices=pre_history_prices_global if use_temporal_prefix else None,
                     )
                 else:
                     n_batches = int(np.ceil(total_paths / float(batch_size_eval)))
@@ -636,6 +996,24 @@ class Environment:
                         batch_t_minus_t = self.get_T_minus_t(end - start)
                         batch_path_r = None if per_path_r is None else per_path_r[start:end]
                         batch_path_sigma = None if per_path_sigma is None else per_path_sigma[start:end]
+                        batch_pre_history = None
+                        if pre_history_prices_global is not None:
+                            batch_pre_history = pre_history_prices_global[start:end]
+                        context_visible = self._agent_should_see_context(agent)
+                        use_temporal_prefix = (
+                            context_visible and
+                            batch_pre_history is not None
+                            and self._agent_uses_temporal_context_prefix(agent)
+                        )
+                        batch_history_features = None
+                        if context_visible and not use_temporal_prefix:
+                            batch_history_features = self._build_batch_history_features(
+                                batch_paths,
+                                batch_path_r=batch_path_r,
+                                batch_path_sigma=batch_path_sigma,
+                                simulate_pre_history=simulate_pre_history_global,
+                                pre_history_prices=batch_pre_history,
+                            )
                         action_chunks.append(
                             self._process_agent_batch_actions(
                                 agent,
@@ -643,6 +1021,8 @@ class Environment:
                                 batch_t_minus_t,
                                 batch_path_r=batch_path_r,
                                 batch_path_sigma=batch_path_sigma,
+                                batch_history_features=batch_history_features,
+                                batch_pre_history_prices=batch_pre_history if use_temporal_prefix else None,
                             )
                         )
 
@@ -814,9 +1194,31 @@ class Environment:
         - price: The computed price as loss * exp(-r * T)
         """
         if agent.is_trainable:
-            paths = self.generate_data(n_paths, random_seed=random_seed)
+            paths, pre_history_prices = self._generate_data_and_context(
+                n_paths,
+                random_seed=random_seed,
+            )
             T_minus_t = self.get_T_minus_t(paths.shape[0])
-            actions = agent.process_batch(paths, T_minus_t)
+            context_visible = self._agent_should_see_context(agent)
+            use_temporal_prefix = (
+                context_visible and
+                pre_history_prices is not None
+                and self._agent_uses_temporal_context_prefix(agent)
+            )
+            history_features = None
+            if context_visible and not use_temporal_prefix:
+                history_features = self._build_batch_history_features(
+                    paths,
+                    simulate_pre_history=(pre_history_prices is None),
+                    pre_history_prices=pre_history_prices,
+                )
+            actions = self._process_agent_batch_actions(
+                agent,
+                paths,
+                T_minus_t,
+                batch_history_features=history_features,
+                batch_pre_history_prices=pre_history_prices if use_temporal_prefix else None,
+            )
             pnl = self.calculate_pnl(paths, actions)
             loss = self.risk_measure.calculate(pnl)
             price = loss.numpy() * np.exp(-self.r * self.T)
@@ -1081,6 +1483,7 @@ class Environment:
         save_actions_path=None,
         fixed_actions_paths=None,
         pricing_method='fixed',
+        price_computation_mode='pathwise_if_available',
         bootstrap_method='iid',
         moving_block_size=None,
         batch_size=100,  # New parameter for batch processing
@@ -1120,6 +1523,9 @@ class Environment:
         # Generate/load evaluation paths.
         if paths_to_test is not None:
             paths = tf.convert_to_tensor(paths_to_test, dtype=tf.float32)
+            pre_history_prices_global = None
+            simulate_pre_history_global = False
+            generated_internally = False
             if len(paths.shape) != 3:
                 raise ValueError(
                     f"paths_to_test must have rank 3. Got rank={len(paths.shape)}."
@@ -1134,8 +1540,14 @@ class Environment:
                 )
             n_paths = int(paths.shape[0])
         else:
-            paths = self.generate_data(n_paths, random_seed=random_seed)
+            paths, pre_history_prices_global = self._generate_data_and_context(
+                n_paths,
+                random_seed=random_seed,
+            )
             n_paths = int(paths.shape[0])
+            simulate_pre_history_global = pre_history_prices_global is None
+            generated_internally = True
+        self._history_context_counter = 0
 
         if per_path_r is not None:
             per_path_r = np.asarray(per_path_r, dtype=np.float32).reshape(-1)
@@ -1148,6 +1560,17 @@ class Environment:
             if per_path_sigma.shape[0] != int(n_paths):
                 raise ValueError(
                     f"per_path_sigma length mismatch: expected {n_paths}, got {per_path_sigma.shape[0]}."
+                )
+        elif generated_internally:
+            inferred_sigma = self._infer_per_path_sigma_if_available(
+                per_path_sigma=None,
+                n_paths=n_paths,
+            )
+            if inferred_sigma is not None:
+                per_path_sigma = inferred_sigma
+                tqdm.write(
+                    f"[bootstrap] inferred per-path sigma from generated GBM paths "
+                    f"(n={int(per_path_sigma.shape[0])})."
                 )
 
         bootstrap_method = str(bootstrap_method).strip().lower()
@@ -1167,6 +1590,7 @@ class Environment:
                 paths=paths,
                 per_path_r=per_path_r,
                 per_path_sigma=per_path_sigma,
+                price_computation_mode=price_computation_mode,
             )
             prices = [price] * len(agents)
             print(
@@ -1183,6 +1607,7 @@ class Environment:
                     paths=paths,
                     per_path_r=per_path_r,
                     per_path_sigma=per_path_sigma,
+                    price_computation_mode=price_computation_mode,
                 )
                 prices.append(price)
                 print(
@@ -1263,12 +1688,29 @@ class Environment:
             else:
                 # Process batch to get val_actions
                 T_minus_t = self.get_T_minus_t(paths.shape[0])
+                context_visible = self._agent_should_see_context(agent)
+                use_temporal_prefix = (
+                    context_visible and
+                    pre_history_prices_global is not None
+                    and self._agent_uses_temporal_context_prefix(agent)
+                )
+                history_features = None
+                if context_visible and not use_temporal_prefix:
+                    history_features = self._build_batch_history_features(
+                        paths,
+                        batch_path_r=per_path_r,
+                        batch_path_sigma=per_path_sigma,
+                        simulate_pre_history=simulate_pre_history_global,
+                        pre_history_prices=pre_history_prices_global,
+                    )
                 val_actions = self._process_agent_batch_actions(
                     agent,
                     paths,
                     T_minus_t,
                     batch_path_r=per_path_r,
                     batch_path_sigma=per_path_sigma,
+                    batch_history_features=history_features,
+                    batch_pre_history_prices=pre_history_prices_global if use_temporal_prefix else None,
                 )
 
                 # Save val_actions if save_actions_path is provided

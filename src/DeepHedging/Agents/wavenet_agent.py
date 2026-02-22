@@ -21,13 +21,31 @@ class WaveNetAgent(LSTMAgent):
         'es': 'Agente WaveNet'
     }
     
-    def __init__(self, n_hedging_timesteps, path_transformation_configs = None, num_filters=32, num_residual_blocks=3,
-                 n_instruments = 1):
+    def __init__(
+        self,
+        n_hedging_timesteps,
+        path_transformation_configs=None,
+        num_filters=32,
+        num_residual_blocks=3,
+        n_instruments=1,
+        history_feature_dim=0,
+        context_as_timesteps=True,
+        context_pre_ttm_mode="calculated",
+    ):
         
-        self.input_shape = (n_hedging_timesteps, n_instruments + 1) # +1 for T-t
+        self.history_feature_dim = int(history_feature_dim)
+        # Keep time dimension dynamic so context can be consumed as sequence prefix.
+        self.input_shape = (None, n_instruments + 1 + self.history_feature_dim) # +1 for T-t
         self.n_instruments = n_instruments
         self.num_filters = num_filters
         self.num_residual_blocks = num_residual_blocks
+        self.context_as_timesteps = bool(context_as_timesteps)
+        mode = str(context_pre_ttm_mode).strip().lower()
+        if mode == "extended":
+            mode = "calculated"
+        if mode not in {"calculated", "zero"}:
+            raise ValueError("context_pre_ttm_mode must be 'calculated' or 'zero'.")
+        self.context_pre_ttm_mode = mode
         self.model = self.build_model(self.input_shape, self.n_instruments)
         self.path_transformation_configs = path_transformation_configs
 

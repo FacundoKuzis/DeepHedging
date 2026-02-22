@@ -1,0 +1,6 @@
+{
+  "extends": "thesis_result1b_configs/train/euro_train_gbm_fixed_recurrent_log_moneyness_increased_vol.json",
+  "run_name": "euro_gbm_rec_noctx",
+  "model_name": "euro_gbm_rec_noctx",
+  "description": "Euro GBM fixed vol, recurrent, no history context."
+}

@@ -18,11 +18,24 @@ class GRUAgent(LSTMAgent):
         'es': 'Agente GRU'
     }
 
-    def __init__(self, n_hedging_timesteps, path_transformation_configs = None,
-                 n_instruments = 1):
+    def __init__(
+        self,
+        n_hedging_timesteps,
+        path_transformation_configs=None,
+        n_instruments=1,
+        history_feature_dim=0,
+        context_as_timesteps=True,
+        context_pre_ttm_mode="calculated",
+    ):
         
-        super().__init__(n_hedging_timesteps, path_transformation_configs, 
-                 n_instruments)
+        super().__init__(
+            n_hedging_timesteps=n_hedging_timesteps,
+            path_transformation_configs=path_transformation_configs,
+            n_instruments=n_instruments,
+            history_feature_dim=history_feature_dim,
+            context_as_timesteps=context_as_timesteps,
+            context_pre_ttm_mode=context_pre_ttm_mode,
+        )
 
     def build_model(self, input_shape, output_shape):
         """

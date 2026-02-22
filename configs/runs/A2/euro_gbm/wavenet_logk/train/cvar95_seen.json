@@ -1,0 +1,8 @@
+{
+  "extends": "../../../../A1/euro_gbm/wavenet_logk/train/seen.json",
+  "run_name": "a2_wav_logk_cvar95_seen",
+  "model_name": "a2_wav_logk_cvar95_seen",
+  "description": "A2 train: WaveNet log(S)+log(K), context seen, objective CVaR95.",
+  "risk_measure_name": "CVaR95",
+  "cvar_alpha": 0.95
+}

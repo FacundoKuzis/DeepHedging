@@ -1,0 +1,7 @@
+{
+  "extends": "../../wavenet_mny/train/cvar95_ctxgen.json",
+  "run_name": "a2_wav_mny_cvar95_ctxgen_tc1",
+  "model_name": "a2_wav_mny_cvar95_ctxgen_tc1",
+  "description": "A2 train: WaveNet log-moneyness, generated-only context, objective CVaR95. (tc=1%)",
+  "proportional_cost": 0.01
+}

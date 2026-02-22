@@ -1,0 +1,11 @@
+{
+  "extends": "thesis_result1b_configs/compare/euro_compare_real_2020_2024_histvol_recurrent_ctx_log_moneyness.json",
+  "run_name": "euro_real_rec_hist_ctx_mny_compare",
+  "description": "Compare recurrent vs BS on real 2020-2024 windows with historical rolling sigma.",
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "euro_real_rec_hist_ctx_mny"
+    }
+  ]
+}

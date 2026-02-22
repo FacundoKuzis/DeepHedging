@@ -1,0 +1,7 @@
+{
+  "extends": "../../wavenet_mny/train/mae_seen.json",
+  "run_name": "a2_wav_mny_mae_seen_tc1",
+  "model_name": "a2_wav_mny_mae_seen_tc1",
+  "description": "A2 train: WaveNet log-moneyness, context seen, objective MAE. (tc=1%)",
+  "proportional_cost": 0.01
+}

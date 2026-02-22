@@ -1,0 +1,9 @@
+{
+  "extends": "../../../../../bases/A1/train/euro_gbm_wavenet_s02_base.json",
+  "run_name": "a1_wav_s02_ctxgen",
+  "model_name": "a1_wav_s02_ctxgen",
+  "description": "A1 train: WaveNet sigma 0.2 con contexto generado pero no visto.",
+  "use_price_history_context": true,
+  "context_length": 42,
+  "context_for_path_generation_only": true
+}

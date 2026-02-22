@@ -38,22 +38,25 @@ from examples.thesis_result1_common import (  # noqa: E402
     load_config_by_name,
     set_global_determinism,
     strict_validate_keys,
+    get_config_relative_stem,
     validate_agent_name,
 )
 from DeepHedging.HedgingInstruments import GBMStock  # noqa: E402
 from DeepHedging.utils.gbm_calibration import calibrate_gbm_from_market_data  # noqa: E402
 
 
-RESULT1B_ROOT = os.path.join(THESIS_MODELS_ROOT, "thesis_result1b")
+RESULT1B_ROOT = THESIS_MODELS_ROOT
 
 
-def _run_dirs(run_name: str) -> dict[str, str]:
-    run_dir = os.path.join(RESULT1B_ROOT, "train", run_name)
+def _run_dirs(run_name: str, config_path: str) -> dict[str, str]:
+    _ = run_name
+    rel_stem = get_config_relative_stem(config_path)
+    run_dir = os.path.normpath(os.path.join(RESULT1B_ROOT, rel_stem))
     logs_dir = os.path.join(run_dir, "logs")
     plots_dir = os.path.join(run_dir, "plots")
     tables_dir = os.path.join(run_dir, "tables")
-    models_root = os.path.join(RESULT1B_ROOT, "models")
-    optimizers_root = os.path.join(RESULT1B_ROOT, "optimizers")
+    models_root = os.path.join(run_dir, "models")
+    optimizers_root = os.path.join(run_dir, "optimizers")
     market_cache_dir = os.path.join(RESULT1B_ROOT, "market_data_cache")
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(logs_dir, exist_ok=True)
@@ -124,7 +127,28 @@ def required_keys() -> set[str]:
 
 
 def optional_keys() -> set[str]:
-    return set()
+    return {
+        "use_price_history_context",
+        "context_length",
+        "context_feature_mode",
+        "context_pre_ttm_mode",
+        "context_for_path_generation_only",
+        "path_transformation_type",
+        "include_log_strike_feature",
+        "gbm_sigma_per_path_mode",
+        "gbm_sigma_uniform_low",
+        "gbm_sigma_uniform_high",
+        "gbm_sigma_discrete_values",
+        "gbm_sigma_discrete_probs",
+        "reduce_on_plateau_factor",
+        "reduce_on_plateau_patience",
+        "reduce_on_plateau_min_delta",
+        "reduce_on_plateau_cooldown",
+        "reduce_on_plateau_min_lr",
+        "early_stopping_enabled",
+        "early_stopping_patience",
+        "early_stopping_min_delta",
+    }
 
 
 
@@ -167,8 +191,97 @@ def validate_config(config: dict[str, Any]) -> None:
     if not (0.0 < float(config["decay_rate"]) <= 1.0):
         raise ValueError("decay_rate must satisfy 0 < decay_rate <= 1")
 
-    if str(config["learning_rate_strategy"]).strip().lower() not in {"exponential_decay", "constant"}:
-        raise ValueError("learning_rate_strategy must be 'exponential_decay' or 'constant'.")
+    lr_strategy = str(config["learning_rate_strategy"]).strip().lower()
+    if lr_strategy not in {"exponential_decay", "constant", "reduce_on_plateau"}:
+        raise ValueError(
+            "learning_rate_strategy must be 'exponential_decay', 'constant' or 'reduce_on_plateau'."
+        )
+    if lr_strategy == "reduce_on_plateau":
+        factor = float(config.get("reduce_on_plateau_factor", 0.5))
+        if not (0.0 < factor < 1.0):
+            raise ValueError("reduce_on_plateau_factor must satisfy 0 < factor < 1.")
+        patience = int(config.get("reduce_on_plateau_patience", 5))
+        if patience < 0:
+            raise ValueError("reduce_on_plateau_patience must be >= 0.")
+        min_delta = float(config.get("reduce_on_plateau_min_delta", 1e-4))
+        if min_delta < 0.0:
+            raise ValueError("reduce_on_plateau_min_delta must be >= 0.")
+        cooldown = int(config.get("reduce_on_plateau_cooldown", 0))
+        if cooldown < 0:
+            raise ValueError("reduce_on_plateau_cooldown must be >= 0.")
+        min_lr = float(config.get("reduce_on_plateau_min_lr", 1e-6))
+        if min_lr <= 0.0:
+            raise ValueError("reduce_on_plateau_min_lr must be > 0.")
+        if min_lr > float(config["initial_learning_rate"]):
+            raise ValueError("reduce_on_plateau_min_lr cannot exceed initial_learning_rate.")
+
+    if "early_stopping_enabled" in config and not isinstance(config["early_stopping_enabled"], bool):
+        raise ValueError("early_stopping_enabled must be bool when provided.")
+    if bool(config.get("early_stopping_enabled", False)):
+        es_patience = int(config.get("early_stopping_patience", 20))
+        if es_patience < 0:
+            raise ValueError("early_stopping_patience must be >= 0.")
+        es_min_delta = float(config.get("early_stopping_min_delta", 1e-4))
+        if es_min_delta < 0.0:
+            raise ValueError("early_stopping_min_delta must be >= 0.")
+
+    use_context = bool(config.get("use_price_history_context", False))
+    if "context_for_path_generation_only" in config and not isinstance(config["context_for_path_generation_only"], bool):
+        raise ValueError("context_for_path_generation_only must be bool when provided.")
+    context_pre_ttm_mode = str(config.get("context_pre_ttm_mode", "calculated")).strip().lower()
+    if context_pre_ttm_mode == "extended":
+        context_pre_ttm_mode = "calculated"
+    if context_pre_ttm_mode not in {"calculated", "zero"}:
+        raise ValueError("context_pre_ttm_mode must be 'calculated' or 'zero'.")
+    if use_context:
+        if "context_length" not in config:
+            raise ValueError("context_length is required when use_price_history_context=true.")
+        if int(config["context_length"]) <= 0:
+            raise ValueError("context_length must be > 0 when use_price_history_context=true.")
+        mode = str(config.get("context_feature_mode", "")).strip().lower()
+        if mode not in {"log_returns", "log_moneyness"}:
+            raise ValueError("context_feature_mode must be 'log_returns' or 'log_moneyness'.")
+    else:
+        if "context_length" in config and int(config["context_length"]) < 0:
+            raise ValueError("context_length must be >= 0.")
+
+    if "include_log_strike_feature" in config and not isinstance(config["include_log_strike_feature"], bool):
+        raise ValueError("include_log_strike_feature must be bool when provided.")
+    path_t = str(config.get("path_transformation_type", "log_moneyness")).strip().lower()
+    if path_t not in {"none", "log", "log_moneyness"}:
+        raise ValueError("path_transformation_type must be one of {'none','log','log_moneyness'}.")
+
+    sigma_path_mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
+    if sigma_path_mode not in {"fixed", "uniform", "discrete"}:
+        raise ValueError("gbm_sigma_per_path_mode must be one of {'fixed','uniform','discrete'}.")
+    if sigma_path_mode == "uniform":
+        if "gbm_sigma_uniform_low" not in config or "gbm_sigma_uniform_high" not in config:
+            raise ValueError(
+                "gbm_sigma_uniform_low and gbm_sigma_uniform_high are required when gbm_sigma_per_path_mode='uniform'."
+            )
+        lo = float(config["gbm_sigma_uniform_low"])
+        hi = float(config["gbm_sigma_uniform_high"])
+        if lo <= 0.0 or hi <= 0.0 or lo >= hi:
+            raise ValueError("Require 0 < gbm_sigma_uniform_low < gbm_sigma_uniform_high.")
+    if sigma_path_mode == "discrete":
+        values = config.get("gbm_sigma_discrete_values")
+        if not isinstance(values, list) or len(values) == 0:
+            raise ValueError(
+                "gbm_sigma_discrete_values must be a non-empty list when gbm_sigma_per_path_mode='discrete'."
+            )
+        for v in values:
+            if float(v) <= 0.0:
+                raise ValueError("gbm_sigma_discrete_values must contain values > 0.")
+        probs = config.get("gbm_sigma_discrete_probs")
+        if probs is not None:
+            if not isinstance(probs, list) or len(probs) != len(values):
+                raise ValueError(
+                    "gbm_sigma_discrete_probs must be a list with same length as gbm_sigma_discrete_values."
+                )
+            if any(float(p) < 0.0 for p in probs):
+                raise ValueError("gbm_sigma_discrete_probs must be >= 0.")
+            if sum(float(p) for p in probs) <= 0.0:
+                raise ValueError("gbm_sigma_discrete_probs must sum to > 0.")
 
     for key in [
         "run_name",
@@ -221,10 +334,29 @@ def _model_optimizer_paths(agent, model_name: str, dirs: dict[str, str]) -> tupl
     return model_path, optimizer_path
 
 
+def _gbm_sigma_kwargs(config: dict[str, Any], base_sigma: float) -> dict[str, Any]:
+    mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
+    kwargs: dict[str, Any] = {
+        "sigma": float(base_sigma),
+        "sigma_per_path_mode": mode,
+    }
+    if mode == "uniform":
+        kwargs["sigma_uniform_low"] = float(config["gbm_sigma_uniform_low"])
+        kwargs["sigma_uniform_high"] = float(config["gbm_sigma_uniform_high"])
+    elif mode == "discrete":
+        kwargs["sigma_discrete_values"] = [float(v) for v in config["gbm_sigma_discrete_values"]]
+        if config.get("gbm_sigma_discrete_probs") is not None:
+            kwargs["sigma_discrete_probs"] = [float(p) for p in config["gbm_sigma_discrete_probs"]]
+    return kwargs
+
+
 
 def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> None:
-    dirs = _run_dirs(run_name)
+    dirs = _run_dirs(run_name, config_path=config_path)
     cfg_snapshot = copy_config_snapshot(config_path, dirs["run_dir"])
+    resolved_cfg_path = os.path.join(dirs["run_dir"], "resolved_config.json")
+    with open(resolved_cfg_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
     print(f"[run:{run_name}] Config validated and copied to: {cfg_snapshot}")
     print(f"[run:{run_name}] Storage root: {RESULT1B_ROOT}")
 
@@ -255,7 +387,7 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
         T=float(n / float(trading_days)),
         N=n,
         r=float(calib.r_train),
-        sigma=float(calib.sigma_train),
+        **_gbm_sigma_kwargs(config=config, base_sigma=float(calib.sigma_train)),
     )
 
     cfg_for_builders = dict(config)
@@ -282,6 +414,91 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
     else:
         lr_schedule = float(config["initial_learning_rate"])
 
+    plateau_callback = None
+    if lr_strategy == "reduce_on_plateau":
+        reduce_factor = float(config.get("reduce_on_plateau_factor", 0.5))
+        reduce_patience = int(config.get("reduce_on_plateau_patience", 5))
+        reduce_min_delta = float(config.get("reduce_on_plateau_min_delta", 1e-4))
+        reduce_cooldown = int(config.get("reduce_on_plateau_cooldown", 0))
+        reduce_min_lr = float(config.get("reduce_on_plateau_min_lr", 1e-6))
+        plateau_state = {
+            "best": None,
+            "bad_epochs": 0,
+            "cooldown": 0,
+        }
+
+        def _plateau_epoch_callback(epoch_info: dict[str, Any]) -> dict[str, Any]:
+            val_loss = epoch_info.get("val_loss")
+            monitored = float(val_loss) if val_loss is not None else float(epoch_info["train_loss"])
+            current_lr = float(epoch_info["learning_rate"])
+            best = plateau_state["best"]
+            improved = False
+            if best is None or monitored < float(best) - reduce_min_delta:
+                improved = True
+                plateau_state["best"] = monitored
+                plateau_state["bad_epochs"] = 0
+            else:
+                if plateau_state["cooldown"] > 0:
+                    plateau_state["cooldown"] -= 1
+                else:
+                    plateau_state["bad_epochs"] += 1
+
+            if improved:
+                return {}
+            if plateau_state["cooldown"] > 0:
+                return {}
+            if plateau_state["bad_epochs"] < reduce_patience:
+                return {}
+
+            new_lr = max(current_lr * reduce_factor, reduce_min_lr)
+            plateau_state["bad_epochs"] = 0
+            plateau_state["cooldown"] = reduce_cooldown
+            if new_lr >= current_lr - 1e-15:
+                return {}
+            print(
+                f"[run:{run_name}] ReduceOnPlateau: monitored={monitored:.6f}, "
+                f"lr {current_lr:.6g} -> {new_lr:.6g}"
+            )
+            return {"set_learning_rate": float(new_lr)}
+
+        plateau_callback = _plateau_epoch_callback
+
+    early_stop_enabled = bool(config.get("early_stopping_enabled", False))
+    early_patience = int(config.get("early_stopping_patience", 20))
+    early_min_delta = float(config.get("early_stopping_min_delta", 1e-4))
+    early_state = {
+        "best": None,
+        "bad_epochs": 0,
+    }
+
+    def _combined_epoch_callback(epoch_info: dict[str, Any]) -> dict[str, Any]:
+        callback_out: dict[str, Any] = {}
+
+        if plateau_callback is not None:
+            plateau_out = plateau_callback(epoch_info)
+            if isinstance(plateau_out, dict):
+                callback_out.update(plateau_out)
+
+        if early_stop_enabled:
+            val_loss = epoch_info.get("val_loss")
+            monitored = float(val_loss) if val_loss is not None else float(epoch_info["train_loss"])
+            best = early_state["best"]
+            improved = (best is None) or (monitored < float(best) - early_min_delta)
+            if improved:
+                early_state["best"] = monitored
+                early_state["bad_epochs"] = 0
+            else:
+                early_state["bad_epochs"] += 1
+                if early_state["bad_epochs"] >= early_patience:
+                    print(
+                        f"[run:{run_name}] EarlyStopping: no improvement for "
+                        f"{early_patience} epochs (best={float(early_state['best']):.6f}, "
+                        f"current={monitored:.6f}). Stopping."
+                    )
+                    callback_out["stop_training"] = True
+
+        return callback_out
+
     env = build_environment(
         agent=agent,
         instrument=instrument,
@@ -294,6 +511,10 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
         optimizer_cls=tf.keras.optimizers.Adam,
         resample_each_epoch=bool(config["resample_each_epoch"]),
         train_seed=seed,
+        use_price_history_context=bool(config.get("use_price_history_context", False)),
+        context_length=int(config.get("context_length", 0)),
+        context_feature_mode=str(config.get("context_feature_mode", "log_returns")),
+        context_visible_to_agent=not bool(config.get("context_for_path_generation_only", False)),
     )
 
     model_path, optimizer_path = _model_optimizer_paths(
@@ -319,6 +540,7 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
         train_paths=int(config["train_paths"]),
         val_paths=int(config["val_paths"]),
         random_seed=seed,
+        epoch_end_callback=_combined_epoch_callback,
     )
     elapsed = time.perf_counter() - t0
     print(f"[run:{run_name}] Training finished in {elapsed:.2f}s")
@@ -355,6 +577,20 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
                 "sigma_source": str(config["sigma_source"]),
                 "implied_vol_source": str(config["implied_vol_source"]),
                 "risk_free_source": str(config["risk_free_source"]),
+                "use_price_history_context": bool(config.get("use_price_history_context", False)),
+                "context_for_path_generation_only": bool(config.get("context_for_path_generation_only", False)),
+                "context_length": int(config.get("context_length", 0)),
+                "context_feature_mode": str(config.get("context_feature_mode", "log_returns")),
+                "context_pre_ttm_mode": str(config.get("context_pre_ttm_mode", "calculated")),
+                "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
+                "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
+                "gbm_sigma_uniform_high": config.get("gbm_sigma_uniform_high"),
+                "gbm_sigma_discrete_values": json.dumps(config.get("gbm_sigma_discrete_values")),
+                "gbm_sigma_discrete_probs": json.dumps(config.get("gbm_sigma_discrete_probs")),
+                "learning_rate_strategy": str(config.get("learning_rate_strategy", "constant")),
+                "early_stopping_enabled": bool(config.get("early_stopping_enabled", False)),
+                "early_stopping_patience": int(config.get("early_stopping_patience", 20)),
+                "early_stopping_min_delta": float(config.get("early_stopping_min_delta", 1e-4)),
                 "sigma_train": float(calib.sigma_train),
                 "r_train": float(calib.r_train),
                 "mu_train": float(calib.mu_train),

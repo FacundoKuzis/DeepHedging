@@ -1,0 +1,5 @@
+{
+  "extends": "../../../runs/A2/euro_gbm/wavenet_mny/compare/cvar50_seen.json",
+  "description": "A3 base compare: WaveNet log-moneyness, CVaR50, no costs, random pathwise sigma.",
+  "proportional_cost": 0.0
+}

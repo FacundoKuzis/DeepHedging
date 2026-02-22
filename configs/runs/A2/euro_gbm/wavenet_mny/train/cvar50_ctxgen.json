@@ -1,0 +1,11 @@
+{
+  "extends": "cvar95_seen.json",
+  "run_name": "a2_wav_mny_cvar50_ctxgen",
+  "model_name": "a2_wav_mny_cvar50_ctxgen",
+  "description": "A2 train: WaveNet log-moneyness, generated-only context, objective CVaR50.",
+  "use_price_history_context": true,
+  "context_length": 42,
+  "context_for_path_generation_only": true,
+  "risk_measure_name": "CVaR50",
+  "cvar_alpha": 0.5
+}

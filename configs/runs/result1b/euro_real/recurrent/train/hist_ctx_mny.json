@@ -1,0 +1,6 @@
+{
+  "extends": "thesis_result1b_configs/train/euro_train_histvol_2005_2019_recurrent_ctx_log_moneyness.json",
+  "run_name": "euro_real_rec_hist_ctx_mny",
+  "model_name": "euro_real_rec_hist_ctx_mny",
+  "description": "Train recurrent in calibrated world using historical sigma and context log_moneyness."
+}

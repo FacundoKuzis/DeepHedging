@@ -1,0 +1,16 @@
+{
+  "extends": "cvar95_seen.json",
+  "run_name": "a2_wav_mny_cvar50_noctx_cmp",
+  "description": "A2 compare: WaveNet log-moneyness, no context, objective CVaR50.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a2_wav_mny_cvar50_noctx"
+    }
+  ],
+  "use_price_history_context": false,
+  "context_length": 0,
+  "context_for_path_generation_only": false,
+  "risk_measure_name": "CVaR50",
+  "cvar_alpha": 0.5
+}

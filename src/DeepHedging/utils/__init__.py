@@ -19,3 +19,4 @@ from DeepHedging.utils.asian_pricing import (
     arithmetic_control_variate_price_delta_crn_batch,
     arithmetic_control_variate_price_delta_crn_batch_worker,
 )
+from DeepHedging.utils.history_context import build_causal_history_features

@@ -1,0 +1,6 @@
+{
+  "extends": "thesis_result1b_configs/train/euro_train_gbm_fixed_wavenet_ctx_log_moneyness_increased_vol.json",
+  "run_name": "euro_gbm_wav_fixed",
+  "model_name": "euro_gbm_wav_fixed",
+  "description": "Euro GBM fixed vol, WaveNet, context log_moneyness."
+}

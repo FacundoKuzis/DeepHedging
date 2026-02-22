@@ -1,0 +1,19 @@
+{
+  "extends": "../../wavenet_mny/compare/cvar95_noctx.json",
+  "run_name": "a2_wav_mny_cvar50_noctx_cmp_tc1",
+  "description": "A2 compare: WaveNet log-moneyness, no context, objective CVaR50. (tc=1%)",
+  "proportional_cost": 0.01,
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a2_wav_mny_cvar50_noctx_tc1"
+    }
+  ],
+  "risk_measure_name": "CVaR50",
+  "cvar_alpha": 0.5,
+  "plot_min_x": -5,
+  "plot_max_x": 3,
+  "no_intervention_bound": 0.05,
+  "no_intervention_mode": "percentage"
+
+}

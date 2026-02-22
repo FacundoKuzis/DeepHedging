@@ -1,0 +1,13 @@
+{
+  "extends": "../../../../A1/euro_gbm/wavenet/compare/seen.json",
+  "run_name": "a2_wav_mny_cvar50_seen_cmp",
+  "description": "A2 compare: WaveNet log-moneyness, context seen, train objective CVaR50.",
+  "risk_measure_name": "CVaR50",
+  "cvar_alpha": 0.5,
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a2_wav_mny_cvar50_seen"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "extends": "../../wavenet_mny/compare/cvar95_noctx.json",
+  "run_name": "a2_wav_mny_cvar95_noctx_cmp_tc1",
+  "description": "A2 compare: WaveNet log-moneyness, no context, objective CVaR95. (tc=1%)",
+  "proportional_cost": 0.01,
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a2_wav_mny_cvar95_noctx_tc1"
+    }
+  ]
+}

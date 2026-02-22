@@ -1,0 +1,7 @@
+{
+  "extends": "../../wavenet_mny/train/mae_ctxgen.json",
+  "run_name": "a2_wav_mny_mae_ctxgen_tc1",
+  "model_name": "a2_wav_mny_mae_ctxgen_tc1",
+  "description": "A2 train: WaveNet log-moneyness, generated-only context, objective MAE. (tc=1%)",
+  "proportional_cost": 0.01
+}

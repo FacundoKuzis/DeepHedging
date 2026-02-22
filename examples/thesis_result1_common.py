@@ -48,8 +48,9 @@ from DeepHedging.CostFunctions import ProportionalCost
 from DeepHedging.Environments import Environment
 from DeepHedging.HedgingInstruments import GBMStock
 from DeepHedging.RiskMeasures import CVaR, MAE, Mean, StdDev, WorstCase
+from DeepHedging.RiskMeasures import MSE
 
-THESIS_MODELS_ROOT = os.path.normpath(r"G:\Mi unidad\Tesis2026\Models")
+THESIS_MODELS_ROOT = os.path.normpath(r"G:\Mi unidad\Tesis2026\Models\Organized")
 
 TRAINABLE_AGENT_NAMES = {"SimpleAgent", "RecurrentAgent", "LSTMAgent", "GRUAgent", "WaveNetAgent"}
 
@@ -68,6 +69,52 @@ AGENTS = {
     "ArithmeticAsianControlVariateAgent": ArithmeticAsianControlVariateAgent,
     "MonteCarloAgent": MonteCarloAgent,
 }
+
+
+def _normalize_path_separators(path: str) -> str:
+    return str(path).replace("\\", "/")
+
+
+def get_config_relative_stem(config_path: str) -> str:
+    """
+    Convert an absolute/relative config path into an organized relative stem.
+
+    Examples:
+    - configs/runs/A1/euro_gbm/wavenet/train/seen.json
+      -> A1/euro_gbm/wavenet/train/seen
+    - thesis_result1b_configs/train/foo.json
+      -> thesis_result1b/train/foo
+    """
+    abs_path = os.path.abspath(config_path)
+    try:
+        rel = os.path.relpath(abs_path, ROOT_DIR)
+    except ValueError:
+        rel = os.path.basename(abs_path)
+    rel = _normalize_path_separators(rel)
+    rel_no_ext, _ = os.path.splitext(rel)
+
+    prefixes = [
+        "configs/runs/",
+        "configs/",
+        "thesis_result1b_configs/",
+        "thesis_result1_configs/",
+    ]
+    for p in prefixes:
+        if rel_no_ext.startswith(p):
+            rel_no_ext = rel_no_ext[len(p):]
+            break
+
+    rel_no_ext = rel_no_ext.strip("/").strip()
+    if not rel_no_ext:
+        rel_no_ext = os.path.splitext(os.path.basename(abs_path))[0]
+
+    # Normalize legacy roots so they stay grouped under a stable namespace.
+    if rel_no_ext.startswith("train/") or rel_no_ext.startswith("compare/"):
+        rel_no_ext = f"thesis_result1b/{rel_no_ext}"
+    elif rel_no_ext.startswith("option_market_compare/"):
+        rel_no_ext = f"thesis_result1b/{rel_no_ext}"
+
+    return rel_no_ext
 
 CLAIMS = {
     "EuropeanCall": EuropeanCall,
@@ -183,12 +230,24 @@ def build_instrument_from_config(config: dict[str, Any]) -> GBMStock:
     n = int(config["n"])
     trading_days = int(config["trading_days_per_year"])
     t = n / float(trading_days)
+    sigma_mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
+    kwargs: dict[str, Any] = {
+        "sigma_per_path_mode": sigma_mode,
+    }
+    if sigma_mode == "uniform":
+        kwargs["sigma_uniform_low"] = float(config["gbm_sigma_uniform_low"])
+        kwargs["sigma_uniform_high"] = float(config["gbm_sigma_uniform_high"])
+    elif sigma_mode == "discrete":
+        kwargs["sigma_discrete_values"] = [float(v) for v in config["gbm_sigma_discrete_values"]]
+        if config.get("gbm_sigma_discrete_probs") is not None:
+            kwargs["sigma_discrete_probs"] = [float(p) for p in config["gbm_sigma_discrete_probs"]]
     return GBMStock(
         S0=float(config["s0"]),
         T=t,
         N=n,
         r=float(config["r"]),
         sigma=float(config["sigma"]),
+        **kwargs,
     )
 
 
@@ -213,8 +272,42 @@ def build_agent_from_config(
     init_params = init_signature.parameters
 
     if getattr(agent_cls, "is_trainable", False):
+        use_context = bool(config.get("use_price_history_context", False))
+        context_for_paths_only = bool(config.get("context_for_path_generation_only", False))
+        context_length = int(config.get("context_length", 0)) if use_context else 0
+        sequence_context_agents = {"LSTMAgent", "GRUAgent", "WaveNetAgent"}
+        context_as_timesteps = bool(
+            use_context
+            and (not context_for_paths_only)
+            and agent_name in sequence_context_agents
+        )
+        context_pre_ttm_mode = str(config.get("context_pre_ttm_mode", "calculated")).strip().lower()
+        if context_pre_ttm_mode == "extended":
+            context_pre_ttm_mode = "calculated"
+        if context_pre_ttm_mode not in {"calculated", "zero"}:
+            raise ValueError("context_pre_ttm_mode must be 'calculated' or 'zero'.")
+        if context_for_paths_only:
+            history_feature_dim = 0
+        else:
+            history_feature_dim = 0 if context_as_timesteps else context_length
+
+        path_transformation_type = str(config.get("path_transformation_type", "log_moneyness")).strip().lower()
+        if path_transformation_type not in {"none", "log", "log_moneyness"}:
+            raise ValueError(
+                "path_transformation_type must be one of {'none','log','log_moneyness'}."
+            )
+        if path_transformation_type == "none":
+            path_cfg = [{"transformation_type": None}]
+        elif path_transformation_type == "log":
+            path_cfg = [{"transformation_type": "log"}]
+        else:
+            path_cfg = [{"transformation_type": "log_moneyness", "K": float(config["strike"])}]
+
+        include_log_strike_feature = bool(config.get("include_log_strike_feature", False))
+        strike_feature_dim = 1 if include_log_strike_feature else 0
+
         kwargs = {
-            "path_transformation_configs": [{"transformation_type": "log_moneyness", "K": float(config["strike"])}]
+            "path_transformation_configs": path_cfg
         }
         if "n_hedging_timesteps" in init_params:
             kwargs["n_hedging_timesteps"] = int(config["n"])
@@ -224,7 +317,17 @@ def build_agent_from_config(
             kwargs["num_filters"] = int(config["wavenet_num_filters"])
         if "num_residual_blocks" in init_params and "wavenet_num_residual_blocks" in config:
             kwargs["num_residual_blocks"] = int(config["wavenet_num_residual_blocks"])
-        return agent_cls(**kwargs)
+        if "history_feature_dim" in init_params:
+            kwargs["history_feature_dim"] = int(history_feature_dim + strike_feature_dim)
+        if "context_as_timesteps" in init_params:
+            kwargs["context_as_timesteps"] = bool(context_as_timesteps)
+        if "context_pre_ttm_mode" in init_params:
+            kwargs["context_pre_ttm_mode"] = str(context_pre_ttm_mode)
+        agent = agent_cls(**kwargs)
+        # Optional constant feature appended to every timestep/input row.
+        agent.append_log_strike_feature = bool(include_log_strike_feature)
+        agent.log_strike_value = float(np.log(max(float(config["strike"]), 1e-8)))
+        return agent
 
     no_intervention_bound = config.get(
         "benchmark_no_intervention_bound",
@@ -271,13 +374,32 @@ def build_agent_from_config(
 
 
 def build_risk_measure_from_config(config: dict[str, Any]):
-    name = str(config["risk_measure_name"]).strip().lower()
-    if name != "cvar":
-        raise ValueError("Only risk_measure_name='CVaR' is supported in thesis result 1 runner.")
-    alpha = float(config["cvar_alpha"])
-    if not (0.0 < alpha < 1.0):
-        raise ValueError("cvar_alpha must satisfy 0 < cvar_alpha < 1.")
-    return CVaR(alpha=alpha)
+    raw_name = str(config["risk_measure_name"]).strip()
+    name = raw_name.lower().replace("_", "")
+
+    if name == "mse":
+        return MSE()
+    if name == "mae":
+        return MAE()
+
+    if name.startswith("cvar"):
+        suffix = name[4:]
+        if suffix:
+            # Examples accepted: "CVaR95", "cvar99"
+            if not suffix.isdigit():
+                raise ValueError(
+                    "For CVaR shorthand use digits only, e.g. 'CVaR95'."
+                )
+            alpha = float(suffix) / 100.0
+        else:
+            alpha = float(config["cvar_alpha"])
+        if not (0.0 < alpha < 1.0):
+            raise ValueError("CVaR alpha must satisfy 0 < alpha < 1.")
+        return CVaR(alpha=alpha)
+
+    raise ValueError(
+        "Unsupported risk_measure_name. Allowed: 'CVaR', 'CVaR95', 'MSE', 'MAE'."
+    )
 
 
 def build_environment(
@@ -292,6 +414,10 @@ def build_environment(
     optimizer_cls,
     resample_each_epoch: bool,
     train_seed: int,
+    use_price_history_context: bool = False,
+    context_length: int = 0,
+    context_feature_mode: str = "log_returns",
+    context_visible_to_agent: bool = True,
 ):
     return Environment(
         agent=agent,
@@ -309,6 +435,9 @@ def build_environment(
         optimizer=optimizer_cls,
         resample_each_epoch=bool(resample_each_epoch),
         train_random_seed=int(train_seed),
+        history_context_length=int(context_length) if bool(use_price_history_context) else 0,
+        history_feature_mode=str(context_feature_mode),
+        history_context_visible_to_agent=bool(context_visible_to_agent),
     )
 
 

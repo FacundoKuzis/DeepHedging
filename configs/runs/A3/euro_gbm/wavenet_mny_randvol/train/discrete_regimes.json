@@ -1,0 +1,9 @@
+{
+  "extends": "../../../../../bases/A3/train/euro_gbm_wavenet_mny_cvar50_base.json",
+  "run_name": "a3_wav_mny_cvar50_d_regimes",
+  "model_name": "a3_wav_mny_cvar50_d_regimes",
+  "description": "A3 train: sigma per path from discrete regimes [0.08, 0.18, 0.32, 0.50], CVaR50, no costs.",
+  "gbm_sigma_per_path_mode": "discrete",
+  "gbm_sigma_discrete_values": [0.08, 0.18, 0.32, 0.5],
+  "gbm_sigma_discrete_probs": [0.3, 0.35, 0.25, 0.1]
+}

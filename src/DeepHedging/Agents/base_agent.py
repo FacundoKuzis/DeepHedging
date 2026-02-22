@@ -2,6 +2,7 @@ import tensorflow as tf
 from abc import ABC, abstractmethod
 import os
 import warnings
+import inspect
 class BaseAgent(ABC):
     """
     The base class for all agents.
@@ -77,7 +78,7 @@ class BaseAgent(ABC):
         else:
             raise ValueError(f"Unsupported transformation type: {transformation_type}")
 
-    def transform_input(self, instrument_paths, T_minus_t):
+    def transform_input(self, instrument_paths, T_minus_t, history_features=None):
         """
         Transforms the input by concatenating instrument paths and time to maturity.
 
@@ -98,12 +99,40 @@ class BaseAgent(ABC):
         # T_minus_t  # Shape: (batch_size, n_timesteps)
         T_minus_t_expanded = tf.expand_dims(T_minus_t, axis=-1)  # Shape: (batch_size, n_timesteps, 1) or (batch_size, 1)
 
-        # Concatenate along the last axis
+        # Concatenate base features [instrument paths, time-to-maturity].
         input_data = tf.concat([instrument_paths, T_minus_t_expanded], axis=-1) # Shape (batch_size, n_timesteps, n_instruments+1) or (batch_size, n_instruments+1)
+
+        if history_features is not None:
+            history_features = tf.convert_to_tensor(history_features, dtype=tf.float32)
+            if len(history_features.shape) != len(input_data.shape):
+                raise ValueError(
+                    "history_features rank mismatch: "
+                    f"expected {len(input_data.shape)}, got {len(history_features.shape)}."
+                )
+            input_data = tf.concat([input_data, history_features], axis=-1)
+
+        # Optional constant feature: log-strike, repeated along batch/time axes.
+        if bool(getattr(self, "append_log_strike_feature", False)):
+            log_k = float(getattr(self, "log_strike_value", 0.0))
+            if len(input_data.shape) == 3:
+                strike_feat = tf.fill(
+                    [tf.shape(input_data)[0], tf.shape(input_data)[1], 1],
+                    tf.constant(log_k, dtype=tf.float32),
+                )
+            elif len(input_data.shape) == 2:
+                strike_feat = tf.fill(
+                    [tf.shape(input_data)[0], 1],
+                    tf.constant(log_k, dtype=tf.float32),
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported input_data rank for log-strike feature: {len(input_data.shape)}"
+                )
+            input_data = tf.concat([input_data, strike_feat], axis=-1)
 
         return input_data
     
-    def act(self, instrument_paths, T_minus_t):
+    def act(self, instrument_paths, T_minus_t, history_features=None):
         """
         Act based on the input.
 
@@ -114,11 +143,19 @@ class BaseAgent(ABC):
         Returns:
         - action (tf.Tensor): The action chosen by the model.
         """
-        input_data = self.transform_input(instrument_paths, T_minus_t)
+        input_data = self.transform_input(instrument_paths, T_minus_t, history_features=history_features)
         action = self.model(input_data)
         return action
 
-    def train_batch(self, batch_paths, batch_T_minus_t, optimizer, loss_function):
+    def train_batch(
+        self,
+        batch_paths,
+        batch_T_minus_t,
+        optimizer,
+        loss_function,
+        batch_history_features=None,
+        batch_pre_history_prices=None,
+    ):
         """
         Train the model on a batch of data, processing timestep by timestep.
 
@@ -131,7 +168,25 @@ class BaseAgent(ABC):
         - loss (tf.Tensor): The loss value after training on the batch.
         """
         with tf.GradientTape() as tape:
-            actions = self.process_batch(batch_paths, batch_T_minus_t) # (batch_size, N+1, n_instruments)
+            try:
+                params = inspect.signature(self.process_batch).parameters
+            except (TypeError, ValueError):
+                params = {}
+            kwargs = {}
+            if batch_history_features is not None:
+                if "batch_history_features" in params:
+                    kwargs["batch_history_features"] = batch_history_features
+                elif "history_features" in params:
+                    kwargs["history_features"] = batch_history_features
+            if batch_pre_history_prices is not None:
+                if "batch_pre_history_prices" in params:
+                    kwargs["batch_pre_history_prices"] = batch_pre_history_prices
+                elif "pre_history_prices" in params:
+                    kwargs["pre_history_prices"] = batch_pre_history_prices
+            if kwargs:
+                actions = self.process_batch(batch_paths, batch_T_minus_t, **kwargs)
+            else:
+                actions = self.process_batch(batch_paths, batch_T_minus_t)
             loss = loss_function(batch_paths, actions)
 
             # Compute gradients based on the total loss

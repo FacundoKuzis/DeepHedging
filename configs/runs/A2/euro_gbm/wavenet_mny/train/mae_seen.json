@@ -1,0 +1,8 @@
+{
+  "extends": "../../../../A1/euro_gbm/wavenet/train/seen.json",
+  "run_name": "a2_wav_mny_mae_seen",
+  "model_name": "a2_wav_mny_mae_seen",
+  "description": "A2 train: WaveNet log-moneyness, context seen, objective MAE.",
+  "risk_measure_name": "MAE",
+  "cvar_alpha": 0.95
+}

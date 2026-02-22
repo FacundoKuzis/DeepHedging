@@ -55,9 +55,102 @@ class GBMStock(Stock):
     Methods:
     - generate_paths(self, num_paths): Generates stock price paths using the GBM model.
     """
-    def __init__(self, S0, T, N, r, sigma):
+    def __init__(
+        self,
+        S0,
+        T,
+        N,
+        r,
+        sigma,
+        sigma_per_path_mode="fixed",
+        sigma_uniform_low=None,
+        sigma_uniform_high=None,
+        sigma_discrete_values=None,
+        sigma_discrete_probs=None,
+    ):
         super().__init__(S0, T, N, r)
         self.sigma = sigma  # Stock volatility
+        mode = str(sigma_per_path_mode).strip().lower()
+        if mode not in {"fixed", "uniform", "discrete"}:
+            raise ValueError("sigma_per_path_mode must be one of {'fixed','uniform','discrete'}.")
+        self.sigma_per_path_mode = mode
+        self.sigma_uniform_low = sigma_uniform_low
+        self.sigma_uniform_high = sigma_uniform_high
+        self.sigma_discrete_values = sigma_discrete_values
+        self.sigma_discrete_probs = sigma_discrete_probs
+        self._last_sampled_sigmas = None
+
+    def _sample_sigma_vector(self, num_paths, rng):
+        n = int(num_paths)
+        base_sigma = float(self.sigma)
+        mode = self.sigma_per_path_mode
+        if mode == "fixed":
+            if base_sigma <= 0.0:
+                raise ValueError("sigma must be > 0 for sigma_per_path_mode='fixed'.")
+            return np.full((n,), base_sigma, dtype=np.float64)
+
+        if mode == "uniform":
+            lo = self.sigma_uniform_low
+            hi = self.sigma_uniform_high
+            if lo is None or hi is None:
+                raise ValueError(
+                    "sigma_uniform_low and sigma_uniform_high are required for sigma_per_path_mode='uniform'."
+                )
+            lo = float(lo)
+            hi = float(hi)
+            if lo <= 0.0 or hi <= 0.0 or lo >= hi:
+                raise ValueError("Require 0 < sigma_uniform_low < sigma_uniform_high.")
+            return rng.uniform(lo, hi, size=n).astype(np.float64)
+
+        values = self.sigma_discrete_values
+        probs = self.sigma_discrete_probs
+        if values is None or len(values) == 0:
+            raise ValueError(
+                "sigma_discrete_values (non-empty) is required for sigma_per_path_mode='discrete'."
+            )
+        vals = np.asarray(values, dtype=np.float64).reshape(-1)
+        if np.any(~np.isfinite(vals)) or np.any(vals <= 0.0):
+            raise ValueError("sigma_discrete_values must be finite and > 0.")
+        p = None
+        if probs is not None:
+            p = np.asarray(probs, dtype=np.float64).reshape(-1)
+            if p.shape[0] != vals.shape[0]:
+                raise ValueError(
+                    "sigma_discrete_probs length mismatch: expected "
+                    f"{vals.shape[0]}, got {p.shape[0]}."
+                )
+            if np.any(~np.isfinite(p)) or np.any(p < 0.0):
+                raise ValueError("sigma_discrete_probs must be finite and >= 0.")
+            total = float(np.sum(p))
+            if total <= 0.0:
+                raise ValueError("sigma_discrete_probs must sum to a positive value.")
+            p = p / total
+        idx = rng.choice(vals.shape[0], size=n, replace=True, p=p)
+        return vals[idx]
+
+    def get_last_sampled_sigmas(self):
+        if self._last_sampled_sigmas is None:
+            return None
+        return self._last_sampled_sigmas.copy()
+
+    def _simulate_paths(self, num_paths, n_steps, random_seed=None):
+        dt = self.dt
+        S0 = self.S0
+        r = self.r
+
+        rng = self._make_rng(random_seed)
+        sigma_vec = self._sample_sigma_vector(num_paths=num_paths, rng=rng)
+        self._last_sampled_sigmas = sigma_vec.astype(np.float32)
+
+        # Generate random normal variables for the Brownian motion increments.
+        dW = rng.normal(0.0, 1.0, size=(num_paths, n_steps)) * np.sqrt(dt)
+        drift = (r - 0.5 * np.square(sigma_vec[:, None])) * dt
+        increments = drift + sigma_vec[:, None] * dW
+
+        # Vectorized GBM: log S_t = log S0 + cumulative increments.
+        log_cum = np.cumsum(increments, axis=1)
+        log_full = np.concatenate([np.zeros((num_paths, 1)), log_cum], axis=1)
+        return S0 * np.exp(log_full)
 
     def generate_paths(self, num_paths, random_seed = None):
         """
@@ -71,23 +164,23 @@ class GBMStock(Stock):
         - S_paths (tf.Tensor): A TensorFlow tensor containing the generated stock price paths.
           Shape is (num_paths, N+1).
         """
-        dt = self.dt
-        S0 = self.S0
-        r = self.r
-        sigma = self.sigma
+        S = self._simulate_paths(num_paths=num_paths, n_steps=self.N, random_seed=random_seed)
+        return tf.convert_to_tensor(S, dtype=tf.float32)
 
-        rng = self._make_rng(random_seed)
+    def generate_paths_with_context(self, num_paths, n_context_steps, random_seed=None):
+        """
+        Generate GBM paths with explicit pre-history.
 
-        # Generate random normal variables for the Brownian motion increments.
-        dW = rng.normal(0.0, 1.0, size=(num_paths, self.N)) * np.sqrt(dt)
-        drift = (r - 0.5 * sigma**2) * dt
-        increments = drift + sigma * dW
-
-        # Vectorized GBM: log S_t = log S0 + cumulative increments.
-        log_cum = np.cumsum(increments, axis=1)
-        log_full = np.concatenate([np.zeros((num_paths, 1)), log_cum], axis=1)
-        S = S0 * np.exp(log_full)
-
+        Returns:
+        - tf.Tensor of shape (num_paths, n_context_steps + N + 1), where:
+          * first n_context_steps points are pre-history,
+          * last N+1 points are the hedge window (S0..SN).
+        """
+        n_context_steps = int(n_context_steps)
+        if n_context_steps < 0:
+            raise ValueError("n_context_steps must be >= 0.")
+        n_total_steps = int(self.N + n_context_steps)
+        S = self._simulate_paths(num_paths=num_paths, n_steps=n_total_steps, random_seed=random_seed)
         return tf.convert_to_tensor(S, dtype=tf.float32)
 
 class HestonStock(Stock):

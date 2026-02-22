@@ -1,0 +1,6 @@
+{
+  "extends": "euro_gbm_wavenet_s02_base.json",
+  "description": "A1 base train - Euro GBM - WaveNet - sigma 0.2 - log(S) + log(K).",
+  "path_transformation_type": "log",
+  "include_log_strike_feature": true
+}

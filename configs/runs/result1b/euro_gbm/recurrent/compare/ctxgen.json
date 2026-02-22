@@ -1,0 +1,11 @@
+{
+  "extends": "thesis_result1b_configs/compare/euro_compare_gbm_fixed_recurrent_log_moneyness_increased_vol_ctxgen_only_42.json",
+  "run_name": "euro_gbm_rec_ctxgen_compare",
+  "description": "Compare recurrent vs BS in Euro GBM fixed vol with generated-only context.",
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "euro_gbm_rec_ctxgen"
+    }
+  ]
+}
