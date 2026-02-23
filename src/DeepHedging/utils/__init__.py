@@ -20,3 +20,16 @@ from DeepHedging.utils.asian_pricing import (
     arithmetic_control_variate_price_delta_crn_batch_worker,
 )
 from DeepHedging.utils.history_context import build_causal_history_features
+from DeepHedging.utils.lrm_continuation import (
+    ContinuationContext,
+    ContinuationValueProvider,
+    build_continuation_provider,
+)
+from DeepHedging.utils.lrm_engine import compute_lrm_target_batch
+from DeepHedging.utils.lrm_providers import (
+    AsianLSMContinuationProvider,
+    AsianMonteCarloContinuationProvider,
+    BSClosedFormContinuationProvider,
+    MonteCarloContinuationProvider,
+    LSMContinuationProvider,
+)

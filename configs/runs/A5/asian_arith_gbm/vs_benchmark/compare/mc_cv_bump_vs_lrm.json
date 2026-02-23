@@ -1,0 +1,5 @@
+{
+  "extends": "../../lrm_vs_bench/compare/mc_lsmc.json",
+  "run_name": "a5_asian_arith_gbm_mc_cv_bump_benchmark_vs_lrm_cmp",
+  "description": "Asian aritmetica: benchmark MC+CV+bump vs LRM (MC y LSMC)."
+}

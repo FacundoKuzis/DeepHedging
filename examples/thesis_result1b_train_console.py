@@ -33,6 +33,7 @@ from examples.thesis_result1_common import (  # noqa: E402
     build_agent_from_config,
     build_claim_from_config,
     build_environment,
+    build_instrument_from_config,
     build_risk_measure_from_config,
     copy_config_snapshot,
     load_config_by_name,
@@ -41,7 +42,6 @@ from examples.thesis_result1_common import (  # noqa: E402
     get_config_relative_stem,
     validate_agent_name,
 )
-from DeepHedging.HedgingInstruments import GBMStock  # noqa: E402
 from DeepHedging.utils.gbm_calibration import calibrate_gbm_from_market_data  # noqa: E402
 
 
@@ -136,6 +136,7 @@ def optional_keys() -> set[str]:
         "history_conv1d_enabled",
         "history_conv1d_layers",
         "history_conv1d_pooling",
+        "instrument_model",
         "path_transformation_type",
         "include_log_strike_feature",
         "gbm_sigma_per_path_mode",
@@ -143,6 +144,12 @@ def optional_keys() -> set[str]:
         "gbm_sigma_uniform_high",
         "gbm_sigma_discrete_values",
         "gbm_sigma_discrete_probs",
+        "garch_alpha",
+        "garch_beta",
+        "garch_omega",
+        "garch_leverage",
+        "garch_use_student_t",
+        "garch_student_t_df",
         "reduce_on_plateau_factor",
         "reduce_on_plateau_patience",
         "reduce_on_plateau_min_delta",
@@ -293,6 +300,9 @@ def validate_config(config: dict[str, Any]) -> None:
     path_t = str(config.get("path_transformation_type", "log_moneyness")).strip().lower()
     if path_t not in {"none", "log", "log_moneyness"}:
         raise ValueError("path_transformation_type must be one of {'none','log','log_moneyness'}.")
+    instrument_model = str(config.get("instrument_model", "gbm")).strip().lower()
+    if instrument_model not in {"gbm", "garch"}:
+        raise ValueError("instrument_model must be one of {'gbm','garch'}.")
 
     sigma_path_mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
     if sigma_path_mode not in {"fixed", "uniform", "discrete"}:
@@ -325,6 +335,26 @@ def validate_config(config: dict[str, Any]) -> None:
                 raise ValueError("gbm_sigma_discrete_probs must be >= 0.")
             if sum(float(p) for p in probs) <= 0.0:
                 raise ValueError("gbm_sigma_discrete_probs must sum to > 0.")
+
+    if instrument_model == "garch":
+        alpha = float(config.get("garch_alpha", 0.05))
+        beta = float(config.get("garch_beta", 0.9))
+        if alpha < 0.0:
+            raise ValueError("garch_alpha must be >= 0.")
+        if beta < 0.0:
+            raise ValueError("garch_beta must be >= 0.")
+        if alpha + beta >= 1.0:
+            raise ValueError("Require garch_alpha + garch_beta < 1 for stability.")
+        if "garch_omega" in config and config["garch_omega"] is not None:
+            if float(config["garch_omega"]) <= 0.0:
+                raise ValueError("garch_omega must be > 0 when provided.")
+        if "garch_leverage" in config and not isinstance(config["garch_leverage"], (int, float)):
+            raise ValueError("garch_leverage must be numeric when provided.")
+        if "garch_use_student_t" in config and not isinstance(config["garch_use_student_t"], bool):
+            raise ValueError("garch_use_student_t must be bool when provided.")
+        if bool(config.get("garch_use_student_t", False)):
+            if float(config.get("garch_student_t_df", 8.0)) <= 2.0:
+                raise ValueError("garch_student_t_df must be > 2 when garch_use_student_t=true.")
 
     for key in [
         "run_name",
@@ -377,23 +407,6 @@ def _model_optimizer_paths(agent, model_name: str, dirs: dict[str, str]) -> tupl
     return model_path, optimizer_path
 
 
-def _gbm_sigma_kwargs(config: dict[str, Any], base_sigma: float) -> dict[str, Any]:
-    mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
-    kwargs: dict[str, Any] = {
-        "sigma": float(base_sigma),
-        "sigma_per_path_mode": mode,
-    }
-    if mode == "uniform":
-        kwargs["sigma_uniform_low"] = float(config["gbm_sigma_uniform_low"])
-        kwargs["sigma_uniform_high"] = float(config["gbm_sigma_uniform_high"])
-    elif mode == "discrete":
-        kwargs["sigma_discrete_values"] = [float(v) for v in config["gbm_sigma_discrete_values"]]
-        if config.get("gbm_sigma_discrete_probs") is not None:
-            kwargs["sigma_discrete_probs"] = [float(p) for p in config["gbm_sigma_discrete_probs"]]
-    return kwargs
-
-
-
 def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> None:
     dirs = _run_dirs(run_name, config_path=config_path)
     cfg_snapshot = copy_config_snapshot(config_path, dirs["run_dir"])
@@ -423,19 +436,11 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
         download_if_missing=bool(config["download_if_missing"]),
     )
 
-    n = int(config["n"])
-    trading_days = int(config["trading_days_per_year"])
-    instrument = GBMStock(
-        S0=float(config["s0"]),
-        T=float(n / float(trading_days)),
-        N=n,
-        r=float(calib.r_train),
-        **_gbm_sigma_kwargs(config=config, base_sigma=float(calib.sigma_train)),
-    )
-
     cfg_for_builders = dict(config)
     cfg_for_builders["r"] = float(calib.r_train)
     cfg_for_builders["sigma"] = float(calib.sigma_train)
+    cfg_for_builders.setdefault("instrument_model", str(config.get("instrument_model", "gbm")).strip().lower())
+    instrument = build_instrument_from_config(cfg_for_builders)
 
     claim = build_claim_from_config(cfg_for_builders)
     agent = build_agent_from_config(
@@ -576,6 +581,7 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
 
     print(
         f"[run:{run_name}] Training agent={config['agent_name']} claim={config['contingent_claim']} "
+        f"instrument={str(config.get('instrument_model', 'gbm')).strip().lower()} "
         f"with calibrated r={calib.r_train:.6f}, sigma={calib.sigma_train:.6f}"
     )
     t0 = time.perf_counter()
@@ -628,11 +634,18 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
                 "history_conv1d_enabled": bool(config.get("history_conv1d_enabled", False)),
                 "history_conv1d_layers": json.dumps(config.get("history_conv1d_layers")),
                 "history_conv1d_pooling": str(config.get("history_conv1d_pooling", "global_max")),
+                "instrument_model": str(config.get("instrument_model", "gbm")),
                 "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
                 "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
                 "gbm_sigma_uniform_high": config.get("gbm_sigma_uniform_high"),
                 "gbm_sigma_discrete_values": json.dumps(config.get("gbm_sigma_discrete_values")),
                 "gbm_sigma_discrete_probs": json.dumps(config.get("gbm_sigma_discrete_probs")),
+                "garch_alpha": config.get("garch_alpha"),
+                "garch_beta": config.get("garch_beta"),
+                "garch_omega": config.get("garch_omega"),
+                "garch_leverage": config.get("garch_leverage"),
+                "garch_use_student_t": config.get("garch_use_student_t"),
+                "garch_student_t_df": config.get("garch_student_t_df"),
                 "learning_rate_strategy": str(config.get("learning_rate_strategy", "constant")),
                 "early_stopping_enabled": bool(config.get("early_stopping_enabled", False)),
                 "early_stopping_patience": int(config.get("early_stopping_patience", 20)),

@@ -1,0 +1,82 @@
+{
+  "name": "telegram-vscode-bridge",
+  "displayName": "Telegram VS Code Bridge",
+  "description": "Local authenticated bridge to execute allowlisted VS Code commands.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:telegramBridge.showLogs",
+    "onCommand:telegramBridge.openAndAddFile"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "telegramBridge.showLogs",
+        "title": "Telegram Bridge: Show Logs"
+      },
+      {
+        "command": "telegramBridge.openAndAddFile",
+        "title": "Telegram Bridge: Open And Add File To Chat"
+      }
+    ],
+    "configuration": {
+      "title": "Telegram Bridge",
+      "properties": {
+        "telegramBridge.host": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Bridge bind host. Only localhost values are accepted."
+        },
+        "telegramBridge.port": {
+          "type": "number",
+          "default": 8787,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Bridge HTTP port."
+        },
+        "telegramBridge.token": {
+          "type": "string",
+          "default": "KACPFxxkpHUPsJ96o5mMeqbm3LO0rvhoPt4Oxym5bZ4",
+          "description": "Shared token required by bridge requests (X-Bridge-Token or Bearer)."
+        },
+        "telegramBridge.allowedCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "chatgpt.openSidebar",
+            "chatgpt.newChat",
+            "chatgpt.addFileToThread",
+            "telegramBridge.openAndAddFile"
+          ],
+          "description": "Allowlist of command IDs that /command can execute."
+        },
+        "telegramBridge.enableVerboseLogs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose request-level logging in output channel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "tsc --noEmit -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.24",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.8.2"
+  }
+}

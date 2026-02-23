@@ -1,0 +1,44 @@
+{
+  "extends": "../../../../../bases/A5/compare/euro_gbm_recurrent_lrm_compare_base.json",
+  "run_name": "a5_asian_arith_gbm_bench_vs_lrm_mc_lsmc_cmp",
+  "description": "A5 Asian arithmetic benchmark compare: Arithmetic CV benchmark vs LRM Asian (MC, LSMC).",
+  "contingent_claim": "AsianArithmeticCall",
+  "benchmark_agent_name": "ArithmeticAsianControlVariateAgent",
+  "benchmark_lrm_provider": "asian_monte_carlo",
+  "trained_agents": [],
+  "eval_paths": 6000,
+  "eval_agent_batch_size": 750,
+  "bootstrap_enabled": false,
+  "benchmark_num_simulations": 20000,
+  "benchmark_agents_to_compare": [
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM Asiatico MC",
+      "config_overrides": {
+        "benchmark_lrm_provider": "asian_monte_carlo",
+        "benchmark_lrm_outer_paths": 128,
+        "benchmark_lrm_mc_inner_paths": 256,
+        "benchmark_lrm_mc_inner_chunk_size": 128,
+        "benchmark_lrm_mc_parallel_enabled": true,
+        "benchmark_lrm_mc_n_workers": 8,
+        "benchmark_lrm_mc_parallel_backend": "thread"
+      }
+    },
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM Asiatico LSMC",
+      "config_overrides": {
+        "benchmark_lrm_provider": "asian_lsmc",
+        "benchmark_lrm_outer_paths": 256,
+        "benchmark_lrm_lsm_train_paths": 90000,
+        "benchmark_lrm_lsm_ridge_alpha": 1e-06,
+        "benchmark_lrm_lsm_feature_set": "default",
+        "benchmark_lrm_lsm_poly_degree": 2,
+        "benchmark_lrm_lsm_use_cache": true,
+        "benchmark_lrm_lsm_cache_dir": "G:/Mi unidad/Tesis2026/Models/Organized/cache/lrm_lsm",
+        "benchmark_lrm_lsm_cache_key": "a5_asian_arith_gbm_lrm_lsmc_v1",
+        "benchmark_lrm_lsm_force_rebuild": false
+      }
+    }
+  ]
+}

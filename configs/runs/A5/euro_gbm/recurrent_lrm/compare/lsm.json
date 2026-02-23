@@ -1,0 +1,17 @@
+{
+  "extends": "../../../../../bases/A5/compare/euro_gbm_recurrent_lrm_compare_base.json",
+  "run_name": "a5_euro_gbm_rec_lrm_lsm_cmp",
+  "description": "A5 compare: Recurrent vs LRM (LSM continuation).",
+  "benchmark_lrm_provider": "lsm",
+  "benchmark_lrm_outer_paths": 256,
+  "benchmark_lrm_lsm_train_paths": 60000,
+  "benchmark_lrm_lsm_ridge_alpha": 1e-06,
+  "benchmark_lrm_lsm_feature_set": "default",
+  "benchmark_lrm_lsm_poly_degree": 2,
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "a5_euro_gbm_rec_mny"
+    }
+  ]
+}

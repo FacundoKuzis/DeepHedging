@@ -1,0 +1,5 @@
+{
+  "extends": "../../../../../bases/A5/train/euro_gbm_recurrent_mny_base.json",
+  "run_name": "a5_euro_gbm_rec_mny_train",
+  "model_name": "a5_euro_gbm_rec_mny"
+}

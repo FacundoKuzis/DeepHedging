@@ -1,0 +1,12 @@
+{
+  "telegramBridge.host": "127.0.0.1",
+  "telegramBridge.port": 8787,
+  "telegramBridge.token": "KACPFxxkpHUPsJ96o5mMeqbm3LO0rvhoPt4Oxym5bZ4",
+  "telegramBridge.allowedCommands": [
+    "chatgpt.openSidebar",
+    "chatgpt.newChat",
+    "chatgpt.addFileToThread",
+    "telegramBridge.openAndAddFile"
+  ],
+  "telegramBridge.enableVerboseLogs": true
+}

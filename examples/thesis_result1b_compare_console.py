@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import hashlib
+import re
 import sys
 from typing import Any
 
@@ -35,6 +36,7 @@ from examples.thesis_result1_common import (  # noqa: E402
     build_agent_from_config,
     build_claim_from_config,
     build_environment,
+    build_instrument_from_config,
     build_risk_measure_from_config,
     copy_config_snapshot,
     load_config_by_name,
@@ -43,7 +45,6 @@ from examples.thesis_result1_common import (  # noqa: E402
     get_config_relative_stem,
     validate_agent_name,
 )
-from DeepHedging.HedgingInstruments import GBMStock  # noqa: E402
 from DeepHedging.RiskMeasures import CVaR, MAE, WorstCase  # noqa: E402
 from DeepHedging.utils.gbm_calibration import (  # noqa: E402
     IRX_TICKER,
@@ -61,6 +62,7 @@ from DeepHedging.utils.historical_windows import (  # noqa: E402
 
 
 RESULT1B_ROOT = THESIS_MODELS_ROOT
+ACTIONS_CACHE_SCHEMA_VERSION = 2
 
 
 
@@ -150,9 +152,16 @@ def required_keys() -> set[str]:
 
 def optional_keys() -> set[str]:
     return {
+        "instrument_model",
         "price_computation_mode",
         "path_transformation_type",
         "include_log_strike_feature",
+        "garch_alpha",
+        "garch_beta",
+        "garch_omega",
+        "garch_leverage",
+        "garch_use_student_t",
+        "garch_student_t_df",
         "history_conv1d_enabled",
         "history_conv1d_layers",
         "history_conv1d_pooling",
@@ -195,6 +204,29 @@ def optional_keys() -> set[str]:
         "calendar_days_per_year",
         "option_max_quote_lag_days",
         "option_max_expiry_diff_days",
+        "benchmark_lrm_provider",
+        "benchmark_lrm_outer_paths",
+        "benchmark_lrm_var_epsilon",
+        "benchmark_lrm_use_antithetic",
+        "benchmark_lrm_seed_mode",
+        "benchmark_lrm_mc_inner_paths",
+        "benchmark_lrm_mc_inner_chunk_size",
+        "benchmark_lrm_mc_parallel_enabled",
+        "benchmark_lrm_mc_n_workers",
+        "benchmark_lrm_mc_parallel_backend",
+        "benchmark_lrm_mc_parallel_chunk_size",
+        "benchmark_lrm_lsm_train_paths",
+        "benchmark_lrm_lsm_ridge_alpha",
+        "benchmark_lrm_lsm_feature_set",
+        "benchmark_lrm_lsm_poly_degree",
+        "benchmark_lrm_lsm_use_cache",
+        "benchmark_lrm_lsm_cache_dir",
+        "benchmark_lrm_lsm_cache_key",
+        "benchmark_lrm_lsm_force_rebuild",
+        "benchmark_lrm_verbose",
+        "benchmark_lrm_log_every_t",
+        "benchmark_lrm_mc_log_every_chunks",
+        "benchmark_agents_to_compare",
     }
 
 
@@ -223,6 +255,10 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("s0 must be > 0")
     if float(config["strike"]) <= 0.0:
         raise ValueError("strike must be > 0")
+
+    instrument_model = str(config.get("instrument_model", "gbm")).strip().lower()
+    if instrument_model not in {"gbm", "garch"}:
+        raise ValueError("instrument_model must be one of {'gbm','garch'}.")
 
     if int(config["eval_paths"]) <= 0:
         raise ValueError("eval_paths must be > 0")
@@ -362,6 +398,20 @@ def validate_config(config: dict[str, Any]) -> None:
             if sum(float(p) for p in probs) <= 0.0:
                 raise ValueError("gbm_sigma_discrete_probs must sum to > 0.")
 
+    if instrument_model == "garch":
+        alpha = float(config.get("garch_alpha", 0.05))
+        beta = float(config.get("garch_beta", 0.9))
+        if alpha < 0.0 or beta < 0.0:
+            raise ValueError("garch_alpha and garch_beta must be >= 0.")
+        if alpha + beta >= 1.0:
+            raise ValueError("Require garch_alpha + garch_beta < 1 for stability.")
+        if config.get("garch_omega", None) is not None and float(config.get("garch_omega")) <= 0.0:
+            raise ValueError("garch_omega must be > 0 when provided.")
+        if bool(config.get("garch_use_student_t", False)):
+            df = float(config.get("garch_student_t_df", 8.0))
+            if df <= 2.0:
+                raise ValueError("garch_student_t_df must be > 2 when garch_use_student_t=true.")
+
     use_context = bool(config.get("use_price_history_context", False))
     if "context_for_path_generation_only" in config and not isinstance(config["context_for_path_generation_only"], bool):
         raise ValueError("context_for_path_generation_only must be bool when provided.")
@@ -435,8 +485,72 @@ def validate_config(config: dict[str, Any]) -> None:
     if not isinstance(config["download_if_missing"], bool):
         raise ValueError("download_if_missing must be bool")
 
-    if not isinstance(config["trained_agents"], list) or len(config["trained_agents"]) == 0:
-        raise ValueError("trained_agents must be a non-empty list")
+    if "benchmark_lrm_provider" in config:
+        provider = str(config["benchmark_lrm_provider"]).strip().lower()
+        if provider not in {"bs_closed_form", "monte_carlo", "lsm", "lsmc", "asian_monte_carlo", "asian_lsmc"}:
+            raise ValueError(
+                "benchmark_lrm_provider must be one of "
+                "{'bs_closed_form','monte_carlo','lsm','lsmc','asian_monte_carlo','asian_lsmc'}."
+            )
+        claim_name = str(config["contingent_claim"]).strip()
+        if provider == "bs_closed_form" and claim_name not in {"EuropeanCall", "EuropeanPut"}:
+            raise ValueError("benchmark_lrm_provider='bs_closed_form' supports only EuropeanCall/EuropeanPut.")
+        if provider in {"asian_monte_carlo", "asian_lsmc"} and not claim_name.startswith("Asian"):
+            raise ValueError("benchmark_lrm_provider for Asian requires an Asian contingent_claim.")
+    if "benchmark_lrm_outer_paths" in config and int(config["benchmark_lrm_outer_paths"]) <= 1:
+        raise ValueError("benchmark_lrm_outer_paths must be > 1.")
+    if "benchmark_lrm_var_epsilon" in config and float(config["benchmark_lrm_var_epsilon"]) <= 0.0:
+        raise ValueError("benchmark_lrm_var_epsilon must be > 0.")
+    if "benchmark_lrm_use_antithetic" in config and not isinstance(config["benchmark_lrm_use_antithetic"], bool):
+        raise ValueError("benchmark_lrm_use_antithetic must be bool.")
+    if "benchmark_lrm_seed_mode" in config:
+        mode = str(config["benchmark_lrm_seed_mode"]).strip().lower()
+        if mode not in {"shared_crn", "per_state"}:
+            raise ValueError("benchmark_lrm_seed_mode must be 'shared_crn' or 'per_state'.")
+    if "benchmark_lrm_mc_inner_paths" in config and int(config["benchmark_lrm_mc_inner_paths"]) <= 1:
+        raise ValueError("benchmark_lrm_mc_inner_paths must be > 1.")
+    if "benchmark_lrm_mc_inner_chunk_size" in config and int(config["benchmark_lrm_mc_inner_chunk_size"]) <= 0:
+        raise ValueError("benchmark_lrm_mc_inner_chunk_size must be > 0.")
+    if "benchmark_lrm_mc_parallel_enabled" in config and not isinstance(config["benchmark_lrm_mc_parallel_enabled"], bool):
+        raise ValueError("benchmark_lrm_mc_parallel_enabled must be bool.")
+    if "benchmark_lrm_mc_n_workers" in config and int(config["benchmark_lrm_mc_n_workers"]) <= 0:
+        raise ValueError("benchmark_lrm_mc_n_workers must be > 0.")
+    if "benchmark_lrm_mc_parallel_backend" in config:
+        backend = str(config["benchmark_lrm_mc_parallel_backend"]).strip().lower()
+        if backend not in {"thread", "process"}:
+            raise ValueError("benchmark_lrm_mc_parallel_backend must be 'thread' or 'process'.")
+    if "benchmark_lrm_mc_parallel_chunk_size" in config and config["benchmark_lrm_mc_parallel_chunk_size"] is not None:
+        if int(config["benchmark_lrm_mc_parallel_chunk_size"]) <= 0:
+            raise ValueError("benchmark_lrm_mc_parallel_chunk_size must be > 0 when provided.")
+    if "benchmark_lrm_lsm_train_paths" in config and int(config["benchmark_lrm_lsm_train_paths"]) <= 10:
+        raise ValueError("benchmark_lrm_lsm_train_paths must be > 10.")
+    if "benchmark_lrm_lsm_ridge_alpha" in config and float(config["benchmark_lrm_lsm_ridge_alpha"]) <= 0.0:
+        raise ValueError("benchmark_lrm_lsm_ridge_alpha must be > 0.")
+    if "benchmark_lrm_lsm_feature_set" in config:
+        feature_set = str(config["benchmark_lrm_lsm_feature_set"]).strip().lower()
+        if feature_set not in {"minimal", "default"}:
+            raise ValueError("benchmark_lrm_lsm_feature_set must be 'minimal' or 'default'.")
+    if "benchmark_lrm_lsm_poly_degree" in config and int(config["benchmark_lrm_lsm_poly_degree"]) <= 0:
+        raise ValueError("benchmark_lrm_lsm_poly_degree must be > 0.")
+    if "benchmark_lrm_lsm_use_cache" in config and not isinstance(config["benchmark_lrm_lsm_use_cache"], bool):
+        raise ValueError("benchmark_lrm_lsm_use_cache must be bool.")
+    if "benchmark_lrm_lsm_force_rebuild" in config and not isinstance(config["benchmark_lrm_lsm_force_rebuild"], bool):
+        raise ValueError("benchmark_lrm_lsm_force_rebuild must be bool.")
+    if "benchmark_lrm_lsm_cache_dir" in config and config["benchmark_lrm_lsm_cache_dir"] is not None:
+        if not isinstance(config["benchmark_lrm_lsm_cache_dir"], str) or not str(config["benchmark_lrm_lsm_cache_dir"]).strip():
+            raise ValueError("benchmark_lrm_lsm_cache_dir must be null or non-empty string.")
+    if "benchmark_lrm_lsm_cache_key" in config and config["benchmark_lrm_lsm_cache_key"] is not None:
+        if not isinstance(config["benchmark_lrm_lsm_cache_key"], str) or not str(config["benchmark_lrm_lsm_cache_key"]).strip():
+            raise ValueError("benchmark_lrm_lsm_cache_key must be null or non-empty string.")
+    if "benchmark_lrm_verbose" in config and not isinstance(config["benchmark_lrm_verbose"], bool):
+        raise ValueError("benchmark_lrm_verbose must be bool.")
+    if "benchmark_lrm_log_every_t" in config and int(config["benchmark_lrm_log_every_t"]) <= 0:
+        raise ValueError("benchmark_lrm_log_every_t must be > 0.")
+    if "benchmark_lrm_mc_log_every_chunks" in config and int(config["benchmark_lrm_mc_log_every_chunks"]) < 0:
+        raise ValueError("benchmark_lrm_mc_log_every_chunks must be >= 0.")
+
+    if not isinstance(config["trained_agents"], list):
+        raise ValueError("trained_agents must be a list")
     for i, item in enumerate(config["trained_agents"]):
         if not isinstance(item, dict) or set(item.keys()) != {"agent_name", "model_name"}:
             raise ValueError(f"trained_agents[{i}] must contain exactly keys ['agent_name','model_name']")
@@ -446,6 +560,37 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(f"trained_agents[{i}].agent_name must be trainable")
         if not isinstance(item["model_name"], str) or not item["model_name"].strip():
             raise ValueError(f"trained_agents[{i}].model_name must be non-empty string")
+
+    benchmark_agents_to_compare = config.get("benchmark_agents_to_compare", [])
+    if benchmark_agents_to_compare is None:
+        benchmark_agents_to_compare = []
+    if not isinstance(benchmark_agents_to_compare, list):
+        raise ValueError("benchmark_agents_to_compare must be a list when provided.")
+    for i, item in enumerate(benchmark_agents_to_compare):
+        if not isinstance(item, dict):
+            raise ValueError(f"benchmark_agents_to_compare[{i}] must be an object.")
+        allowed = {"agent_name", "label", "config_overrides"}
+        extra = set(item.keys()) - allowed
+        if extra:
+            raise ValueError(
+                f"benchmark_agents_to_compare[{i}] has unknown keys: {sorted(extra)}. "
+                f"Allowed keys: {sorted(allowed)}"
+            )
+        if "agent_name" not in item:
+            raise ValueError(f"benchmark_agents_to_compare[{i}] must include 'agent_name'.")
+        name = str(item["agent_name"]).strip()
+        validate_agent_name(name)
+        if name in TRAINABLE_AGENT_NAMES:
+            raise ValueError(
+                f"benchmark_agents_to_compare[{i}].agent_name must be non-trainable benchmark. Got {name}."
+            )
+        if "label" in item and (not isinstance(item["label"], str) or not item["label"].strip()):
+            raise ValueError(f"benchmark_agents_to_compare[{i}].label must be a non-empty string when provided.")
+        if "config_overrides" in item and not isinstance(item["config_overrides"], dict):
+            raise ValueError(f"benchmark_agents_to_compare[{i}].config_overrides must be an object when provided.")
+
+    if len(config["trained_agents"]) == 0 and len(benchmark_agents_to_compare) == 0:
+        raise ValueError("Provide at least one comparison target: trained_agents and/or benchmark_agents_to_compare.")
 
 
 
@@ -457,6 +602,12 @@ def _display_name(agent, language: str) -> str:
         return plot_name
     return str(getattr(agent, "name", "unknown_agent"))
 
+
+
+def _slugify_label(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", str(value).strip().lower())
+    cleaned = cleaned.strip("_")
+    return cleaned or "agent"
 
 
 def _model_path(agent, model_name: str) -> str:
@@ -626,23 +777,6 @@ def _historical_sigma_window_days(config: dict[str, Any]) -> int:
     return int(raw)
 
 
-def _gbm_sigma_kwargs(config: dict[str, Any], base_sigma: float) -> dict[str, Any]:
-    mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
-    kwargs: dict[str, Any] = {
-        "sigma": float(base_sigma),
-        "sigma_per_path_mode": mode,
-    }
-    if mode == "uniform":
-        kwargs["sigma_uniform_low"] = float(config["gbm_sigma_uniform_low"])
-        kwargs["sigma_uniform_high"] = float(config["gbm_sigma_uniform_high"])
-    elif mode == "discrete":
-        kwargs["sigma_discrete_values"] = [float(v) for v in config["gbm_sigma_discrete_values"]]
-        if config.get("gbm_sigma_discrete_probs") is not None:
-            kwargs["sigma_discrete_probs"] = [float(p) for p in config["gbm_sigma_discrete_probs"]]
-    return kwargs
-
-
-
 def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> None:
     dirs = _run_dirs(run_name, config_path=config_path)
     copied_cfg = copy_config_snapshot(config_path, dirs["run_dir"])
@@ -672,19 +806,13 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         download_if_missing=bool(config["download_if_missing"]),
     )
 
-    n = int(config["n"])
-    trading_days = int(config["trading_days_per_year"])
-    instrument = GBMStock(
-        S0=float(config["s0"]),
-        T=float(n / float(trading_days)),
-        N=n,
-        r=float(calib.r_train),
-        **_gbm_sigma_kwargs(config=config, base_sigma=float(calib.sigma_train)),
-    )
-
     cfg_for_builders = dict(config)
     cfg_for_builders["r"] = float(calib.r_train)
     cfg_for_builders["sigma"] = float(calib.sigma_train)
+    cfg_for_builders.setdefault("instrument_model", str(config.get("instrument_model", "gbm")).strip().lower())
+
+    n = int(config["n"])
+    instrument = build_instrument_from_config(cfg_for_builders)
 
     claim = build_claim_from_config(cfg_for_builders)
     risk_measure = build_risk_measure_from_config(cfg_for_builders)
@@ -711,7 +839,34 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         print(f"[run:{run_name}] Loaded model: {model_path}")
         trained_agents.append(agent)
 
-    all_agents = [benchmark_agent] + trained_agents
+    benchmark_compare_agents = []
+    used_names = {str(getattr(benchmark_agent, "name", "benchmark"))}
+    for i, item in enumerate(config.get("benchmark_agents_to_compare", [])):
+        per_agent_cfg = dict(cfg_for_builders)
+        per_agent_cfg.update(dict(item.get("config_overrides", {})))
+        agent = build_agent_from_config(
+            agent_name=str(item["agent_name"]),
+            instrument=instrument,
+            claim=claim,
+            config=per_agent_cfg,
+        )
+        label = str(item.get("label") or _display_name(agent, str(config["language"]))).strip()
+        slug = _slugify_label(label)
+        base_name = f"bm_{i+1:02d}_{slug}"
+        unique_name = base_name
+        suffix = 2
+        while unique_name in used_names:
+            unique_name = f"{base_name}_{suffix}"
+            suffix += 1
+        used_names.add(unique_name)
+        agent.name = unique_name
+        agent.agent_id = unique_name
+        agent.plot_name = {"es": label, "en": label}
+        benchmark_compare_agents.append(agent)
+        print(f"[run:{run_name}] Added benchmark comparison agent: {label} ({unique_name})")
+
+    compare_targets = benchmark_compare_agents + trained_agents
+    all_agents = [benchmark_agent] + compare_targets
     env = build_environment(
         agent=benchmark_agent,
         instrument=instrument,
@@ -912,6 +1067,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "run_name": str(run_name),
             "benchmark_agent": str(config["benchmark_agent_name"]),
             "trained_agents": config["trained_agents"],
+            "benchmark_agents_to_compare": config.get("benchmark_agents_to_compare", []),
             "pricing_method": str(config["pricing_method"]),
             "price_computation_mode": str(config.get("price_computation_mode", "pathwise_if_available")),
             "test_data_mode": str(config["test_data_mode"]),
@@ -920,11 +1076,18 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "per_path_r_signature": _vector_signature(per_path_r),
             "sigma_source": str(config["sigma_source"]),
             "sigma_mode": _sigma_mode(config),
+            "instrument_model": str(config.get("instrument_model", "gbm")).strip().lower(),
             "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
             "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
             "gbm_sigma_uniform_high": config.get("gbm_sigma_uniform_high"),
             "gbm_sigma_discrete_values": config.get("gbm_sigma_discrete_values"),
             "gbm_sigma_discrete_probs": config.get("gbm_sigma_discrete_probs"),
+            "garch_alpha": config.get("garch_alpha"),
+            "garch_beta": config.get("garch_beta"),
+            "garch_omega": config.get("garch_omega"),
+            "garch_leverage": config.get("garch_leverage"),
+            "garch_use_student_t": config.get("garch_use_student_t"),
+            "garch_student_t_df": config.get("garch_student_t_df"),
             "per_path_sigma_signature": _vector_signature(per_path_sigma),
             "use_price_history_context": bool(config.get("use_price_history_context", False)),
             "context_for_path_generation_only": bool(config.get("context_for_path_generation_only", False)),
@@ -947,7 +1110,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
 
     loss_fns = [CVaR(0.5), CVaR(0.95), CVaR(0.99), MAE(), WorstCase()]
     pairwise_rows = []
-    for agent in trained_agents:
+    for agent in compare_targets:
         pair_name = f"{benchmark_agent.name}_vs_{agent.name}"
         plot_path = os.path.join(dirs["plots_dir"], f"{pair_name}.jpg")
         stats_path = os.path.join(dirs["tables_dir"], f"{pair_name}.xlsx")
@@ -1120,6 +1283,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         "run_name": run_name,
         "benchmark_agent": str(config["benchmark_agent_name"]),
         "trained_agents": config["trained_agents"],
+        "benchmark_agents_to_compare": config.get("benchmark_agents_to_compare", []),
         "eval_paths_requested": int(config["eval_paths"]),
         "test_data_mode": str(config["test_data_mode"]),
         "price_computation_mode": str(config.get("price_computation_mode", "pathwise_if_available")),

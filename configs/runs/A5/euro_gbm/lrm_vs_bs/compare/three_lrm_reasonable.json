@@ -1,0 +1,53 @@
+{
+  "extends": "../../../../../bases/A5/compare/euro_gbm_recurrent_lrm_compare_base.json",
+  "run_name": "a5_euro_gbm_bs_vs_lrm_three_reasonable_cmp",
+  "description": "A5 benchmark-only compare (reasonable): BS Delta vs LRM(BS, MC, LSM).",
+  "benchmark_agent_name": "DeltaHedgingAgent",
+  "trained_agents": [],
+  "eval_paths": 8000,
+  "eval_agent_batch_size": 1000,
+  "bootstrap_enabled": false,
+  "benchmark_agents_to_compare": [
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM BS",
+      "config_overrides": {
+        "benchmark_lrm_provider": "bs_closed_form",
+        "benchmark_lrm_outer_paths": 512
+      }
+    },
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM MC",
+      "config_overrides": {
+        "benchmark_lrm_provider": "monte_carlo",
+        "benchmark_lrm_outer_paths": 128,
+        "benchmark_lrm_mc_inner_paths": 256,
+        "benchmark_lrm_mc_inner_chunk_size": 128,
+        "benchmark_lrm_mc_parallel_enabled": true,
+        "benchmark_lrm_mc_n_workers": 8,
+        "benchmark_lrm_mc_parallel_backend": "thread",
+        "benchmark_lrm_mc_parallel_chunk_size": 2048,
+        "benchmark_lrm_verbose": true,
+        "benchmark_lrm_log_every_t": 10,
+        "benchmark_lrm_mc_log_every_chunks": 400
+      }
+    },
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM LSM",
+      "config_overrides": {
+        "benchmark_lrm_provider": "lsm",
+        "benchmark_lrm_outer_paths": 256,
+        "benchmark_lrm_lsm_train_paths": 80000,
+        "benchmark_lrm_lsm_ridge_alpha": 1e-06,
+        "benchmark_lrm_lsm_feature_set": "default",
+        "benchmark_lrm_lsm_poly_degree": 2,
+        "benchmark_lrm_lsm_use_cache": true,
+        "benchmark_lrm_lsm_cache_dir": "G:/Mi unidad/Tesis2026/Models/Organized/cache/lrm_lsm",
+        "benchmark_lrm_lsm_cache_key": "a5_euro_gbm_three_lrm_reasonable_lsm_v1",
+        "benchmark_lrm_lsm_force_rebuild": false
+      }
+    }
+  ]
+}

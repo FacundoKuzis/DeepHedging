@@ -183,6 +183,191 @@ class GBMStock(Stock):
         S = self._simulate_paths(num_paths=num_paths, n_steps=n_total_steps, random_seed=random_seed)
         return tf.convert_to_tensor(S, dtype=tf.float32)
 
+
+class GARCHStock(Stock):
+    """
+    GARCH(1,1)-style stock simulator in log-price space with optional leverage term.
+
+    The conditional annualized variance follows:
+      v_{t+1} = omega + alpha * eps_t^2 + beta * v_t + leverage * 1_{eps_t<0} * eps_t^2
+
+    and log-returns are simulated as:
+      lr_t = (r - 0.5 * v_t) * dt + sqrt(v_t * dt) * z_t
+    """
+
+    def __init__(
+        self,
+        S0,
+        T,
+        N,
+        r,
+        sigma,
+        garch_alpha=0.05,
+        garch_beta=0.9,
+        garch_omega=None,
+        garch_leverage=0.0,
+        garch_use_student_t=False,
+        garch_student_t_df=8.0,
+        sigma_per_path_mode="fixed",
+        sigma_uniform_low=None,
+        sigma_uniform_high=None,
+        sigma_discrete_values=None,
+        sigma_discrete_probs=None,
+    ):
+        super().__init__(S0, T, N, r)
+        self.sigma = float(sigma)
+
+        mode = str(sigma_per_path_mode).strip().lower()
+        if mode not in {"fixed", "uniform", "discrete"}:
+            raise ValueError("sigma_per_path_mode must be one of {'fixed','uniform','discrete'}.")
+        self.sigma_per_path_mode = mode
+        self.sigma_uniform_low = sigma_uniform_low
+        self.sigma_uniform_high = sigma_uniform_high
+        self.sigma_discrete_values = sigma_discrete_values
+        self.sigma_discrete_probs = sigma_discrete_probs
+
+        self.garch_alpha = float(garch_alpha)
+        self.garch_beta = float(garch_beta)
+        self.garch_omega = None if garch_omega is None else float(garch_omega)
+        self.garch_leverage = float(garch_leverage)
+        self.garch_use_student_t = bool(garch_use_student_t)
+        self.garch_student_t_df = float(garch_student_t_df)
+
+        if self.garch_alpha < 0.0:
+            raise ValueError("garch_alpha must be >= 0.")
+        if self.garch_beta < 0.0:
+            raise ValueError("garch_beta must be >= 0.")
+        if self.garch_alpha + self.garch_beta >= 1.0:
+            raise ValueError("Require garch_alpha + garch_beta < 1 for stability.")
+        if self.garch_omega is not None and self.garch_omega <= 0.0:
+            raise ValueError("garch_omega must be > 0 when provided.")
+        if self.garch_use_student_t and self.garch_student_t_df <= 2.0:
+            raise ValueError("garch_student_t_df must be > 2 when garch_use_student_t=true.")
+
+        self._last_sampled_sigmas = None
+
+    def _sample_sigma_vector(self, num_paths, rng):
+        n = int(num_paths)
+        base_sigma = float(self.sigma)
+        mode = self.sigma_per_path_mode
+        if mode == "fixed":
+            if base_sigma <= 0.0:
+                raise ValueError("sigma must be > 0 for sigma_per_path_mode='fixed'.")
+            return np.full((n,), base_sigma, dtype=np.float64)
+
+        if mode == "uniform":
+            lo = self.sigma_uniform_low
+            hi = self.sigma_uniform_high
+            if lo is None or hi is None:
+                raise ValueError(
+                    "sigma_uniform_low and sigma_uniform_high are required for sigma_per_path_mode='uniform'."
+                )
+            lo = float(lo)
+            hi = float(hi)
+            if lo <= 0.0 or hi <= 0.0 or lo >= hi:
+                raise ValueError("Require 0 < sigma_uniform_low < sigma_uniform_high.")
+            return rng.uniform(lo, hi, size=n).astype(np.float64)
+
+        values = self.sigma_discrete_values
+        probs = self.sigma_discrete_probs
+        if values is None or len(values) == 0:
+            raise ValueError(
+                "sigma_discrete_values (non-empty) is required for sigma_per_path_mode='discrete'."
+            )
+        vals = np.asarray(values, dtype=np.float64).reshape(-1)
+        if np.any(~np.isfinite(vals)) or np.any(vals <= 0.0):
+            raise ValueError("sigma_discrete_values must be finite and > 0.")
+        p = None
+        if probs is not None:
+            p = np.asarray(probs, dtype=np.float64).reshape(-1)
+            if p.shape[0] != vals.shape[0]:
+                raise ValueError(
+                    "sigma_discrete_probs length mismatch: expected "
+                    f"{vals.shape[0]}, got {p.shape[0]}."
+                )
+            if np.any(~np.isfinite(p)) or np.any(p < 0.0):
+                raise ValueError("sigma_discrete_probs must be finite and >= 0.")
+            total = float(np.sum(p))
+            if total <= 0.0:
+                raise ValueError("sigma_discrete_probs must sum to a positive value.")
+            p = p / total
+        idx = rng.choice(vals.shape[0], size=n, replace=True, p=p)
+        return vals[idx]
+
+    def get_last_sampled_sigmas(self):
+        if self._last_sampled_sigmas is None:
+            return None
+        return self._last_sampled_sigmas.copy()
+
+    def _draw_innovations(self, rng, num_paths, n_steps):
+        if not self.garch_use_student_t:
+            return rng.normal(0.0, 1.0, size=(num_paths, n_steps))
+        # Student-t standardized to unit variance.
+        df = float(self.garch_student_t_df)
+        z = rng.standard_t(df, size=(num_paths, n_steps))
+        scale = np.sqrt((df - 2.0) / df)
+        return z * scale
+
+    def _simulate_paths(self, num_paths, n_steps, random_seed=None):
+        dt = float(self.dt)
+        s0 = float(self.S0)
+        r = float(self.r)
+        n_paths = int(num_paths)
+        n_steps = int(n_steps)
+        if n_steps < 0:
+            raise ValueError("n_steps must be >= 0.")
+
+        rng = self._make_rng(random_seed)
+        sigma_long_run = self._sample_sigma_vector(num_paths=n_paths, rng=rng)
+        var_long_run = np.maximum(np.square(sigma_long_run), 1e-12)
+
+        alpha = float(self.garch_alpha)
+        beta = float(self.garch_beta)
+        leverage = float(self.garch_leverage)
+        if self.garch_omega is None:
+            omega = np.maximum((1.0 - alpha - beta) * var_long_run, 1e-14)
+        else:
+            omega = np.full((n_paths,), float(self.garch_omega), dtype=np.float64)
+
+        z = self._draw_innovations(rng=rng, num_paths=n_paths, n_steps=n_steps)
+        log_paths = np.zeros((n_paths, n_steps + 1), dtype=np.float64)
+
+        var_t = var_long_run.copy()
+        var_accum = np.zeros((n_paths,), dtype=np.float64)
+        for t in range(n_steps):
+            var_t = np.maximum(var_t, 1e-12)
+            var_accum += var_t
+
+            shock = np.sqrt(var_t * dt) * z[:, t]
+            drift = (r - 0.5 * var_t) * dt
+            log_paths[:, t + 1] = log_paths[:, t] + drift + shock
+
+            eps = np.sqrt(var_t) * z[:, t]
+            neg = (eps < 0.0).astype(np.float64)
+            var_t = omega + alpha * np.square(eps) + leverage * neg * np.square(eps) + beta * var_t
+
+        if n_steps > 0:
+            sigma_effective = np.sqrt(np.maximum(var_accum / float(n_steps), 1e-12))
+        else:
+            sigma_effective = sigma_long_run.copy()
+        self._last_sampled_sigmas = sigma_effective.astype(np.float32)
+
+        paths = s0 * np.exp(log_paths)
+        return paths
+
+    def generate_paths(self, num_paths, random_seed=None):
+        s = self._simulate_paths(num_paths=num_paths, n_steps=self.N, random_seed=random_seed)
+        return tf.convert_to_tensor(s, dtype=tf.float32)
+
+    def generate_paths_with_context(self, num_paths, n_context_steps, random_seed=None):
+        n_context_steps = int(n_context_steps)
+        if n_context_steps < 0:
+            raise ValueError("n_context_steps must be >= 0.")
+        n_total_steps = int(self.N + n_context_steps)
+        s = self._simulate_paths(num_paths=num_paths, n_steps=n_total_steps, random_seed=random_seed)
+        return tf.convert_to_tensor(s, dtype=tf.float32)
+
+
 class HestonStock(Stock):
     """
     A subclass of Stock that models stock prices using the Heston stochastic volatility model.

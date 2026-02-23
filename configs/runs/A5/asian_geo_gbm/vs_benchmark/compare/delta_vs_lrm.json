@@ -1,0 +1,5 @@
+{
+  "extends": "../../lrm_vs_bench/compare/mc_lsmc.json",
+  "run_name": "a5_asian_geo_gbm_delta_benchmark_vs_lrm_cmp",
+  "description": "Asian geometrica: benchmark Delta Geometrico vs LRM (MC y LSMC)."
+}

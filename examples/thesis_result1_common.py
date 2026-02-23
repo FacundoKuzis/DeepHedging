@@ -26,6 +26,7 @@ from DeepHedging.Agents import (
     DeltaHedgingAgent,
     GRUAgent,
     LSTMAgent,
+    LocalRiskMinimizationAgent,
     MonteCarloAgent,
     QuantlibAsianGeometricAgent,
     RecurrentAgent,
@@ -46,7 +47,7 @@ from DeepHedging.ContingentClaims import (
 )
 from DeepHedging.CostFunctions import ProportionalCost
 from DeepHedging.Environments import Environment
-from DeepHedging.HedgingInstruments import GBMStock
+from DeepHedging.HedgingInstruments import GBMStock, GARCHStock
 from DeepHedging.RiskMeasures import CVaR, MAE, Mean, StdDev, WorstCase
 from DeepHedging.RiskMeasures import MSE
 
@@ -68,6 +69,7 @@ AGENTS = {
     "ArithmeticAsianMonteCarloAgent": ArithmeticAsianMonteCarloAgent,
     "ArithmeticAsianControlVariateAgent": ArithmeticAsianControlVariateAgent,
     "MonteCarloAgent": MonteCarloAgent,
+    "LocalRiskMinimizationAgent": LocalRiskMinimizationAgent,
 }
 
 
@@ -226,29 +228,59 @@ def set_global_determinism(seed: int) -> None:
         pass
 
 
-def build_instrument_from_config(config: dict[str, Any]) -> GBMStock:
-    n = int(config["n"])
-    trading_days = int(config["trading_days_per_year"])
-    t = n / float(trading_days)
-    sigma_mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
+def _path_sigma_kwargs_from_config(config: dict[str, Any], base_sigma: float) -> dict[str, Any]:
+    mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
     kwargs: dict[str, Any] = {
-        "sigma_per_path_mode": sigma_mode,
+        "sigma": float(base_sigma),
+        "sigma_per_path_mode": mode,
     }
-    if sigma_mode == "uniform":
+    if mode == "uniform":
         kwargs["sigma_uniform_low"] = float(config["gbm_sigma_uniform_low"])
         kwargs["sigma_uniform_high"] = float(config["gbm_sigma_uniform_high"])
-    elif sigma_mode == "discrete":
+    elif mode == "discrete":
         kwargs["sigma_discrete_values"] = [float(v) for v in config["gbm_sigma_discrete_values"]]
         if config.get("gbm_sigma_discrete_probs") is not None:
             kwargs["sigma_discrete_probs"] = [float(p) for p in config["gbm_sigma_discrete_probs"]]
-    return GBMStock(
-        S0=float(config["s0"]),
-        T=t,
-        N=n,
-        r=float(config["r"]),
-        sigma=float(config["sigma"]),
-        **kwargs,
-    )
+    return kwargs
+
+
+def build_instrument_from_config(config: dict[str, Any]):
+    n = int(config["n"])
+    trading_days = int(config["trading_days_per_year"])
+    t = n / float(trading_days)
+    instrument_model = str(config.get("instrument_model", "gbm")).strip().lower()
+    sigma_kwargs = _path_sigma_kwargs_from_config(config=config, base_sigma=float(config["sigma"]))
+
+    if instrument_model == "gbm":
+        return GBMStock(
+            S0=float(config["s0"]),
+            T=t,
+            N=n,
+            r=float(config["r"]),
+            **sigma_kwargs,
+        )
+
+    if instrument_model == "garch":
+        garch_kwargs: dict[str, Any] = {
+            "garch_alpha": float(config.get("garch_alpha", 0.05)),
+            "garch_beta": float(config.get("garch_beta", 0.9)),
+            "garch_omega": (
+                None if config.get("garch_omega", None) is None else float(config.get("garch_omega"))
+            ),
+            "garch_leverage": float(config.get("garch_leverage", 0.0)),
+            "garch_use_student_t": bool(config.get("garch_use_student_t", False)),
+            "garch_student_t_df": float(config.get("garch_student_t_df", 8.0)),
+        }
+        return GARCHStock(
+            S0=float(config["s0"]),
+            T=t,
+            N=n,
+            r=float(config["r"]),
+            **sigma_kwargs,
+            **garch_kwargs,
+        )
+
+    raise ValueError("instrument_model must be one of {'gbm','garch'}.")
 
 
 def build_claim_from_config(config: dict[str, Any]):
@@ -392,6 +424,41 @@ def build_agent_from_config(
             else int(config.get("benchmark_mc_parallel_chunk_size"))
         ),
         "parallel_min_states": int(config.get("benchmark_mc_parallel_min_states", 128)),
+        # Local Risk Minimization provider stack.
+        "lrm_provider": str(config.get("benchmark_lrm_provider", "bs_closed_form")),
+        "lrm_outer_paths": int(config.get("benchmark_lrm_outer_paths", 512)),
+        "lrm_var_epsilon": float(config.get("benchmark_lrm_var_epsilon", 1e-10)),
+        "lrm_use_antithetic": bool(config.get("benchmark_lrm_use_antithetic", True)),
+        "lrm_seed_mode": str(config.get("benchmark_lrm_seed_mode", "shared_crn")),
+        "lrm_mc_inner_paths": int(config.get("benchmark_lrm_mc_inner_paths", 1024)),
+        "lrm_mc_inner_chunk_size": int(config.get("benchmark_lrm_mc_inner_chunk_size", 64)),
+        "lrm_mc_parallel_enabled": bool(config.get("benchmark_lrm_mc_parallel_enabled", False)),
+        "lrm_mc_n_workers": int(config.get("benchmark_lrm_mc_n_workers", 1)),
+        "lrm_mc_parallel_backend": str(config.get("benchmark_lrm_mc_parallel_backend", "thread")),
+        "lrm_mc_parallel_chunk_size": (
+            None
+            if config.get("benchmark_lrm_mc_parallel_chunk_size", None) is None
+            else int(config.get("benchmark_lrm_mc_parallel_chunk_size"))
+        ),
+        "lrm_lsm_train_paths": int(config.get("benchmark_lrm_lsm_train_paths", 50_000)),
+        "lrm_lsm_ridge_alpha": float(config.get("benchmark_lrm_lsm_ridge_alpha", 1e-6)),
+        "lrm_lsm_feature_set": str(config.get("benchmark_lrm_lsm_feature_set", "default")),
+        "lrm_lsm_poly_degree": int(config.get("benchmark_lrm_lsm_poly_degree", 2)),
+        "lrm_lsm_use_cache": bool(config.get("benchmark_lrm_lsm_use_cache", True)),
+        "lrm_lsm_cache_dir": (
+            None
+            if config.get("benchmark_lrm_lsm_cache_dir", None) is None
+            else str(config.get("benchmark_lrm_lsm_cache_dir"))
+        ),
+        "lrm_lsm_cache_key": (
+            None
+            if config.get("benchmark_lrm_lsm_cache_key", None) is None
+            else str(config.get("benchmark_lrm_lsm_cache_key"))
+        ),
+        "lrm_lsm_force_rebuild": bool(config.get("benchmark_lrm_lsm_force_rebuild", False)),
+        "lrm_verbose": bool(config.get("benchmark_lrm_verbose", False)),
+        "lrm_log_every_t": int(config.get("benchmark_lrm_log_every_t", 5)),
+        "lrm_mc_log_every_chunks": int(config.get("benchmark_lrm_mc_log_every_chunks", 0)),
     }
     kwargs = {k: v for k, v in candidate_kwargs.items() if k in init_params}
     agent = agent_cls(instrument, claim, **kwargs)

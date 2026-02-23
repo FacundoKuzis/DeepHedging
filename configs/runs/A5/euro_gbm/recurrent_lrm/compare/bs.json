@@ -1,0 +1,12 @@
+{
+  "extends": "../../../../../bases/A5/compare/euro_gbm_recurrent_lrm_compare_base.json",
+  "run_name": "a5_euro_gbm_rec_lrm_bs_cmp",
+  "description": "A5 compare: Recurrent vs LRM (BS closed-form continuation).",
+  "benchmark_lrm_provider": "bs_closed_form",
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "a5_euro_gbm_rec_mny"
+    }
+  ]
+}

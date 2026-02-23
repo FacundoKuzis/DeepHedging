@@ -1,0 +1,18 @@
+{
+  "extends": "../../../../../bases/A5/compare/euro_gbm_recurrent_lrm_compare_base.json",
+  "run_name": "a5_euro_gbm_rec_lrm_mc_cmp",
+  "description": "A5 compare: Recurrent vs LRM (Monte Carlo continuation).",
+  "benchmark_lrm_provider": "monte_carlo",
+  "benchmark_lrm_outer_paths": 256,
+  "benchmark_lrm_mc_inner_paths": 512,
+  "benchmark_lrm_mc_inner_chunk_size": 64,
+  "benchmark_lrm_mc_parallel_enabled": true,
+  "benchmark_lrm_mc_n_workers": 4,
+  "benchmark_lrm_mc_parallel_backend": "thread",
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "a5_euro_gbm_rec_mny"
+    }
+  ]
+}

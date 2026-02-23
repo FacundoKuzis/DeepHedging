@@ -5,6 +5,7 @@ import os
 import pickle
 import inspect
 import warnings
+from datetime import datetime
 import pandas as pd
 import random
 import time
@@ -71,6 +72,11 @@ class Environment:
         if base_seed is None:
             return None
         return int(base_seed) + int(offset)
+
+    def _log_terminal(self, message, warning=False):
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        prefix = "[terminal][warning]" if warning else "[terminal]"
+        print(f"[{ts}] {prefix} {message}")
 
     def _next_history_context_seed(self):
         if self._history_context_seed_base is None:
@@ -722,10 +728,7 @@ class Environment:
         )
 
     def _supports_pathwise_window_pricing(self, agent):
-        return (
-            getattr(agent, "name", None) == "bs_delta_hedging"
-            and hasattr(agent, "get_model_price_batch")
-        )
+        return hasattr(agent, "get_model_price_batch")
 
     def _compute_agent_price(
         self,
@@ -832,8 +835,8 @@ class Environment:
             simulate_pre_history_global = pre_history_prices_global is None
             generated_internally = True
         self._history_context_counter = 0
-        print(
-            f"[terminal] Paths generated: shape={tuple(paths.shape)}, "
+        self._log_terminal(
+            f"Paths generated: shape={tuple(paths.shape)}, "
             f"n_paths={n_paths}, n_agents={len(agents)}"
         )
         if per_path_r is not None:
@@ -855,8 +858,8 @@ class Environment:
             )
             if inferred_sigma is not None:
                 per_path_sigma = inferred_sigma
-                print(
-                    f"[terminal] Inferred per-path sigma from generated GBM paths "
+                self._log_terminal(
+                    f"Inferred per-path sigma from generated GBM paths "
                     f"(n={int(per_path_sigma.shape[0])})."
                 )
 
@@ -929,7 +932,7 @@ class Environment:
             agent_id = self._get_agent_identifier(agent, idx)
             price = prices[idx]
             agent_start_time = time.perf_counter()
-            print(f"[terminal] agent={agent_id} ({idx+1}/{len(agents)}): starting evaluation.")
+            self._log_terminal(f"agent={agent_id} ({idx+1}/{len(agents)}): starting evaluation.")
 
             # Check if actions are fixed for this agent
             fixed_path = None
@@ -952,8 +955,8 @@ class Environment:
                 else:
                     batch_size_eval = max(1, int(agent_eval_batch_size))
                 if batch_size_eval >= total_paths:
-                    print(
-                        f"[terminal] agent={agent_id}: computing actions in one batch "
+                    self._log_terminal(
+                        f"agent={agent_id}: computing actions in one batch "
                         f"(n_paths={total_paths})."
                     )
                     T_minus_t = self.get_T_minus_t(total_paths)
@@ -984,8 +987,9 @@ class Environment:
                 else:
                     n_batches = int(np.ceil(total_paths / float(batch_size_eval)))
                     progress_step = max(1, int(progress_log_every_agent_batches))
-                    print(
-                        f"[terminal] agent={agent_id}: computing actions in {n_batches} batches "
+                    batch_actions_start = time.perf_counter()
+                    self._log_terminal(
+                        f"agent={agent_id}: computing actions in {n_batches} batches "
                         f"(batch_size={batch_size_eval})."
                     )
                     action_chunks = []
@@ -1028,9 +1032,21 @@ class Environment:
 
                         done = b_idx + 1
                         if done % progress_step == 0 or done == n_batches:
-                            print(
-                                f"[terminal] agent={agent_id}: actions batches {done}/{n_batches} "
-                                f"({end}/{total_paths} paths)."
+                            now = time.perf_counter()
+                            elapsed = now - batch_actions_start
+                            avg_batch_time = (elapsed / float(done)) if done > 0 else np.nan
+                            eta_seconds = (
+                                avg_batch_time * float(n_batches - done)
+                                if np.isfinite(avg_batch_time)
+                                else np.nan
+                            )
+                            rate_paths_per_sec = (float(end) / elapsed) if elapsed > 0.0 else np.nan
+                            eta_display = f"{eta_seconds:.1f}s" if np.isfinite(eta_seconds) else "n/a"
+                            rate_display = f"{rate_paths_per_sec:.1f} paths/s" if np.isfinite(rate_paths_per_sec) else "n/a"
+                            self._log_terminal(
+                                f"agent={agent_id}: actions batches {done}/{n_batches} "
+                                f"({end}/{total_paths} paths), elapsed={elapsed:.1f}s, "
+                                f"eta={eta_display}, rate={rate_display}."
                             )
                     val_actions = tf.concat(action_chunks, axis=0)
 
@@ -1045,7 +1061,7 @@ class Environment:
                     print(f"Saved val_actions for agent '{agent_id}' to '{agent_actions_path}'.")
 
             actions_elapsed = time.perf_counter() - agent_start_time
-            print(f"[terminal] agent={agent_id}: actions ready in {actions_elapsed:.2f}s. Calculating PnL...")
+            self._log_terminal(f"agent={agent_id}: actions ready in {actions_elapsed:.2f}s. Calculating PnL...")
             pnl = self.calculate_pnl(paths, val_actions, path_r=per_path_r)
             if per_path_r is None:
                 discount = tf.constant(np.exp(-self.r * self.T), dtype=tf.float32)
@@ -1066,7 +1082,7 @@ class Environment:
                     loss_results[loss_fn.name].append(tf.reduce_mean(loss_value).numpy())
 
             total_agent_elapsed = time.perf_counter() - agent_start_time
-            print(f"[terminal] agent={agent_id}: done in {total_agent_elapsed:.2f}s.")
+            self._log_terminal(f"agent={agent_id}: done in {total_agent_elapsed:.2f}s.")
 
         if plot_error:
             plt.figure(figsize=(10, 6))
@@ -1090,9 +1106,10 @@ class Environment:
                         auto_lo = center - 1.0
                         auto_hi = center + 1.0
                     bins = np.linspace(auto_lo, auto_hi, 60)
-                    print(
-                        "[terminal][warning] Histogram range had zero in-range samples. "
-                        f"Auto-adjusted range to [{auto_lo:.6g}, {auto_hi:.6g}]."
+                    self._log_terminal(
+                        "Histogram range had zero in-range samples. "
+                        f"Auto-adjusted range to [{auto_lo:.6g}, {auto_hi:.6g}].",
+                        warning=True,
                     )
             else:
                 total_counts = [int(arr.size) for arr in finite_errors]
@@ -1101,10 +1118,11 @@ class Environment:
                     if total > 0 and (in_count / float(total)) < 0.05
                 ]
                 if low_coverage_agents:
-                    print(
-                        "[terminal][warning] Most samples are outside the configured histogram range "
+                    self._log_terminal(
+                        "Most samples are outside the configured histogram range "
                         f"[{float(min_x):.6g}, {float(max_x):.6g}] for agent indices {low_coverage_agents}. "
-                        "Plot may look sparse."
+                        "Plot may look sparse.",
+                        warning=True,
                     )
 
             # Use explicit colors if provided; otherwise prioritize each agent.plot_color.
@@ -1169,13 +1187,13 @@ class Environment:
             df.to_excel(save_stats_path, index=False)
             print(f"Statistics saved to {save_stats_path}")
             total_elapsed = time.perf_counter() - eval_start_time
-            print(f"[terminal] Completed multi-agent terminal evaluation in {total_elapsed:.2f}s.")
+            self._log_terminal(f"Completed multi-agent terminal evaluation in {total_elapsed:.2f}s.")
             if return_errors:
                 return df, errors
             return df
 
         total_elapsed = time.perf_counter() - eval_start_time
-        print(f"[terminal] Completed multi-agent terminal evaluation in {total_elapsed:.2f}s.")
+        self._log_terminal(f"Completed multi-agent terminal evaluation in {total_elapsed:.2f}s.")
         payload = (mean_errors, std_errors, loss_results if loss_functions else None)
         if return_errors:
             return payload, errors

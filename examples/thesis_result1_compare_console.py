@@ -103,6 +103,28 @@ def optional_keys() -> set[str]:
         "benchmark_mc_parallel_chunk_size",
         "benchmark_mc_parallel_min_states",
         "reuse_actions_between_steps",
+        "benchmark_lrm_provider",
+        "benchmark_lrm_outer_paths",
+        "benchmark_lrm_var_epsilon",
+        "benchmark_lrm_use_antithetic",
+        "benchmark_lrm_seed_mode",
+        "benchmark_lrm_mc_inner_paths",
+        "benchmark_lrm_mc_inner_chunk_size",
+        "benchmark_lrm_mc_parallel_enabled",
+        "benchmark_lrm_mc_n_workers",
+        "benchmark_lrm_mc_parallel_backend",
+        "benchmark_lrm_mc_parallel_chunk_size",
+        "benchmark_lrm_lsm_train_paths",
+        "benchmark_lrm_lsm_ridge_alpha",
+        "benchmark_lrm_lsm_feature_set",
+        "benchmark_lrm_lsm_poly_degree",
+        "benchmark_lrm_lsm_use_cache",
+        "benchmark_lrm_lsm_cache_dir",
+        "benchmark_lrm_lsm_cache_key",
+        "benchmark_lrm_lsm_force_rebuild",
+        "benchmark_lrm_verbose",
+        "benchmark_lrm_log_every_t",
+        "benchmark_lrm_mc_log_every_chunks",
     }
 
 
@@ -183,6 +205,69 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("benchmark_mc_parallel_min_states must be null or > 0.")
     if "reuse_actions_between_steps" in config and not isinstance(config["reuse_actions_between_steps"], bool):
         raise ValueError("reuse_actions_between_steps must be bool.")
+    if "benchmark_lrm_provider" in config:
+        provider = str(config["benchmark_lrm_provider"]).strip().lower()
+        if provider not in {"bs_closed_form", "monte_carlo", "lsm", "lsmc", "asian_monte_carlo", "asian_lsmc"}:
+            raise ValueError(
+                "benchmark_lrm_provider must be one of "
+                "{'bs_closed_form','monte_carlo','lsm','lsmc','asian_monte_carlo','asian_lsmc'}."
+            )
+        claim_name = str(config["contingent_claim"]).strip()
+        if provider == "bs_closed_form" and claim_name not in {"EuropeanCall", "EuropeanPut"}:
+            raise ValueError("benchmark_lrm_provider='bs_closed_form' supports only EuropeanCall/EuropeanPut.")
+        if provider in {"asian_monte_carlo", "asian_lsmc"} and not claim_name.startswith("Asian"):
+            raise ValueError("benchmark_lrm_provider for Asian requires an Asian contingent_claim.")
+    if "benchmark_lrm_outer_paths" in config and int(config["benchmark_lrm_outer_paths"]) <= 1:
+        raise ValueError("benchmark_lrm_outer_paths must be > 1.")
+    if "benchmark_lrm_var_epsilon" in config and float(config["benchmark_lrm_var_epsilon"]) <= 0.0:
+        raise ValueError("benchmark_lrm_var_epsilon must be > 0.")
+    if "benchmark_lrm_use_antithetic" in config and not isinstance(config["benchmark_lrm_use_antithetic"], bool):
+        raise ValueError("benchmark_lrm_use_antithetic must be bool.")
+    if "benchmark_lrm_seed_mode" in config:
+        mode = str(config["benchmark_lrm_seed_mode"]).strip().lower()
+        if mode not in {"shared_crn", "per_state"}:
+            raise ValueError("benchmark_lrm_seed_mode must be 'shared_crn' or 'per_state'.")
+    if "benchmark_lrm_mc_inner_paths" in config and int(config["benchmark_lrm_mc_inner_paths"]) <= 1:
+        raise ValueError("benchmark_lrm_mc_inner_paths must be > 1.")
+    if "benchmark_lrm_mc_inner_chunk_size" in config and int(config["benchmark_lrm_mc_inner_chunk_size"]) <= 0:
+        raise ValueError("benchmark_lrm_mc_inner_chunk_size must be > 0.")
+    if "benchmark_lrm_mc_parallel_enabled" in config and not isinstance(config["benchmark_lrm_mc_parallel_enabled"], bool):
+        raise ValueError("benchmark_lrm_mc_parallel_enabled must be bool.")
+    if "benchmark_lrm_mc_n_workers" in config and int(config["benchmark_lrm_mc_n_workers"]) <= 0:
+        raise ValueError("benchmark_lrm_mc_n_workers must be > 0.")
+    if "benchmark_lrm_mc_parallel_backend" in config:
+        backend = str(config["benchmark_lrm_mc_parallel_backend"]).strip().lower()
+        if backend not in {"thread", "process"}:
+            raise ValueError("benchmark_lrm_mc_parallel_backend must be 'thread' or 'process'.")
+    if "benchmark_lrm_mc_parallel_chunk_size" in config and config["benchmark_lrm_mc_parallel_chunk_size"] is not None:
+        if int(config["benchmark_lrm_mc_parallel_chunk_size"]) <= 0:
+            raise ValueError("benchmark_lrm_mc_parallel_chunk_size must be > 0 when provided.")
+    if "benchmark_lrm_lsm_train_paths" in config and int(config["benchmark_lrm_lsm_train_paths"]) <= 10:
+        raise ValueError("benchmark_lrm_lsm_train_paths must be > 10.")
+    if "benchmark_lrm_lsm_ridge_alpha" in config and float(config["benchmark_lrm_lsm_ridge_alpha"]) <= 0.0:
+        raise ValueError("benchmark_lrm_lsm_ridge_alpha must be > 0.")
+    if "benchmark_lrm_lsm_feature_set" in config:
+        feature_set = str(config["benchmark_lrm_lsm_feature_set"]).strip().lower()
+        if feature_set not in {"minimal", "default"}:
+            raise ValueError("benchmark_lrm_lsm_feature_set must be 'minimal' or 'default'.")
+    if "benchmark_lrm_lsm_poly_degree" in config and int(config["benchmark_lrm_lsm_poly_degree"]) <= 0:
+        raise ValueError("benchmark_lrm_lsm_poly_degree must be > 0.")
+    if "benchmark_lrm_lsm_use_cache" in config and not isinstance(config["benchmark_lrm_lsm_use_cache"], bool):
+        raise ValueError("benchmark_lrm_lsm_use_cache must be bool.")
+    if "benchmark_lrm_lsm_force_rebuild" in config and not isinstance(config["benchmark_lrm_lsm_force_rebuild"], bool):
+        raise ValueError("benchmark_lrm_lsm_force_rebuild must be bool.")
+    if "benchmark_lrm_lsm_cache_dir" in config and config["benchmark_lrm_lsm_cache_dir"] is not None:
+        if not isinstance(config["benchmark_lrm_lsm_cache_dir"], str) or not str(config["benchmark_lrm_lsm_cache_dir"]).strip():
+            raise ValueError("benchmark_lrm_lsm_cache_dir must be null or non-empty string.")
+    if "benchmark_lrm_lsm_cache_key" in config and config["benchmark_lrm_lsm_cache_key"] is not None:
+        if not isinstance(config["benchmark_lrm_lsm_cache_key"], str) or not str(config["benchmark_lrm_lsm_cache_key"]).strip():
+            raise ValueError("benchmark_lrm_lsm_cache_key must be null or non-empty string.")
+    if "benchmark_lrm_verbose" in config and not isinstance(config["benchmark_lrm_verbose"], bool):
+        raise ValueError("benchmark_lrm_verbose must be bool.")
+    if "benchmark_lrm_log_every_t" in config and int(config["benchmark_lrm_log_every_t"]) <= 0:
+        raise ValueError("benchmark_lrm_log_every_t must be > 0.")
+    if "benchmark_lrm_mc_log_every_chunks" in config and int(config["benchmark_lrm_mc_log_every_chunks"]) < 0:
+        raise ValueError("benchmark_lrm_mc_log_every_chunks must be >= 0.")
     if not isinstance(config["eval_seed"], int):
         raise ValueError("eval_seed must be int.")
     if str(config["pricing_method"]) not in {"fixed", "individual"}:

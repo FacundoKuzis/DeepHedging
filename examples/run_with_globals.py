@@ -30,7 +30,7 @@ if SRC_DIR not in sys.path:
 from DeepHedging.Agents import (
     SimpleAgent, RecurrentAgent, LSTMAgent, GRUAgent, WaveNetAgent,
     DeltaHedgingAgent, GeometricAsianDeltaHedgingAgent, GeometricAsianDeltaHedgingAgent2,
-    GeometricAsianNumericalDeltaHedgingAgent, QuantlibAsianGeometricAgent,
+    GeometricAsianNumericalDeltaHedgingAgent, QuantlibAsianGeometricAgent, LocalRiskMinimizationAgent,
     ArithmeticAsianMonteCarloAgent, ArithmeticAsianControlVariateAgent, MonteCarloAgent,
 )
 from DeepHedging.HedgingInstruments import GBMStock
@@ -126,6 +126,7 @@ AGENTS = {
     "ArithmeticAsianMonteCarloAgent": ArithmeticAsianMonteCarloAgent,
     "ArithmeticAsianControlVariateAgent": ArithmeticAsianControlVariateAgent,
     "MonteCarloAgent": MonteCarloAgent,
+    "LocalRiskMinimizationAgent": LocalRiskMinimizationAgent,
 }
 
 CLAIMS = {
