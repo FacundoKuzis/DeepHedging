@@ -1,0 +1,9 @@
+{
+  "extends": "../../../../../bases/A4/train/euro_gbm_recurrent_mny_cvar50_convctx_base.json",
+  "run_name": "a4_rec_mny_cvar50_conv_u_wide",
+  "model_name": "a4_rec_mny_cvar50_conv_u_wide",
+  "description": "A4 train: Recurrent + seen Conv1D context, sigma per path ~ Uniform(0.05, 0.50), CVaR50, no costs.",
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.05,
+  "gbm_sigma_uniform_high": 0.5
+}

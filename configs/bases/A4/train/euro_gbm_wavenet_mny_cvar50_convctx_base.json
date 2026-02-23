@@ -1,0 +1,30 @@
+{
+  "extends": "../../../bases/A3/train/euro_gbm_wavenet_mny_cvar50_base.json",
+  "description": "A4 base train: WaveNet log-moneyness, CVaR50, no costs, random pathwise sigma, seen context with Conv1D encoder.",
+  "use_price_history_context": true,
+  "context_for_path_generation_only": false,
+  "context_length": 42,
+  "context_feature_mode": "log_moneyness",
+  "history_conv1d_enabled": true,
+  "history_conv1d_pooling": "global_max",
+  "history_conv1d_layers": [
+    {
+      "filters": 32,
+      "kernel_size": 3,
+      "dilation_rate": 1,
+      "activation": "relu",
+      "dropout": 0.0,
+      "use_batch_norm": false,
+      "use_residual": false
+    },
+    {
+      "filters": 32,
+      "kernel_size": 3,
+      "dilation_rate": 2,
+      "activation": "relu",
+      "dropout": 0.1,
+      "use_batch_norm": true,
+      "use_residual": true
+    }
+  ]
+}

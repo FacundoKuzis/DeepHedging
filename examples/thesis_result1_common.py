@@ -275,12 +275,20 @@ def build_agent_from_config(
         use_context = bool(config.get("use_price_history_context", False))
         context_for_paths_only = bool(config.get("context_for_path_generation_only", False))
         context_length = int(config.get("context_length", 0)) if use_context else 0
+        history_conv1d_enabled = bool(config.get("history_conv1d_enabled", False))
+        history_conv1d_layers = config.get("history_conv1d_layers")
+        history_conv1d_pooling = str(config.get("history_conv1d_pooling", "global_max")).strip().lower()
         sequence_context_agents = {"LSTMAgent", "GRUAgent", "WaveNetAgent"}
         context_as_timesteps = bool(
             use_context
             and (not context_for_paths_only)
             and agent_name in sequence_context_agents
         )
+        # Conv1D encoder consumes seen context features. For sequence agents this
+        # requires feature mode (not temporal-prefix mode) to avoid bypassing
+        # history_features in process_batch.
+        if history_conv1d_enabled and context_as_timesteps:
+            context_as_timesteps = False
         context_pre_ttm_mode = str(config.get("context_pre_ttm_mode", "calculated")).strip().lower()
         if context_pre_ttm_mode == "extended":
             context_pre_ttm_mode = "calculated"
@@ -289,7 +297,20 @@ def build_agent_from_config(
         if context_for_paths_only:
             history_feature_dim = 0
         else:
-            history_feature_dim = 0 if context_as_timesteps else context_length
+            raw_history_dim = 0 if context_as_timesteps else context_length
+            if history_conv1d_enabled:
+                if not isinstance(history_conv1d_layers, list) or len(history_conv1d_layers) == 0:
+                    raise ValueError(
+                        "history_conv1d_layers must be a non-empty list when history_conv1d_enabled=true."
+                    )
+                last_layer = history_conv1d_layers[-1]
+                if not isinstance(last_layer, dict) or "filters" not in last_layer:
+                    raise ValueError(
+                        "history_conv1d_layers last layer must include 'filters'."
+                    )
+                history_feature_dim = int(last_layer["filters"])
+            else:
+                history_feature_dim = int(raw_history_dim)
 
         path_transformation_type = str(config.get("path_transformation_type", "log_moneyness")).strip().lower()
         if path_transformation_type not in {"none", "log", "log_moneyness"}:
@@ -327,6 +348,12 @@ def build_agent_from_config(
         # Optional constant feature appended to every timestep/input row.
         agent.append_log_strike_feature = bool(include_log_strike_feature)
         agent.log_strike_value = float(np.log(max(float(config["strike"]), 1e-8)))
+        if hasattr(agent, "configure_history_conv1d_encoder"):
+            agent.configure_history_conv1d_encoder(
+                enabled=history_conv1d_enabled,
+                layers_config=history_conv1d_layers,
+                pooling=history_conv1d_pooling,
+            )
         return agent
 
     no_intervention_bound = config.get(

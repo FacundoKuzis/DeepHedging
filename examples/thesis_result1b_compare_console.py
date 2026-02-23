@@ -153,6 +153,9 @@ def optional_keys() -> set[str]:
         "price_computation_mode",
         "path_transformation_type",
         "include_log_strike_feature",
+        "history_conv1d_enabled",
+        "history_conv1d_layers",
+        "history_conv1d_pooling",
         "gbm_sigma_per_path_mode",
         "gbm_sigma_uniform_low",
         "gbm_sigma_uniform_high",
@@ -378,6 +381,46 @@ def validate_config(config: dict[str, Any]) -> None:
     else:
         if "context_length" in config and int(config["context_length"]) < 0:
             raise ValueError("context_length must be >= 0.")
+
+    if "history_conv1d_enabled" in config and not isinstance(config["history_conv1d_enabled"], bool):
+        raise ValueError("history_conv1d_enabled must be bool when provided.")
+    history_conv1d_enabled = bool(config.get("history_conv1d_enabled", False))
+    if history_conv1d_enabled:
+        if not use_context:
+            raise ValueError("history_conv1d_enabled=true requires use_price_history_context=true.")
+        if bool(config.get("context_for_path_generation_only", False)):
+            raise ValueError(
+                "history_conv1d_enabled=true is incompatible with context_for_path_generation_only=true."
+            )
+        layers = config.get("history_conv1d_layers")
+        if not isinstance(layers, list) or len(layers) == 0:
+            raise ValueError(
+                "history_conv1d_layers must be a non-empty list when history_conv1d_enabled=true."
+            )
+        for i, layer in enumerate(layers):
+            if not isinstance(layer, dict):
+                raise ValueError(f"history_conv1d_layers[{i}] must be an object.")
+            if "filters" not in layer or "kernel_size" not in layer:
+                raise ValueError(
+                    f"history_conv1d_layers[{i}] must include 'filters' and 'kernel_size'."
+                )
+            if int(layer["filters"]) <= 0:
+                raise ValueError(f"history_conv1d_layers[{i}].filters must be > 0.")
+            if int(layer["kernel_size"]) <= 0:
+                raise ValueError(f"history_conv1d_layers[{i}].kernel_size must be > 0.")
+            if "dilation_rate" in layer and int(layer["dilation_rate"]) <= 0:
+                raise ValueError(f"history_conv1d_layers[{i}].dilation_rate must be > 0 when provided.")
+            if "dropout" in layer:
+                d = float(layer["dropout"])
+                if d < 0.0 or d >= 1.0:
+                    raise ValueError(f"history_conv1d_layers[{i}].dropout must satisfy 0 <= dropout < 1.")
+            if "activation" in layer and not str(layer["activation"]).strip():
+                raise ValueError(f"history_conv1d_layers[{i}].activation cannot be empty when provided.")
+        pooling = str(config.get("history_conv1d_pooling", "global_max")).strip().lower()
+        if pooling not in {"global_max", "global_avg"}:
+            raise ValueError(
+                "history_conv1d_pooling must be 'global_max' or 'global_avg' when history_conv1d_enabled=true."
+            )
 
     if int(config["historical_stride"]) <= 0:
         raise ValueError("historical_stride must be > 0")
@@ -888,6 +931,9 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "context_length": int(config.get("context_length", 0)),
             "context_feature_mode": str(config.get("context_feature_mode", "log_returns")),
             "context_pre_ttm_mode": str(config.get("context_pre_ttm_mode", "calculated")),
+            "history_conv1d_enabled": bool(config.get("history_conv1d_enabled", False)),
+            "history_conv1d_layers": config.get("history_conv1d_layers"),
+            "history_conv1d_pooling": str(config.get("history_conv1d_pooling", "global_max")),
             "paths_signature": None if eval_paths_tensor is None else _paths_signature(eval_paths_tensor),
         }
         _ensure_actions_cache_consistency(
@@ -1044,6 +1090,9 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 "context_length": int(config.get("context_length", 0)),
                 "context_feature_mode": str(config.get("context_feature_mode", "log_returns")),
                 "context_pre_ttm_mode": str(config.get("context_pre_ttm_mode", "calculated")),
+                "history_conv1d_enabled": bool(config.get("history_conv1d_enabled", False)),
+                "history_conv1d_layers": json.dumps(config.get("history_conv1d_layers")),
+                "history_conv1d_pooling": str(config.get("history_conv1d_pooling", "global_max")),
                 "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
                 "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
                 "gbm_sigma_uniform_high": config.get("gbm_sigma_uniform_high"),

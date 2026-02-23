@@ -1,0 +1,10 @@
+{
+  "extends": "../../../../../bases/A4/train/euro_gbm_recurrent_mny_cvar50_convctx_base.json",
+  "run_name": "a4_rec_mny_cvar50_conv_fix_s02",
+  "model_name": "a4_rec_mny_cvar50_conv_fix_s02",
+  "description": "A4 train: Recurrent + seen Conv1D context, fixed sigma 0.20, CVaR50, no costs.",
+  "gbm_sigma_per_path_mode": "fixed",
+  "sigma_source": "implied",
+  "implied_vol_source": "fixed",
+  "fixed_implied_vol": 0.2
+}

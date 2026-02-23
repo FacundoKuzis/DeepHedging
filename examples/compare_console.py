@@ -50,6 +50,9 @@ def _apply_relaxed_defaults_compare(config: dict[str, Any], pipeline: str) -> di
             "context_feature_mode": "log_returns",
             "context_pre_ttm_mode": "calculated",
             "context_for_path_generation_only": False,
+            "history_conv1d_enabled": False,
+            "history_conv1d_layers": None,
+            "history_conv1d_pooling": "global_max",
             "gbm_sigma_per_path_mode": "fixed",
         }
         for k, v in defaults.items():

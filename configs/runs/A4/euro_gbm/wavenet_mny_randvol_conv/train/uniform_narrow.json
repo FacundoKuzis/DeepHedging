@@ -1,0 +1,9 @@
+{
+  "extends": "../../../../../bases/A4/train/euro_gbm_wavenet_mny_cvar50_convctx_base.json",
+  "run_name": "a4_wav_mny_cvar50_conv_u_narrow",
+  "model_name": "a4_wav_mny_cvar50_conv_u_narrow",
+  "description": "A4 train: seen Conv1D context, sigma per path ~ Uniform(0.15, 0.30), CVaR50, no costs.",
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.15,
+  "gbm_sigma_uniform_high": 0.3
+}

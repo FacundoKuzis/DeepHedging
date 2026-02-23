@@ -145,6 +145,38 @@ WaveNet + log-moneyness, objective CVaR50, no transaction costs.
   - `python examples/train_console.py A3/euro_gbm/wavenet_mny_randvol/train/discrete_regimes`
   - `python examples/compare_console.py A3/euro_gbm/wavenet_mny_randvol/compare/discrete_regimes`
 
+## A4 set (random volatility + seen context Conv1D encoder)
+
+WaveNet + log-moneyness, objective CVaR50, no transaction costs.
+Context is generated and visible, encoded with `history_conv1d_layers` (no legacy one-layer config).
+
+- Uniform narrow:
+  - `python examples/train_console.py A4/euro_gbm/wavenet_mny_randvol_conv/train/uniform_narrow`
+  - `python examples/compare_console.py A4/euro_gbm/wavenet_mny_randvol_conv/compare/uniform_narrow`
+- Uniform wide:
+  - `python examples/train_console.py A4/euro_gbm/wavenet_mny_randvol_conv/train/uniform_wide`
+  - `python examples/compare_console.py A4/euro_gbm/wavenet_mny_randvol_conv/compare/uniform_wide`
+- Discrete regimes:
+  - `python examples/train_console.py A4/euro_gbm/wavenet_mny_randvol_conv/train/discrete_regimes`
+  - `python examples/compare_console.py A4/euro_gbm/wavenet_mny_randvol_conv/compare/discrete_regimes`
+- Fixed sigma 0.20:
+  - `python examples/train_console.py A4/euro_gbm/wavenet_mny_randvol_conv/train/fixed_s02`
+  - `python examples/compare_console.py A4/euro_gbm/wavenet_mny_randvol_conv/compare/fixed_s02`
+
+Recurrent + Conv1D context, fixed sigma 0.20:
+
+- `python examples/train_console.py A4/euro_gbm/recurrent_mny_randvol_conv/train/fixed_s02`
+- `python examples/compare_console.py A4/euro_gbm/recurrent_mny_randvol_conv/compare/fixed_s02`
+
+Recurrent + Conv1D context, uniform sigma:
+
+- Narrow (0.15, 0.30):
+  - `python examples/train_console.py A4/euro_gbm/recurrent_mny_randvol_conv/train/uniform_narrow`
+  - `python examples/compare_console.py A4/euro_gbm/recurrent_mny_randvol_conv/compare/uniform_narrow`
+- Wide (0.05, 0.50):
+  - `python examples/train_console.py A4/euro_gbm/recurrent_mny_randvol_conv/train/uniform_wide`
+  - `python examples/compare_console.py A4/euro_gbm/recurrent_mny_randvol_conv/compare/uniform_wide`
+
 ## Note
 
 Legacy folders (`thesis_result1_configs`, `thesis_result1b_configs`) remain usable.

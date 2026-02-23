@@ -1,0 +1,14 @@
+{
+  "extends": "../../../../../bases/A4/compare/euro_gbm_wavenet_mny_cvar50_convctx_compare_base.json",
+  "run_name": "a4_wav_mny_cvar50_conv_u_wide_cmp",
+  "description": "A4 compare: seen Conv1D context, sigma per path ~ Uniform(0.05, 0.50), CVaR50, no costs.",
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.05,
+  "gbm_sigma_uniform_high": 0.5,
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a4_wav_mny_cvar50_conv_u_wide"
+    }
+  ]
+}

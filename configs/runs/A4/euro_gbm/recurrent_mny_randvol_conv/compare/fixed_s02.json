@@ -1,0 +1,15 @@
+{
+  "extends": "../../../../../bases/A4/compare/euro_gbm_recurrent_mny_cvar50_convctx_compare_base.json",
+  "run_name": "a4_rec_mny_cvar50_conv_fix_s02_cmp",
+  "description": "A4 compare: Recurrent + seen Conv1D context, fixed sigma 0.20, CVaR50, no costs.",
+  "gbm_sigma_per_path_mode": "fixed",
+  "sigma_source": "implied",
+  "implied_vol_source": "fixed",
+  "fixed_implied_vol": 0.2,
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "a4_rec_mny_cvar50_conv_fix_s02"
+    }
+  ]
+}
