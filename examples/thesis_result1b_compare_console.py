@@ -159,6 +159,8 @@ def optional_keys() -> set[str]:
         "price_computation_mode",
         "path_transformation_type",
         "include_log_strike_feature",
+        "sequence_output_mode",
+        "position_activation",
         "garch_alpha",
         "garch_beta",
         "garch_omega",
@@ -297,6 +299,14 @@ def validate_config(config: dict[str, Any]) -> None:
     path_t = str(config.get("path_transformation_type", "log_moneyness")).strip().lower()
     if path_t not in {"none", "log", "log_moneyness"}:
         raise ValueError("path_transformation_type must be one of {'none','log','log_moneyness'}.")
+    if "sequence_output_mode" in config:
+        seq_out = str(config["sequence_output_mode"]).strip().lower()
+        if seq_out not in {"trade", "position"}:
+            raise ValueError("sequence_output_mode must be 'trade' or 'position'.")
+    if "position_activation" in config:
+        pos_act = str(config["position_activation"]).strip().lower()
+        if pos_act not in {"linear", "sigmoid", "tanh"}:
+            raise ValueError("position_activation must be one of {'linear','sigmoid','tanh'}.")
 
     if not isinstance(config["bootstrap_enabled"], bool):
         raise ValueError("bootstrap_enabled must be bool.")

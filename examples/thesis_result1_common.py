@@ -370,6 +370,14 @@ def build_agent_from_config(
             kwargs["num_filters"] = int(config["wavenet_num_filters"])
         if "num_residual_blocks" in init_params and "wavenet_num_residual_blocks" in config:
             kwargs["num_residual_blocks"] = int(config["wavenet_num_residual_blocks"])
+        if "sequence_output_mode" in init_params:
+            kwargs["sequence_output_mode"] = str(
+                config.get("sequence_output_mode", "trade")
+            ).strip().lower()
+        if "position_activation" in init_params:
+            kwargs["position_activation"] = str(
+                config.get("position_activation", "linear")
+            ).strip().lower()
         if "history_feature_dim" in init_params:
             kwargs["history_feature_dim"] = int(history_feature_dim + strike_feature_dim)
         if "context_as_timesteps" in init_params:

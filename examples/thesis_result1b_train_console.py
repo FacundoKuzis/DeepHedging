@@ -139,6 +139,10 @@ def optional_keys() -> set[str]:
         "instrument_model",
         "path_transformation_type",
         "include_log_strike_feature",
+        "wavenet_num_filters",
+        "wavenet_num_residual_blocks",
+        "sequence_output_mode",
+        "position_activation",
         "gbm_sigma_per_path_mode",
         "gbm_sigma_uniform_low",
         "gbm_sigma_uniform_high",
@@ -294,6 +298,21 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 "history_conv1d_pooling must be 'global_max' or 'global_avg' when history_conv1d_enabled=true."
             )
+
+    if "sequence_output_mode" in config:
+        seq_out = str(config["sequence_output_mode"]).strip().lower()
+        if seq_out not in {"trade", "position"}:
+            raise ValueError("sequence_output_mode must be 'trade' or 'position'.")
+    if "position_activation" in config:
+        pos_act = str(config["position_activation"]).strip().lower()
+        if pos_act not in {"linear", "sigmoid", "tanh"}:
+            raise ValueError("position_activation must be one of {'linear','sigmoid','tanh'}.")
+    if "wavenet_num_filters" in config:
+        if int(config["wavenet_num_filters"]) <= 0:
+            raise ValueError("wavenet_num_filters must be > 0.")
+    if "wavenet_num_residual_blocks" in config:
+        if int(config["wavenet_num_residual_blocks"]) <= 0:
+            raise ValueError("wavenet_num_residual_blocks must be > 0.")
 
     if "include_log_strike_feature" in config and not isinstance(config["include_log_strike_feature"], bool):
         raise ValueError("include_log_strike_feature must be bool when provided.")

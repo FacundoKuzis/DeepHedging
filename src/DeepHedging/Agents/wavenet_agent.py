@@ -31,6 +31,8 @@ class WaveNetAgent(LSTMAgent):
         history_feature_dim=0,
         context_as_timesteps=True,
         context_pre_ttm_mode="calculated",
+        sequence_output_mode="trade",
+        position_activation="linear",
     ):
         
         self.history_feature_dim = int(history_feature_dim)
@@ -40,6 +42,14 @@ class WaveNetAgent(LSTMAgent):
         self.num_filters = num_filters
         self.num_residual_blocks = num_residual_blocks
         self.context_as_timesteps = bool(context_as_timesteps)
+        out_mode = str(sequence_output_mode).strip().lower()
+        if out_mode not in {"trade", "position"}:
+            raise ValueError("sequence_output_mode must be 'trade' or 'position'.")
+        self.sequence_output_mode = out_mode
+        pos_act = str(position_activation).strip().lower()
+        if pos_act not in {"linear", "sigmoid", "tanh"}:
+            raise ValueError("position_activation must be one of {'linear','sigmoid','tanh'}.")
+        self.position_activation = pos_act
         mode = str(context_pre_ttm_mode).strip().lower()
         if mode == "extended":
             mode = "calculated"

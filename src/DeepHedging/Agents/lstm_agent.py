@@ -26,6 +26,8 @@ class LSTMAgent(BaseAgent):
         history_feature_dim=0,
         context_as_timesteps=True,
         context_pre_ttm_mode="calculated",
+        sequence_output_mode="trade",
+        position_activation="linear",
     ):
 
         self.history_feature_dim = int(history_feature_dim)
@@ -34,6 +36,14 @@ class LSTMAgent(BaseAgent):
         self.input_shape = (None, n_instruments + 1 + self.history_feature_dim) # +1 for T-t
         self.n_instruments = n_instruments
         self.context_as_timesteps = bool(context_as_timesteps)
+        out_mode = str(sequence_output_mode).strip().lower()
+        if out_mode not in {"trade", "position"}:
+            raise ValueError("sequence_output_mode must be 'trade' or 'position'.")
+        self.sequence_output_mode = out_mode
+        pos_act = str(position_activation).strip().lower()
+        if pos_act not in {"linear", "sigmoid", "tanh"}:
+            raise ValueError("position_activation must be one of {'linear','sigmoid','tanh'}.")
+        self.position_activation = pos_act
         mode = str(context_pre_ttm_mode).strip().lower()
         if mode == "extended":
             mode = "calculated"
@@ -61,6 +71,31 @@ class LSTMAgent(BaseAgent):
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])
         return model
+
+    def _convert_sequence_output_to_actions(self, model_output):
+        """
+        Convert sequence model outputs into trading actions.
+
+        - trade mode: output is interpreted directly as action increments.
+        - position mode: output is interpreted as target position, then actions
+          are first differences of positions.
+        """
+        x = tf.convert_to_tensor(model_output, dtype=tf.float32)
+        if self.sequence_output_mode == "trade":
+            return x
+
+        if self.position_activation == "sigmoid":
+            positions = tf.sigmoid(x)
+        elif self.position_activation == "tanh":
+            positions = tf.tanh(x)
+        else:
+            positions = x
+
+        prev_positions = tf.concat(
+            [tf.zeros_like(positions[:, :1, :]), positions[:, :-1, :]],
+            axis=1,
+        )
+        return positions - prev_positions
 
     def process_batch(
         self,
@@ -122,6 +157,7 @@ class LSTMAgent(BaseAgent):
                     seq_ttm,
                     history_features=history_features,
                 )  # (batch_size, L+N, n_instruments)
+                seq_actions = self._convert_sequence_output_to_actions(seq_actions)
                 all_actions = seq_actions[:, -tf.shape(core_paths)[1] :, :]
             else:
                 all_actions = self.act(
@@ -129,12 +165,14 @@ class LSTMAgent(BaseAgent):
                     core_ttm,
                     history_features=history_features,
                 )
+                all_actions = self._convert_sequence_output_to_actions(all_actions)
         else:
             all_actions = self.act(
                 core_paths,
                 core_ttm,
                 history_features=history_features,
             ) # (batch_size, N, n_instruments)
+            all_actions = self._convert_sequence_output_to_actions(all_actions)
 
         zero_action = tf.zeros((batch_paths.shape[0], 1, all_actions.shape[2]))
         all_actions = tf.concat([all_actions, zero_action], axis=1)
