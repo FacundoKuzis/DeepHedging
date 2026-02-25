@@ -1063,7 +1063,8 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     if bool(config.get("reuse_actions_between_steps", True)):
         actions_cache_dir = os.path.join(dirs["run_dir"], "actions_cache")
         cache_manifest = {
-            "schema_version": 4,
+            "schema_version": 5,
+            "actions_cache_schema_version": int(ACTIONS_CACHE_SCHEMA_VERSION),
             "run_name": str(run_name),
             "benchmark_agent": str(config["benchmark_agent_name"]),
             "trained_agents": config["trained_agents"],
