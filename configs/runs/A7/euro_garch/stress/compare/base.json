@@ -1,0 +1,45 @@
+{
+  "extends": "../../../../../bases/A5/compare/euro_gbm_recurrent_lrm_compare_base.json",
+  "run_name": "a7_euro_garch_stress_base_cmp",
+  "description": "A7 base: Euro under stressed GARCH (no transaction costs), benchmark Delta-BS.",
+  "instrument_model": "garch",
+  "n": 50,
+  "proportional_cost": 0.0,
+  "garch_alpha": 0.15,
+  "garch_beta": 0.65,
+  "garch_omega": null,
+  "garch_leverage": 0.09,
+  "garch_use_student_t": true,
+  "garch_student_t_df": 4.5,
+  "sigma_source": "implied",
+  "implied_vol_source": "fixed",
+  "implied_vol_stat": "mean",
+  "fixed_implied_vol": 0.2,
+  "risk_free_source": "fixed",
+  "fixed_risk_free": 0.03,
+  "risk_free_mode": "train_average",
+  "test_data_mode": "simulated",
+  "benchmark_agent_name": "DeltaHedgingAgent",
+  "trained_agents": [],
+  "benchmark_agents_to_compare": [
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM MC",
+      "config_overrides": {
+        "benchmark_lrm_provider": "monte_carlo",
+        "benchmark_lrm_outer_paths": 192,
+        "benchmark_lrm_mc_inner_paths": 384,
+        "benchmark_lrm_mc_inner_chunk_size": 256,
+        "benchmark_lrm_mc_parallel_enabled": true,
+        "benchmark_lrm_mc_n_workers": 8,
+        "benchmark_lrm_mc_parallel_backend": "thread",
+        "benchmark_lrm_mc_parallel_chunk_size": 4096
+      }
+    }
+  ],
+  "eval_paths": 20000,
+  "eval_agent_batch_size": 2000,
+  "bootstrap_enabled": false,
+  "pricing_method": "individual",
+  "price_computation_mode": "pathwise_if_available"
+}

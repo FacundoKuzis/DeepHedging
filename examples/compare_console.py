@@ -83,6 +83,16 @@ def _apply_relaxed_defaults_compare(config: dict[str, Any], pipeline: str) -> di
             "benchmark_lrm_verbose": False,
             "benchmark_lrm_log_every_t": 5,
             "benchmark_lrm_mc_log_every_chunks": 0,
+            "benchmark_delta_sigma_mode": "none",
+            "benchmark_delta_sigma_context_days": 50,
+            "benchmark_delta_sigma_min_obs": 10,
+            "benchmark_delta_sigma_garch_alpha": None,
+            "benchmark_delta_sigma_garch_beta": None,
+            "benchmark_delta_sigma_garch_leverage": None,
+            "benchmark_delta_sigma_garch_omega": None,
+            "benchmark_delta_sigma_floor": 1e-6,
+            "benchmark_delta_sigma_cap": None,
+            "benchmark_delta_sigma_default": None,
             "benchmark_agents_to_compare": [],
         }
         for k, v in defaults.items():

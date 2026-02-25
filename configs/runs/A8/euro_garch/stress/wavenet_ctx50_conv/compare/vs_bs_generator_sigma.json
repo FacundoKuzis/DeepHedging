@@ -1,0 +1,6 @@
+{
+  "extends": "./vs_delta.json",
+  "run_name": "a8_euro_garch_stress_wavenet_mse_ctx50_conv_vs_bs_generator_sigma_cmp",
+  "description": "A8 stressed GARCH: WaveNet ctx50+Conv vs BS Delta using generator (ex-ante) sigma per path.",
+  "benchmark_delta_sigma_mode": "none"
+}

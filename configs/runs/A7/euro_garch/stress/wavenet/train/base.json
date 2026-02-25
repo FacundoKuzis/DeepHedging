@@ -1,0 +1,18 @@
+{
+  "extends": "../../../../../A6/euro_garch_n50/wavenet/train/base.json",
+  "run_name": "a7_euro_garch_stress_wavenet_mny_train",
+  "description": "A7 Euro WaveNet training under stressed GARCH simulator (log-moneyness), n=50 timesteps, 200 epochs.",
+  "model_name": "a7_euro_garch_stress_wavenet_mny",
+  "n_epochs": 200,
+  "early_stopping_enabled": false,
+  "instrument_model": "garch",
+  "garch_alpha": 0.15,
+  "garch_beta": 0.65,
+  "garch_omega": null,
+  "garch_leverage": 0.09,
+  "garch_use_student_t": true,
+  "garch_student_t_df": 4.5,
+  "fixed_risk_free": 0.03,
+  "fixed_implied_vol": 0.2,
+  "train_paths": 100000
+}

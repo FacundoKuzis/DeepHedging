@@ -239,12 +239,19 @@ class GARCHStock(Stock):
             raise ValueError("garch_beta must be >= 0.")
         if self.garch_alpha + self.garch_beta >= 1.0:
             raise ValueError("Require garch_alpha + garch_beta < 1 for stability.")
+        stability_lhs = self.garch_alpha + self.garch_beta + 2.0 * self.garch_leverage
+        if stability_lhs >= 1.0:
+            raise ValueError(
+                "Require garch_alpha + garch_beta + 2*garch_leverage < 1 for stationarity. "
+                f"Got {stability_lhs:.6f}."
+            )
         if self.garch_omega is not None and self.garch_omega <= 0.0:
             raise ValueError("garch_omega must be > 0 when provided.")
         if self.garch_use_student_t and self.garch_student_t_df <= 2.0:
             raise ValueError("garch_student_t_df must be > 2 when garch_use_student_t=true.")
 
         self._last_sampled_sigmas = None
+        self._last_realized_sigmas = None
 
     def _sample_sigma_vector(self, num_paths, rng):
         n = int(num_paths)
@@ -350,7 +357,11 @@ class GARCHStock(Stock):
             sigma_effective = np.sqrt(np.maximum(var_accum / float(n_steps), 1e-12))
         else:
             sigma_effective = sigma_long_run.copy()
-        self._last_sampled_sigmas = sigma_effective.astype(np.float32)
+        # Store both notions:
+        # - _last_sampled_sigmas: ex-ante per-path long-run sigma (used by env pricing pathwise)
+        # - _last_realized_sigmas: realized effective sigma from simulated path variance
+        self._last_sampled_sigmas = sigma_long_run.astype(np.float32)
+        self._last_realized_sigmas = sigma_effective.astype(np.float32)
 
         paths = s0 * np.exp(log_paths)
         return paths

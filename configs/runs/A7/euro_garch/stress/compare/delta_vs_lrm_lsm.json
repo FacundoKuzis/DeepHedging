@@ -1,0 +1,23 @@
+{
+  "extends": "./base.json",
+  "run_name": "a7_euro_garch_stress_delta_vs_lrm_lsm_cmp",
+  "description": "A7 stress GARCH: Delta-BS vs LRM with LSM continuation.",
+  "benchmark_agents_to_compare": [
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM LSM",
+      "config_overrides": {
+        "benchmark_lrm_provider": "lsm",
+        "benchmark_lrm_outer_paths": 512,
+        "benchmark_lrm_lsm_train_paths": 150000,
+        "benchmark_lrm_lsm_ridge_alpha": 1e-06,
+        "benchmark_lrm_lsm_feature_set": "default",
+        "benchmark_lrm_lsm_poly_degree": 3,
+        "benchmark_lrm_lsm_use_cache": true,
+        "benchmark_lrm_lsm_cache_dir": "G:/Mi unidad/Tesis2026/Models/Organized/cache/lrm_lsm",
+        "benchmark_lrm_lsm_cache_key": "a7_euro_garch_stress_lsm_v1",
+        "benchmark_lrm_lsm_force_rebuild": false
+      }
+    }
+  ]
+}

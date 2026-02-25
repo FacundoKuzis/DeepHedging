@@ -69,9 +69,39 @@ class DeltaHedgingAgent(BaseAgent):
     def _normalize_rate_input(self, rate, batch_size):
         return self._normalize_vector_input(rate, batch_size, field_name="rate")
 
-    def _normalize_sigma_input(self, sigma, batch_size):
-        sigma_tensor = self._normalize_vector_input(sigma, batch_size, field_name="sigma")
-        return tf.maximum(sigma_tensor, tf.constant(1e-8, dtype=tf.float32))
+    def _normalize_sigma_input(self, sigma, batch_size, n_steps=None):
+        sigma_tensor = tf.convert_to_tensor(sigma, dtype=tf.float32)
+        if sigma_tensor.shape.rank == 0:
+            return tf.maximum(sigma_tensor, tf.constant(1e-8, dtype=tf.float32))
+
+        if sigma_tensor.shape.rank == 1:
+            sigma_tensor = tf.reshape(sigma_tensor, (-1,))
+            expected = None if batch_size is None else int(batch_size)
+            observed = None if sigma_tensor.shape[0] is None else int(sigma_tensor.shape[0])
+            if expected is not None and observed is not None and observed != expected:
+                raise ValueError(
+                    f"sigma length mismatch: expected {expected}, got {observed}."
+                )
+            return tf.maximum(sigma_tensor, tf.constant(1e-8, dtype=tf.float32))
+
+        if sigma_tensor.shape.rank == 2:
+            expected = None if batch_size is None else int(batch_size)
+            observed = None if sigma_tensor.shape[0] is None else int(sigma_tensor.shape[0])
+            if expected is not None and observed is not None and observed != expected:
+                raise ValueError(
+                    f"sigma batch mismatch: expected {expected}, got {observed}."
+                )
+            if n_steps is not None:
+                observed_steps = None if sigma_tensor.shape[1] is None else int(sigma_tensor.shape[1])
+                if observed_steps is not None and observed_steps < int(n_steps):
+                    raise ValueError(
+                        f"sigma timestep mismatch: expected at least {int(n_steps)}, got {observed_steps}."
+                    )
+            return tf.maximum(sigma_tensor, tf.constant(1e-8, dtype=tf.float32))
+
+        raise ValueError(
+            f"sigma must be scalar, rank-1 or rank-2 tensor. Got rank={sigma_tensor.shape.rank}."
+        )
 
     def _normalize_vector_input(self, values, batch_size, field_name):
         values_tensor = tf.convert_to_tensor(values, dtype=tf.float32)
@@ -179,8 +209,13 @@ class DeltaHedgingAgent(BaseAgent):
             rate_vector = self._normalize_rate_input(batch_path_r, batch_paths.shape[0])
         else:
             rate_vector = None
+        n_steps = int(batch_paths.shape[1]) - 1
         if batch_path_sigma is not None:
-            sigma_vector = self._normalize_sigma_input(batch_path_sigma, batch_paths.shape[0])
+            sigma_vector = self._normalize_sigma_input(
+                batch_path_sigma,
+                batch_paths.shape[0],
+                n_steps=n_steps,
+            )
         else:
             sigma_vector = None
         self.reset_last_delta(batch_paths.shape[0])
@@ -189,11 +224,14 @@ class DeltaHedgingAgent(BaseAgent):
             logger.debug("Processing delta hedging timestep %s", t)
             current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
             current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
+            sigma_t = sigma_vector
+            if sigma_vector is not None and sigma_vector.shape.rank == 2:
+                sigma_t = sigma_vector[:, t]
             action = self.act(
                 current_paths,
                 current_T_minus_t,
                 rate=rate_vector,
-                sigma=sigma_vector,
+                sigma=sigma_t,
             )
             all_actions.append(action)
 
@@ -243,6 +281,8 @@ class DeltaHedgingAgent(BaseAgent):
         if sigma_eff.shape.rank == 0:
             sigma_eff = tf.fill((n_paths,), sigma_eff)
         else:
+            if sigma_eff.shape.rank == 2:
+                sigma_eff = sigma_eff[:, 0]
             sigma_eff = tf.reshape(sigma_eff, (-1,))
             if sigma_eff.shape[0] is not None and int(sigma_eff.shape[0]) != n_paths:
                 raise ValueError(

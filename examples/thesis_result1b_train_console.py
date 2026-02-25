@@ -350,6 +350,13 @@ def validate_config(config: dict[str, Any]) -> None:
                 raise ValueError("garch_omega must be > 0 when provided.")
         if "garch_leverage" in config and not isinstance(config["garch_leverage"], (int, float)):
             raise ValueError("garch_leverage must be numeric when provided.")
+        leverage = float(config.get("garch_leverage", 0.0))
+        stability_lhs = alpha + beta + 2.0 * leverage
+        if stability_lhs >= 1.0:
+            raise ValueError(
+                "Require garch_alpha + garch_beta + 2*garch_leverage < 1 for stationarity. "
+                f"Got {stability_lhs:.6f}."
+            )
         if "garch_use_student_t" in config and not isinstance(config["garch_use_student_t"], bool):
             raise ValueError("garch_use_student_t must be bool when provided.")
         if bool(config.get("garch_use_student_t", False)):

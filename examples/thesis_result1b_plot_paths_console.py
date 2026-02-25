@@ -1,10 +1,12 @@
 """
-Simple console script to visualize GBM paths from a thesis_result1b compare config.
+Console script to visualize path samples from unified compare configs.
 
 It saves:
 1) Paths in price levels S
 2) Paths in log-moneyness log(S/K)
 """
+
+from __future__ import annotations
 
 import argparse
 import os
@@ -19,52 +21,64 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from examples.thesis_result1_common import THESIS_MODELS_ROOT, load_config_by_name  # noqa: E402
-from DeepHedging.HedgingInstruments import GBMStock  # noqa: E402
+from examples.compare_console import _apply_relaxed_defaults_compare  # noqa: E402
+from examples.thesis_result1_common import (  # noqa: E402
+    THESIS_MODELS_ROOT,
+    build_instrument_from_config,
+    get_config_relative_stem,
+    set_global_determinism,
+)
+from examples.unified_console_common import (  # noqa: E402
+    detect_pipeline,
+    load_merged_config,
+    resolve_config_path,
+    strip_meta_keys,
+)
 from DeepHedging.utils.gbm_calibration import calibrate_gbm_from_market_data  # noqa: E402
 from DeepHedging.utils.historical_windows import build_historical_windows_from_csv  # noqa: E402
 from DeepHedging.utils.market_data import download_ohlcv_to_csv  # noqa: E402
 
 
-RESULT1B_ROOT = os.path.join(THESIS_MODELS_ROOT, "thesis_result1b")
-
-
-def _gbm_sigma_kwargs(config: dict, base_sigma: float) -> dict:
-    mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
-    kwargs = {
-        "sigma": float(base_sigma),
-        "sigma_per_path_mode": mode,
-    }
-    if mode == "uniform":
-        kwargs["sigma_uniform_low"] = float(config["gbm_sigma_uniform_low"])
-        kwargs["sigma_uniform_high"] = float(config["gbm_sigma_uniform_high"])
-    elif mode == "discrete":
-        kwargs["sigma_discrete_values"] = [float(v) for v in config["gbm_sigma_discrete_values"]]
-        if config.get("gbm_sigma_discrete_probs") is not None:
-            kwargs["sigma_discrete_probs"] = [float(p) for p in config["gbm_sigma_discrete_probs"]]
-    return kwargs
-
-
-def _run_plot_dir(run_name: str) -> str:
-    out_dir = os.path.join(RESULT1B_ROOT, "compare", run_name, "plots")
+def _run_plot_dir(config_path: str) -> str:
+    rel_stem = get_config_relative_stem(config_path)
+    run_dir = os.path.normpath(os.path.join(THESIS_MODELS_ROOT, rel_stem))
+    out_dir = os.path.join(run_dir, "plots")
     os.makedirs(out_dir, exist_ok=True)
     return out_dir
 
 
 def _market_cache_dir() -> str:
-    cache_dir = os.path.join(RESULT1B_ROOT, "market_data_cache")
+    cache_dir = os.path.join(THESIS_MODELS_ROOT, "market_data_cache")
     os.makedirs(cache_dir, exist_ok=True)
     return cache_dir
 
 
-def _build_paths_from_config(config: dict) -> tuple[np.ndarray, int]:
+def _as_paths_2d(paths: tf.Tensor | np.ndarray) -> np.ndarray:
+    arr = tf.convert_to_tensor(paths, dtype=tf.float32).numpy()
+    if arr.ndim == 3:
+        if int(arr.shape[2]) < 1:
+            raise ValueError("Generated paths have zero instruments.")
+        if int(arr.shape[2]) > 1:
+            print(
+                "[plot][warning] Detected multiple instruments; plotting only instrument index 0."
+            )
+        arr = arr[:, :, 0]
+    if arr.ndim != 2:
+        raise ValueError(f"Expected paths rank-2 after projection. Got shape={arr.shape}.")
+    return arr.astype(np.float32, copy=False)
+
+
+def _build_paths_from_config(config: dict, eval_paths_override: int | None = None) -> tuple[np.ndarray, int]:
     n = int(config["n"])
     trading_days = int(config["trading_days_per_year"])
-    eval_paths = int(config["eval_paths"])
+    eval_paths = int(eval_paths_override) if eval_paths_override is not None else int(config["eval_paths"])
     eval_seed = int(config["eval_seed"])
-    context_length = int(config.get("context_length", 0)) if bool(config.get("use_price_history_context", False)) else 0
+    set_global_determinism(eval_seed)
 
+    use_context = bool(config.get("use_price_history_context", False))
+    context_length = int(config.get("context_length", 0)) if use_context else 0
     test_mode = str(config.get("test_data_mode", "simulated")).strip().lower()
+
     if test_mode == "historical_windows":
         cache_dir = _market_cache_dir()
         test_csv = os.path.join(
@@ -90,7 +104,17 @@ def _build_paths_from_config(config: dict) -> tuple[np.ndarray, int]:
             stride=int(config.get("historical_stride", 1)),
             max_windows=eval_paths,
         )
-        return windows_2d.astype(np.float32), 0
+        # Keep parity with compare runner: normalize each window to configured S0.
+        raw_s0 = windows_2d[:, 0].astype(np.float64)
+        if np.any(~np.isfinite(raw_s0)) or np.any(raw_s0 <= 0.0):
+            raise ValueError("Invalid historical window start prices for normalization.")
+        target_s0 = float(config["s0"])
+        windows_2d = (target_s0 * (windows_2d / raw_s0[:, None])).astype(np.float32)
+        if context_length > 0:
+            print(
+                "[plot][info] test_data_mode='historical_windows': context prefix is not included in paths."
+            )
+        return windows_2d, 0
 
     cache_dir = _market_cache_dir()
     calib = calibrate_gbm_from_market_data(
@@ -110,24 +134,25 @@ def _build_paths_from_config(config: dict) -> tuple[np.ndarray, int]:
         download_if_missing=bool(config["download_if_missing"]),
     )
 
-    instrument = GBMStock(
-        S0=float(config["s0"]),
-        T=float(n / float(trading_days)),
-        N=n,
-        r=float(calib.r_train),
-        **_gbm_sigma_kwargs(config=config, base_sigma=float(calib.sigma_train)),
+    cfg_for_builders = dict(config)
+    cfg_for_builders["r"] = float(calib.r_train)
+    cfg_for_builders["sigma"] = float(calib.sigma_train)
+    cfg_for_builders.setdefault(
+        "instrument_model",
+        str(config.get("instrument_model", "gbm")).strip().lower(),
     )
+    instrument = build_instrument_from_config(cfg_for_builders)
+
     if context_length > 0 and hasattr(instrument, "generate_paths_with_context"):
         full = instrument.generate_paths_with_context(
             num_paths=eval_paths,
             n_context_steps=context_length,
             random_seed=eval_seed,
         )
-        full_np = tf.convert_to_tensor(full, dtype=tf.float32).numpy()
-        return full_np, context_length
+        return _as_paths_2d(full), context_length
 
     paths = instrument.generate_paths(num_paths=eval_paths, random_seed=eval_seed)
-    return tf.convert_to_tensor(paths, dtype=tf.float32).numpy(), 0
+    return _as_paths_2d(paths), 0
 
 
 def _select_plot_paths(paths_2d: np.ndarray, n_plot_paths: int, seed: int) -> np.ndarray:
@@ -180,18 +205,24 @@ def _plot_log_moneyness(paths_2d: np.ndarray, strike: float, out_path: str, cont
     plt.close(fig)
 
 
-def run_plot(run_name: str, config: dict, n_plot_paths: int) -> None:
-    paths_2d, context_length = _build_paths_from_config(config)
+def run_plot(
+    run_name: str,
+    config: dict,
+    config_path: str,
+    n_plot_paths: int,
+    eval_paths_override: int | None = None,
+) -> None:
+    paths_2d, context_length = _build_paths_from_config(config, eval_paths_override=eval_paths_override)
     sample = _select_plot_paths(
         paths_2d=paths_2d,
         n_plot_paths=n_plot_paths,
         seed=int(config["eval_seed"]),
     )
 
-    out_dir = _run_plot_dir(run_name)
-    levels_path = os.path.join(out_dir, "gbm_paths_levels.jpg")
-    logm_path = os.path.join(out_dir, "gbm_paths_log_moneyness.jpg")
-    csv_path = os.path.join(out_dir, "gbm_paths_sample.csv")
+    out_dir = _run_plot_dir(config_path=config_path)
+    levels_path = os.path.join(out_dir, "sample_paths_levels.jpg")
+    logm_path = os.path.join(out_dir, "sample_paths_log_moneyness.jpg")
+    csv_path = os.path.join(out_dir, "sample_paths.csv")
 
     _plot_levels(sample, levels_path, context_length)
     _plot_log_moneyness(sample, float(config["strike"]), logm_path, context_length)
@@ -202,16 +233,20 @@ def run_plot(run_name: str, config: dict, n_plot_paths: int) -> None:
     print(f"[run:{run_name}] Saved levels plot: {levels_path}")
     print(f"[run:{run_name}] Saved log-moneyness plot: {logm_path}")
     print(f"[run:{run_name}] Saved sampled paths CSV: {csv_path}")
+    if eval_paths_override is not None:
+        print(f"[run:{run_name}] eval_paths override used: {int(eval_paths_override)}")
     if context_length > 0:
         print(f"[run:{run_name}] Context length detected: {context_length} timesteps.")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot GBM paths from thesis_result1b compare config.")
+    parser = argparse.ArgumentParser(
+        description="Plot simulated/historical paths from a unified compare config."
+    )
     parser.add_argument(
         "config_name",
         nargs="?",
-        help="JSON config filename in thesis_result1b_configs/compare (extension optional).",
+        help="Config path/name under ./configs (extension optional).",
     )
     parser.add_argument(
         "--n-plot-paths",
@@ -219,16 +254,42 @@ def main() -> None:
         default=80,
         help="Number of sampled paths to draw (default: 80).",
     )
+    parser.add_argument(
+        "--eval-paths",
+        type=int,
+        default=None,
+        help="Optional override for eval_paths used only for plotting.",
+    )
     args = parser.parse_args()
 
-    configs_dir = os.path.join(os.getcwd(), "thesis_result1b_configs", "compare")
-    run_name, _, cfg = load_config_by_name(
-        configs_dir=configs_dir,
+    config_path = resolve_config_path(
         config_name=args.config_name,
-        prompt_label="Enter COMPARE JSON config name from 'thesis_result1b_configs/compare': ",
+        task="compare",
+        prompt_label="Enter COMPARE config name/path from 'configs': ",
     )
-    print(f"[run:{run_name}] Loaded config and generating paths...")
-    run_plot(run_name=run_name, config=cfg, n_plot_paths=int(args.n_plot_paths))
+    source_path, merged = load_merged_config(config_path)
+    pipeline = detect_pipeline(merged)
+    if pipeline != "result1b":
+        raise ValueError(
+            "This plot script currently supports pipeline='result1b' compare configs only."
+        )
+
+    run_name = str(merged.get("run_name") or os.path.splitext(os.path.basename(source_path))[0]).strip()
+    if not run_name:
+        raise ValueError("run_name cannot be empty.")
+
+    cfg = strip_meta_keys(merged)
+    cfg = _apply_relaxed_defaults_compare(cfg, pipeline=pipeline)
+
+    print(f"[run:{run_name}] Loaded config: {source_path}")
+    print(f"[run:{run_name}] Pipeline: {pipeline}")
+    run_plot(
+        run_name=run_name,
+        config=cfg,
+        config_path=source_path,
+        n_plot_paths=int(args.n_plot_paths),
+        eval_paths_override=args.eval_paths,
+    )
 
 
 if __name__ == "__main__":

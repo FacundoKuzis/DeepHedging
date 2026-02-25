@@ -1,0 +1,44 @@
+{
+  "extends": "../../../../../A8/euro_garch/stress/wavenet/train/base.json",
+  "run_name": "a8_euro_garch_stress_wavenet_mse_ctx50_conv_train",
+  "description": "A8 stressed GARCH: WaveNet minimizing MSE with 50-day seen context encoded by Conv1D.",
+  "model_name": "a8_euro_garch_stress_wavenet_mse_ctx50_conv",
+  "train_paths": 30000,
+  "val_paths": 4000,
+  "batch_size": 5000,
+  "use_price_history_context": true,
+  "context_for_path_generation_only": false,
+  "context_length": 50,
+  "context_feature_mode": "log_moneyness",
+  "history_conv1d_enabled": true,
+  "history_conv1d_pooling": "global_max",
+  "history_conv1d_layers": [
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 1,
+      "activation": "relu",
+      "dropout": 0.0,
+      "use_batch_norm": false,
+      "use_residual": false
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 2,
+      "activation": "relu",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 4,
+      "activation": "relu",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true
+    }
+  ]
+}

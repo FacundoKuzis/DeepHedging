@@ -59,10 +59,13 @@ from DeepHedging.utils.historical_windows import (  # noqa: E402
     build_historical_windows_from_csv,
     to_environment_paths,
 )
+from DeepHedging.utils.garch_context_sigma import (  # noqa: E402
+    estimate_pathwise_garch_sigma_from_context,
+)
 
 
 RESULT1B_ROOT = THESIS_MODELS_ROOT
-ACTIONS_CACHE_SCHEMA_VERSION = 2
+ACTIONS_CACHE_SCHEMA_VERSION = 3
 
 
 
@@ -226,6 +229,16 @@ def optional_keys() -> set[str]:
         "benchmark_lrm_verbose",
         "benchmark_lrm_log_every_t",
         "benchmark_lrm_mc_log_every_chunks",
+        "benchmark_delta_sigma_mode",
+        "benchmark_delta_sigma_context_days",
+        "benchmark_delta_sigma_min_obs",
+        "benchmark_delta_sigma_garch_alpha",
+        "benchmark_delta_sigma_garch_beta",
+        "benchmark_delta_sigma_garch_leverage",
+        "benchmark_delta_sigma_garch_omega",
+        "benchmark_delta_sigma_floor",
+        "benchmark_delta_sigma_cap",
+        "benchmark_delta_sigma_default",
         "benchmark_agents_to_compare",
     }
 
@@ -359,6 +372,48 @@ def validate_config(config: dict[str, Any]) -> None:
                     "implied_vol_source='option_market' currently requires test_data_mode='historical_windows'."
                 )
 
+    delta_sigma_mode = str(config.get("benchmark_delta_sigma_mode", "none")).strip().lower()
+    if delta_sigma_mode not in {"none", "garch_context_static", "garch_context_stepwise"}:
+        raise ValueError(
+            "benchmark_delta_sigma_mode must be one of {'none','garch_context_static','garch_context_stepwise'}."
+        )
+    if delta_sigma_mode != "none":
+        if str(config["benchmark_agent_name"]).strip() != "DeltaHedgingAgent":
+            raise ValueError(
+                "benchmark_delta_sigma_mode != 'none' requires benchmark_agent_name='DeltaHedgingAgent'."
+            )
+        context_days = int(config.get("benchmark_delta_sigma_context_days", 50))
+        if context_days <= 0:
+            raise ValueError("benchmark_delta_sigma_context_days must be > 0.")
+        min_obs = int(config.get("benchmark_delta_sigma_min_obs", 10))
+        if min_obs < 1:
+            raise ValueError("benchmark_delta_sigma_min_obs must be >= 1.")
+        alpha = _resolve_float_override(config, "benchmark_delta_sigma_garch_alpha", config.get("garch_alpha", 0.05))
+        beta = _resolve_float_override(config, "benchmark_delta_sigma_garch_beta", config.get("garch_beta", 0.9))
+        leverage = _resolve_float_override(config, "benchmark_delta_sigma_garch_leverage", config.get("garch_leverage", 0.0))
+        if alpha < 0.0 or beta < 0.0:
+            raise ValueError("benchmark_delta_sigma_garch_alpha/beta must be >= 0.")
+        stability_lhs = alpha + beta + 2.0 * leverage
+        if stability_lhs >= 1.0:
+            raise ValueError(
+                "Require benchmark_delta_sigma_garch_alpha + benchmark_delta_sigma_garch_beta + "
+                "2*benchmark_delta_sigma_garch_leverage < 1 for stationarity. "
+                f"Got {stability_lhs:.6f}."
+            )
+        if "benchmark_delta_sigma_garch_omega" in config and config["benchmark_delta_sigma_garch_omega"] is not None:
+            if float(config["benchmark_delta_sigma_garch_omega"]) <= 0.0:
+                raise ValueError("benchmark_delta_sigma_garch_omega must be > 0 when provided.")
+        sigma_floor = float(config.get("benchmark_delta_sigma_floor", 1e-6))
+        if sigma_floor <= 0.0:
+            raise ValueError("benchmark_delta_sigma_floor must be > 0.")
+        if "benchmark_delta_sigma_cap" in config and config["benchmark_delta_sigma_cap"] is not None:
+            sigma_cap = float(config["benchmark_delta_sigma_cap"])
+            if sigma_cap <= sigma_floor:
+                raise ValueError("benchmark_delta_sigma_cap must be > benchmark_delta_sigma_floor.")
+        if "benchmark_delta_sigma_default" in config and config["benchmark_delta_sigma_default"] is not None:
+            if float(config["benchmark_delta_sigma_default"]) <= 0.0:
+                raise ValueError("benchmark_delta_sigma_default must be > 0 when provided.")
+
     if "historical_sigma_window_days" in config and config["historical_sigma_window_days"] is not None:
         if int(config["historical_sigma_window_days"]) < 2:
             raise ValueError("historical_sigma_window_days must be >= 2 when provided.")
@@ -405,6 +460,13 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("garch_alpha and garch_beta must be >= 0.")
         if alpha + beta >= 1.0:
             raise ValueError("Require garch_alpha + garch_beta < 1 for stability.")
+        leverage = float(config.get("garch_leverage", 0.0))
+        stability_lhs = alpha + beta + 2.0 * leverage
+        if stability_lhs >= 1.0:
+            raise ValueError(
+                "Require garch_alpha + garch_beta + 2*garch_leverage < 1 for stationarity. "
+                f"Got {stability_lhs:.6f}."
+            )
         if config.get("garch_omega", None) is not None and float(config.get("garch_omega")) <= 0.0:
             raise ValueError("garch_omega must be > 0 when provided.")
         if bool(config.get("garch_use_student_t", False)):
@@ -777,6 +839,69 @@ def _historical_sigma_window_days(config: dict[str, Any]) -> int:
     return int(raw)
 
 
+def _benchmark_delta_sigma_mode(config: dict[str, Any]) -> str:
+    return str(config.get("benchmark_delta_sigma_mode", "none")).strip().lower()
+
+
+def _resolve_float_override(config: dict[str, Any], key: str, fallback: float) -> float:
+    raw = config.get(key, None)
+    if raw is None:
+        return float(fallback)
+    return float(raw)
+
+
+def _build_window_prehistory_from_series(
+    close_df: pd.DataFrame,
+    window_start_dates: list[pd.Timestamp],
+    context_days: int,
+    price_col: str = "Close",
+) -> np.ndarray:
+    """
+    Build per-window pre-history prices (oldest -> newest), excluding S0.
+    """
+    context_days = int(context_days)
+    if context_days <= 0:
+        return np.zeros((len(window_start_dates), 0), dtype=np.float32)
+
+    df = close_df.copy()
+    if "Date" not in df.columns:
+        raise ValueError("close_df must contain 'Date' column.")
+    if price_col not in df.columns:
+        raise ValueError(f"close_df must contain '{price_col}' column.")
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df[price_col] = pd.to_numeric(df[price_col], errors="coerce")
+    df = df.dropna(subset=["Date", price_col]).sort_values("Date").reset_index(drop=True)
+    if df.empty:
+        raise ValueError("close_df is empty after cleaning.")
+
+    dates = df["Date"].to_numpy()
+    prices = df[price_col].to_numpy(dtype=np.float64)
+    if np.any(~np.isfinite(prices)) or np.any(prices <= 0.0):
+        raise ValueError("close_df prices must be finite and > 0.")
+
+    pre_hist = np.zeros((len(window_start_dates), context_days), dtype=np.float64)
+    for i, dt in enumerate(window_start_dates):
+        ts = pd.Timestamp(dt)
+        idx = np.searchsorted(dates, np.datetime64(ts), side="left")
+        if idx >= len(dates):
+            idx = len(dates) - 1
+        # Prefer exact start date. If not found, use previous available date.
+        if idx < len(dates) and pd.Timestamp(dates[idx]) != ts:
+            idx = max(0, idx - 1)
+        start = max(0, idx - context_days)
+        hist = prices[start:idx]
+        if hist.size >= context_days:
+            pre_hist[i, :] = hist[-context_days:]
+        elif hist.size > 0:
+            pad = np.full((context_days - hist.size,), hist[0], dtype=np.float64)
+            pre_hist[i, :] = np.concatenate([pad, hist], axis=0)
+        else:
+            anchor = prices[idx]
+            pre_hist[i, :] = np.full((context_days,), anchor, dtype=np.float64)
+
+    return pre_hist.astype(np.float32)
+
+
 def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> None:
     dirs = _run_dirs(run_name, config_path=config_path)
     copied_cfg = copy_config_snapshot(config_path, dirs["run_dir"])
@@ -886,11 +1011,32 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     )
 
     eval_paths_tensor = None
+    eval_pre_history_tensor = None
     per_path_r = None
     per_path_sigma = None
     windows_meta = None
 
-    if str(config["test_data_mode"]).strip().lower() == "historical_windows":
+    test_data_mode = str(config["test_data_mode"]).strip().lower()
+    delta_sigma_mode = _benchmark_delta_sigma_mode(config)
+    delta_sigma_context_days = int(config.get("benchmark_delta_sigma_context_days", 50))
+    delta_sigma_min_obs = int(config.get("benchmark_delta_sigma_min_obs", 10))
+    delta_sigma_alpha = _resolve_float_override(
+        config, "benchmark_delta_sigma_garch_alpha", config.get("garch_alpha", 0.05)
+    )
+    delta_sigma_beta = _resolve_float_override(
+        config, "benchmark_delta_sigma_garch_beta", config.get("garch_beta", 0.9)
+    )
+    delta_sigma_leverage = _resolve_float_override(
+        config, "benchmark_delta_sigma_garch_leverage", config.get("garch_leverage", 0.0)
+    )
+    delta_sigma_omega = config.get("benchmark_delta_sigma_garch_omega", None)
+    delta_sigma_floor = float(config.get("benchmark_delta_sigma_floor", 1e-6))
+    delta_sigma_cap = config.get("benchmark_delta_sigma_cap", None)
+    delta_sigma_default = _resolve_float_override(
+        config, "benchmark_delta_sigma_default", float(calib.sigma_train)
+    )
+
+    if test_data_mode == "historical_windows":
         test_csv = os.path.join(
             dirs["market_cache_dir"],
             f"{config['ticker']}_{config['test_start_date']}_{config['test_end_date']}_{config['interval']}.csv",
@@ -926,6 +1072,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         windows_meta["normalized_start_price"] = target_s0
 
         eval_paths_tensor = to_environment_paths(windows_2d)
+        eval_paths_2d = np.asarray(eval_paths_tensor, dtype=np.float32)[:, :, 0]
 
         risk_free_mode = str(config["risk_free_mode"]).strip().lower()
         if str(config["risk_free_source"]).strip().lower() == "fixed":
@@ -1052,12 +1199,137 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             # Any not-explicitly-pathwise mode falls back to train-calibrated sigma.
             per_path_sigma = np.full((eval_paths_tensor.shape[0],), float(calib.sigma_train), dtype=np.float32)
 
+        # Build normalized pre-history for context-aware agents and/or benchmark-delta sigma estimation.
+        pre_hist_max_days = max(
+            int(config.get("context_length", 0)) if bool(config.get("use_price_history_context", False)) else 0,
+            int(delta_sigma_context_days) if delta_sigma_mode != "none" else 0,
+        )
+        pre_hist_for_sigma = None
+        if pre_hist_max_days > 0:
+            full_close_df_ctx = load_external_series(
+                market_cache_dir=dirs["market_cache_dir"],
+                ticker=str(config["ticker"]),
+                start_date=str(config["train_start_date"]),
+                end_date=str(config["test_end_date"]),
+                interval=str(config["interval"]),
+                download_if_missing=bool(config["download_if_missing"]),
+                price_col=str(config["price_col"]),
+            )
+            pre_hist_raw = _build_window_prehistory_from_series(
+                close_df=full_close_df_ctx,
+                window_start_dates=windows_meta["start_date"].tolist(),
+                context_days=pre_hist_max_days,
+                price_col=str(config["price_col"]),
+            )
+            # Normalize on same scale as eval_paths_tensor.
+            scale = (float(config["s0"]) / windows_meta["raw_window_start_price"].to_numpy(dtype=np.float64))
+            pre_hist_norm = (pre_hist_raw * scale[:, None]).astype(np.float32)
+            if bool(config.get("use_price_history_context", False)) and int(config.get("context_length", 0)) > 0:
+                agent_ctx = int(config.get("context_length", 0))
+                eval_pre_history_tensor = pre_hist_norm[:, -agent_ctx:]
+            if delta_sigma_mode != "none" and int(delta_sigma_context_days) > 0:
+                pre_hist_for_sigma = pre_hist_norm[:, -int(delta_sigma_context_days):]
+
+        if delta_sigma_mode != "none":
+            garch_mode = "stepwise" if delta_sigma_mode == "garch_context_stepwise" else "static"
+            per_path_sigma = estimate_pathwise_garch_sigma_from_context(
+                hedge_paths_2d=eval_paths_2d,
+                pre_history_prices_2d=pre_hist_for_sigma,
+                context_days=int(delta_sigma_context_days),
+                mode=garch_mode,
+                trading_days_per_year=int(config["trading_days_per_year"]),
+                garch_alpha=float(delta_sigma_alpha),
+                garch_beta=float(delta_sigma_beta),
+                garch_leverage=float(delta_sigma_leverage),
+                garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
+                min_obs=int(delta_sigma_min_obs),
+                default_sigma=float(delta_sigma_default),
+                sigma_floor=float(delta_sigma_floor),
+                sigma_cap=None if delta_sigma_cap is None else float(delta_sigma_cap),
+            )
+            if np.ndim(per_path_sigma) == 1:
+                print(
+                    f"[run:{run_name}] benchmark_delta_sigma_mode={delta_sigma_mode}: "
+                    f"sigma mean={float(np.mean(per_path_sigma)):.6f}, std={float(np.std(per_path_sigma)):.6f}"
+                )
+            else:
+                sigma_t0 = np.asarray(per_path_sigma)[:, 0]
+                print(
+                    f"[run:{run_name}] benchmark_delta_sigma_mode={delta_sigma_mode}: "
+                    f"sigma_t0 mean={float(np.mean(sigma_t0)):.6f}, std={float(np.std(sigma_t0)):.6f}, "
+                    f"steps={int(np.asarray(per_path_sigma).shape[1])}"
+                )
+
         windows_meta["risk_free_window"] = per_path_r
-        windows_meta["sigma_window"] = per_path_sigma
+        if np.ndim(per_path_sigma) == 1:
+            windows_meta["sigma_window"] = per_path_sigma
+        else:
+            sigma_arr = np.asarray(per_path_sigma, dtype=np.float32)
+            windows_meta["sigma_window_t0"] = sigma_arr[:, 0]
+            sigma_steps_csv = os.path.join(dirs["tables_dir"], "sigma_window_stepwise.csv")
+            pd.DataFrame(sigma_arr).to_csv(sigma_steps_csv, index=False)
+            print(f"[run:{run_name}] Saved stepwise sigma matrix: {sigma_steps_csv}")
         window_csv = os.path.join(dirs["tables_dir"], "historical_window_metadata.csv")
         windows_meta.to_csv(window_csv, index=False)
         print(f"[run:{run_name}] Saved historical window metadata: {window_csv}")
         print(f"[run:{run_name}] Evaluating on {eval_paths_tensor.shape[0]} historical windows.")
+
+    elif test_data_mode == "simulated" and delta_sigma_mode != "none":
+        # Force deterministic simulated paths with explicit pre-history for pathwise GARCH sigma estimation.
+        eval_n_paths = int(config["eval_paths"])
+        context_for_agent = int(config.get("context_length", 0)) if bool(config.get("use_price_history_context", False)) else 0
+        n_context_gen = max(int(delta_sigma_context_days), int(context_for_agent))
+        if hasattr(instrument, "generate_paths_with_context") and n_context_gen > 0:
+            full_paths = instrument.generate_paths_with_context(
+                eval_n_paths,
+                n_context_steps=int(n_context_gen),
+                random_seed=eval_seed,
+            )
+            full_paths = tf.convert_to_tensor(full_paths, dtype=tf.float32)
+            all_pre_history = full_paths[:, : int(n_context_gen)]
+            if context_for_agent > 0:
+                eval_pre_history_tensor = all_pre_history[:, -int(context_for_agent):]
+            eval_paths_tensor = tf.expand_dims(full_paths[:, int(n_context_gen) :], axis=-1)
+            pre_history_for_sigma = all_pre_history[:, -int(delta_sigma_context_days):]
+        else:
+            eval_paths_tensor = env.generate_data(eval_n_paths, random_seed=eval_seed)
+            eval_pre_history_tensor = None
+            pre_history_for_sigma = None
+
+        eval_paths_2d = np.asarray(eval_paths_tensor, dtype=np.float32)[:, :, 0]
+        if str(config["risk_free_source"]).strip().lower() == "fixed":
+            per_path_r = np.full((eval_paths_tensor.shape[0],), float(config["fixed_risk_free"]), dtype=np.float32)
+        else:
+            per_path_r = np.full((eval_paths_tensor.shape[0],), float(calib.r_train), dtype=np.float32)
+
+        garch_mode = "stepwise" if delta_sigma_mode == "garch_context_stepwise" else "static"
+        per_path_sigma = estimate_pathwise_garch_sigma_from_context(
+            hedge_paths_2d=eval_paths_2d,
+            pre_history_prices_2d=None if pre_history_for_sigma is None else np.asarray(pre_history_for_sigma, dtype=np.float32),
+            context_days=int(delta_sigma_context_days),
+            mode=garch_mode,
+            trading_days_per_year=int(config["trading_days_per_year"]),
+            garch_alpha=float(delta_sigma_alpha),
+            garch_beta=float(delta_sigma_beta),
+            garch_leverage=float(delta_sigma_leverage),
+            garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
+            min_obs=int(delta_sigma_min_obs),
+            default_sigma=float(delta_sigma_default),
+            sigma_floor=float(delta_sigma_floor),
+            sigma_cap=None if delta_sigma_cap is None else float(delta_sigma_cap),
+        )
+        if np.ndim(per_path_sigma) == 1:
+            print(
+                f"[run:{run_name}] benchmark_delta_sigma_mode={delta_sigma_mode} (simulated): "
+                f"sigma mean={float(np.mean(per_path_sigma)):.6f}, std={float(np.std(per_path_sigma)):.6f}"
+            )
+        else:
+            sigma_t0 = np.asarray(per_path_sigma)[:, 0]
+            print(
+                f"[run:{run_name}] benchmark_delta_sigma_mode={delta_sigma_mode} (simulated): "
+                f"sigma_t0 mean={float(np.mean(sigma_t0)):.6f}, std={float(np.std(sigma_t0)):.6f}, "
+                f"steps={int(np.asarray(per_path_sigma).shape[1])}"
+            )
 
     actions_cache_dir = None
     if bool(config.get("reuse_actions_between_steps", True)):
@@ -1077,6 +1349,13 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "per_path_r_signature": _vector_signature(per_path_r),
             "sigma_source": str(config["sigma_source"]),
             "sigma_mode": _sigma_mode(config),
+            "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
+            "benchmark_delta_sigma_context_days": int(config.get("benchmark_delta_sigma_context_days", 50)),
+            "benchmark_delta_sigma_min_obs": int(config.get("benchmark_delta_sigma_min_obs", 10)),
+            "benchmark_delta_sigma_garch_alpha": config.get("benchmark_delta_sigma_garch_alpha"),
+            "benchmark_delta_sigma_garch_beta": config.get("benchmark_delta_sigma_garch_beta"),
+            "benchmark_delta_sigma_garch_leverage": config.get("benchmark_delta_sigma_garch_leverage"),
+            "benchmark_delta_sigma_garch_omega": config.get("benchmark_delta_sigma_garch_omega"),
             "instrument_model": str(config.get("instrument_model", "gbm")).strip().lower(),
             "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
             "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
@@ -1099,6 +1378,9 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "history_conv1d_layers": config.get("history_conv1d_layers"),
             "history_conv1d_pooling": str(config.get("history_conv1d_pooling", "global_max")),
             "paths_signature": None if eval_paths_tensor is None else _paths_signature(eval_paths_tensor),
+            "pre_history_signature": _vector_signature(
+                None if eval_pre_history_tensor is None else np.asarray(eval_pre_history_tensor, dtype=np.float32)
+            ),
         }
         _ensure_actions_cache_consistency(
             actions_cache_dir=actions_cache_dir,
@@ -1120,6 +1402,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             n_paths=int(config["eval_paths"]),
             random_seed=eval_seed,
             paths_to_test=eval_paths_tensor,
+            pre_history_prices_to_test=eval_pre_history_tensor,
             per_path_r=per_path_r,
             per_path_sigma=per_path_sigma,
             plot_error=True,
@@ -1153,6 +1436,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         n_paths=int(config["eval_paths"]),
         random_seed=eval_seed,
         paths_to_test=eval_paths_tensor,
+        pre_history_prices_to_test=eval_pre_history_tensor,
         per_path_r=per_path_r,
         per_path_sigma=per_path_sigma,
         plot_error=False,
@@ -1222,6 +1506,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             confidence_level=float(config["bootstrap_confidence_level"]),
             random_seed=eval_seed,
             paths_to_test=eval_paths_tensor,
+            pre_history_prices_to_test=eval_pre_history_tensor,
             per_path_r=per_path_r,
             per_path_sigma=per_path_sigma,
             plot_histograms=False,
@@ -1248,6 +1533,8 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 "test_end_date": str(config["test_end_date"]),
                 "sigma_source": str(config["sigma_source"]),
                 "sigma_mode": _sigma_mode(config),
+                "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
+                "benchmark_delta_sigma_context_days": int(config.get("benchmark_delta_sigma_context_days", 50)),
                 "historical_sigma_window_days": _historical_sigma_window_days(config),
                 "use_price_history_context": bool(config.get("use_price_history_context", False)),
                 "context_for_path_generation_only": bool(config.get("context_for_path_generation_only", False)),
@@ -1289,6 +1576,8 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         "test_data_mode": str(config["test_data_mode"]),
         "price_computation_mode": str(config.get("price_computation_mode", "pathwise_if_available")),
         "sigma_mode": _sigma_mode(config),
+        "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
+        "benchmark_delta_sigma_context_days": int(config.get("benchmark_delta_sigma_context_days", 50)),
         "historical_sigma_window_days": _historical_sigma_window_days(config),
         "bootstrap_enabled": bool(config["bootstrap_enabled"]),
         "bootstrap_n_bootstraps": int(config["bootstrap_n_bootstraps"]),

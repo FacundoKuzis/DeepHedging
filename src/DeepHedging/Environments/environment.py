@@ -136,7 +136,10 @@ class Environment:
         if batch_path_sigma is None:
             sigma_vec = np.full((n_batch,), float(sigma_default), dtype=np.float64)
         else:
-            sigma_vec = np.asarray(batch_path_sigma, dtype=np.float64).reshape(-1)
+            sigma_arr = np.asarray(batch_path_sigma, dtype=np.float64)
+            if sigma_arr.ndim == 2:
+                sigma_arr = sigma_arr[:, 0]
+            sigma_vec = sigma_arr.reshape(-1)
             if sigma_vec.shape[0] != n_batch:
                 raise ValueError(
                     "batch_path_sigma length mismatch for prehistory generation: "
@@ -773,6 +776,7 @@ class Environment:
         n_paths=10_000,
         random_seed=None,
         paths_to_test=None,
+        pre_history_prices_to_test=None,
         per_path_r=None,
         per_path_sigma=None,
         plot_error=False,
@@ -811,7 +815,21 @@ class Environment:
         if paths_to_test is not None:
             paths = tf.convert_to_tensor(paths_to_test, dtype=tf.float32)
             pre_history_prices_global = None
-            simulate_pre_history_global = False
+            if pre_history_prices_to_test is not None:
+                pre_history_prices_global = tf.convert_to_tensor(
+                    pre_history_prices_to_test, dtype=tf.float32
+                )
+                if len(pre_history_prices_global.shape) != 2:
+                    raise ValueError(
+                        "pre_history_prices_to_test must have rank 2: "
+                        f"(n_paths, n_context). Got shape={tuple(pre_history_prices_global.shape)}."
+                    )
+                if int(pre_history_prices_global.shape[0]) != int(paths.shape[0]):
+                    raise ValueError(
+                        "pre_history_prices_to_test n_paths mismatch: "
+                        f"expected {int(paths.shape[0])}, got {int(pre_history_prices_global.shape[0])}."
+                    )
+            simulate_pre_history_global = pre_history_prices_global is None
             generated_internally = False
             if len(paths.shape) != 3:
                 raise ValueError(
@@ -846,10 +864,28 @@ class Environment:
                     f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
                 )
         if per_path_sigma is not None:
-            per_path_sigma = np.asarray(per_path_sigma, dtype=np.float32).reshape(-1)
-            if per_path_sigma.shape[0] != int(n_paths):
+            per_path_sigma = np.asarray(per_path_sigma, dtype=np.float32)
+            if per_path_sigma.ndim == 1:
+                if per_path_sigma.shape[0] != int(n_paths):
+                    raise ValueError(
+                        f"per_path_sigma length mismatch: expected {n_paths}, got {per_path_sigma.shape[0]}."
+                    )
+            elif per_path_sigma.ndim == 2:
+                if per_path_sigma.shape[0] != int(n_paths):
+                    raise ValueError(
+                        "per_path_sigma batch mismatch: "
+                        f"expected {n_paths}, got {per_path_sigma.shape[0]}."
+                    )
+                n_required_steps = int(paths.shape[1]) - 1
+                if per_path_sigma.shape[1] < n_required_steps:
+                    raise ValueError(
+                        "per_path_sigma timestep mismatch: "
+                        f"expected at least {n_required_steps}, got {per_path_sigma.shape[1]}."
+                    )
+            else:
                 raise ValueError(
-                    f"per_path_sigma length mismatch: expected {n_paths}, got {per_path_sigma.shape[0]}."
+                    "per_path_sigma must be rank 1 or 2. "
+                    f"Got shape={per_path_sigma.shape}."
                 )
         elif generated_internally:
             inferred_sigma = self._infer_per_path_sigma_if_available(
@@ -859,7 +895,7 @@ class Environment:
             if inferred_sigma is not None:
                 per_path_sigma = inferred_sigma
                 self._log_terminal(
-                    f"Inferred per-path sigma from generated GBM paths "
+                    f"Inferred per-path sigma from generated instrument paths "
                     f"(n={int(per_path_sigma.shape[0])})."
                 )
 
@@ -968,10 +1004,13 @@ class Environment:
                     )
                     history_features = None
                     if context_visible and not use_temporal_prefix:
+                        sigma_for_history = per_path_sigma
+                        if isinstance(sigma_for_history, np.ndarray) and sigma_for_history.ndim == 2:
+                            sigma_for_history = sigma_for_history[:, 0]
                         history_features = self._build_batch_history_features(
                             paths,
                             batch_path_r=per_path_r,
-                            batch_path_sigma=per_path_sigma,
+                            batch_path_sigma=sigma_for_history,
                             simulate_pre_history=simulate_pre_history_global,
                             pre_history_prices=pre_history_prices_global,
                         )
@@ -999,7 +1038,12 @@ class Environment:
                         batch_paths = paths[start:end]
                         batch_t_minus_t = self.get_T_minus_t(end - start)
                         batch_path_r = None if per_path_r is None else per_path_r[start:end]
-                        batch_path_sigma = None if per_path_sigma is None else per_path_sigma[start:end]
+                        if per_path_sigma is None:
+                            batch_path_sigma = None
+                        elif per_path_sigma.ndim == 1:
+                            batch_path_sigma = per_path_sigma[start:end]
+                        else:
+                            batch_path_sigma = per_path_sigma[start:end, :]
                         batch_pre_history = None
                         if pre_history_prices_global is not None:
                             batch_pre_history = pre_history_prices_global[start:end]
@@ -1493,6 +1537,7 @@ class Environment:
         confidence_level=0.95,
         random_seed=None,
         paths_to_test=None,
+        pre_history_prices_to_test=None,
         per_path_r=None,
         per_path_sigma=None,
         plot_histograms=False,
@@ -1542,7 +1587,21 @@ class Environment:
         if paths_to_test is not None:
             paths = tf.convert_to_tensor(paths_to_test, dtype=tf.float32)
             pre_history_prices_global = None
-            simulate_pre_history_global = False
+            if pre_history_prices_to_test is not None:
+                pre_history_prices_global = tf.convert_to_tensor(
+                    pre_history_prices_to_test, dtype=tf.float32
+                )
+                if len(pre_history_prices_global.shape) != 2:
+                    raise ValueError(
+                        "pre_history_prices_to_test must have rank 2: "
+                        f"(n_paths, n_context). Got shape={tuple(pre_history_prices_global.shape)}."
+                    )
+                if int(pre_history_prices_global.shape[0]) != int(paths.shape[0]):
+                    raise ValueError(
+                        "pre_history_prices_to_test n_paths mismatch: "
+                        f"expected {int(paths.shape[0])}, got {int(pre_history_prices_global.shape[0])}."
+                    )
+            simulate_pre_history_global = pre_history_prices_global is None
             generated_internally = False
             if len(paths.shape) != 3:
                 raise ValueError(
@@ -1574,10 +1633,28 @@ class Environment:
                     f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
                 )
         if per_path_sigma is not None:
-            per_path_sigma = np.asarray(per_path_sigma, dtype=np.float32).reshape(-1)
-            if per_path_sigma.shape[0] != int(n_paths):
+            per_path_sigma = np.asarray(per_path_sigma, dtype=np.float32)
+            if per_path_sigma.ndim == 1:
+                if per_path_sigma.shape[0] != int(n_paths):
+                    raise ValueError(
+                        f"per_path_sigma length mismatch: expected {n_paths}, got {per_path_sigma.shape[0]}."
+                    )
+            elif per_path_sigma.ndim == 2:
+                if per_path_sigma.shape[0] != int(n_paths):
+                    raise ValueError(
+                        "per_path_sigma batch mismatch: "
+                        f"expected {n_paths}, got {per_path_sigma.shape[0]}."
+                    )
+                n_required_steps = int(paths.shape[1]) - 1
+                if per_path_sigma.shape[1] < n_required_steps:
+                    raise ValueError(
+                        "per_path_sigma timestep mismatch: "
+                        f"expected at least {n_required_steps}, got {per_path_sigma.shape[1]}."
+                    )
+            else:
                 raise ValueError(
-                    f"per_path_sigma length mismatch: expected {n_paths}, got {per_path_sigma.shape[0]}."
+                    "per_path_sigma must be rank 1 or 2. "
+                    f"Got shape={per_path_sigma.shape}."
                 )
         elif generated_internally:
             inferred_sigma = self._infer_per_path_sigma_if_available(
@@ -1714,10 +1791,13 @@ class Environment:
                 )
                 history_features = None
                 if context_visible and not use_temporal_prefix:
+                    sigma_for_history = per_path_sigma
+                    if isinstance(sigma_for_history, np.ndarray) and sigma_for_history.ndim == 2:
+                        sigma_for_history = sigma_for_history[:, 0]
                     history_features = self._build_batch_history_features(
                         paths,
                         batch_path_r=per_path_r,
-                        batch_path_sigma=per_path_sigma,
+                        batch_path_sigma=sigma_for_history,
                         simulate_pre_history=simulate_pre_history_global,
                         pre_history_prices=pre_history_prices_global,
                     )

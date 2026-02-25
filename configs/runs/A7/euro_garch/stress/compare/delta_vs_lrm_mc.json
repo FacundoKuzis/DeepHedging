@@ -1,0 +1,24 @@
+{
+  "extends": "./base.json",
+  "run_name": "a7_euro_garch_stress_delta_vs_lrm_mc_cmp",
+  "description": "A7 stress GARCH: Delta-BS vs LRM with Monte Carlo continuation.",
+  "benchmark_agents_to_compare": [
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM MC",
+      "config_overrides": {
+        "benchmark_lrm_provider": "monte_carlo",
+        "benchmark_lrm_outer_paths": 192,
+        "benchmark_lrm_mc_inner_paths": 384,
+        "benchmark_lrm_mc_inner_chunk_size": 256,
+        "benchmark_lrm_mc_parallel_enabled": true,
+        "benchmark_lrm_mc_n_workers": 8,
+        "benchmark_lrm_mc_parallel_backend": "thread",
+        "benchmark_lrm_mc_parallel_chunk_size": 4096,
+        "benchmark_lrm_verbose": true,
+        "benchmark_lrm_log_every_t": 10,
+        "benchmark_lrm_mc_log_every_chunks": 200
+      }
+    }
+  ]
+}

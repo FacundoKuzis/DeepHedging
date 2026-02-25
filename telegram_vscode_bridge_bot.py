@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -24,6 +25,20 @@ ADDFILE_BRIDGE_COMMAND = "telegramBridge.openAndAddFile"
 STATE_FILE_PATH = ".telegram_bridge_state.json"
 AUTO_ALLOW_FIRST_CHAT = True
 DELETE_WEBHOOK_ON_START = True
+
+# Codex conversation bridge knobs
+CODEX_TIMEOUT_SEC = 240
+CODEX_EXECUTABLE = (
+    Path.home()
+    / ".vscode"
+    / "extensions"
+    / "openai.chatgpt-0.4.76-win32-x64"
+    / "bin"
+    / "windows-x86_64"
+    / "codex.exe"
+)
+CODEX_WORKDIR = Path(__file__).resolve().parent
+TELEGRAM_MAX_MESSAGE_LEN = 3800
 
 DEFAULT_COMMAND_MAP: Dict[str, str] = {
     "/sidebar": "chatgpt.openSidebar",
@@ -86,20 +101,143 @@ class BridgeClient:
         return True, data
 
 
+class CodexCliClient:
+    def __init__(self, executable: Path, workdir: Path, timeout_sec: int) -> None:
+        self.executable = executable
+        self.workdir = workdir
+        self.timeout_sec = timeout_sec
+
+    def is_available(self) -> Tuple[bool, str]:
+        if not self.executable.exists():
+            return False, f"No existe codex executable en: {self.executable}"
+        if not self.workdir.exists() or not self.workdir.is_dir():
+            return False, f"Directorio de trabajo invalido: {self.workdir}"
+        return True, "ok"
+
+    def ask(
+        self,
+        prompt: str,
+        thread_id: Optional[str],
+    ) -> Tuple[bool, Dict[str, Any] | str]:
+        prompt = prompt.strip()
+        if not prompt:
+            return False, "Prompt vacio."
+
+        executable_ok, executable_reason = self.is_available()
+        if not executable_ok:
+            return False, executable_reason
+
+        if thread_id:
+            cmd = [
+                str(self.executable),
+                "exec",
+                "resume",
+                thread_id,
+                "--json",
+                prompt,
+            ]
+        else:
+            cmd = [
+                str(self.executable),
+                "exec",
+                "--json",
+                "--skip-git-repo-check",
+                prompt,
+            ]
+
+        try:
+            completed = subprocess.run(
+                cmd,
+                cwd=str(self.workdir),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.timeout_sec,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return False, f"Codex timeout ({self.timeout_sec}s)."
+        except Exception as exc:
+            return False, f"Error ejecutando Codex CLI: {exc}"
+
+        if completed.returncode != 0:
+            stderr_text = (completed.stderr or "").strip()
+            stdout_text = (completed.stdout or "").strip()
+            detail = stderr_text[:800] if stderr_text else stdout_text[:800]
+            return False, f"Codex CLI fallo (exit={completed.returncode}): {detail}"
+
+        parsed_events = self._parse_jsonl_events(completed.stdout)
+        new_thread_id = self._extract_thread_id(parsed_events) or thread_id
+        response_text = self._extract_agent_text(parsed_events)
+
+        if not response_text:
+            stderr_text = (completed.stderr or "").strip()
+            if stderr_text:
+                response_text = f"(Sin mensaje de agente. Log: {stderr_text[:400]})"
+            else:
+                response_text = "(Sin mensaje de agente.)"
+
+        return True, {
+            "thread_id": new_thread_id,
+            "response_text": response_text,
+        }
+
+    def _parse_jsonl_events(self, stdout: str) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
+        for raw_line in stdout.splitlines():
+            line = raw_line.strip()
+            if not line or not line.startswith("{"):
+                continue
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(obj, dict):
+                events.append(obj)
+        return events
+
+    def _extract_thread_id(self, events: List[Dict[str, Any]]) -> Optional[str]:
+        for event in events:
+            if event.get("type") == "thread.started":
+                thread_id = event.get("thread_id")
+                if isinstance(thread_id, str) and thread_id.strip():
+                    return thread_id.strip()
+        return None
+
+    def _extract_agent_text(self, events: List[Dict[str, Any]]) -> str:
+        chunks: List[str] = []
+        for event in events:
+            if event.get("type") != "item.completed":
+                continue
+            item = event.get("item")
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "agent_message":
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                chunks.append(text.strip())
+        return "\n\n".join(chunks).strip()
+
+
 class TelegramVsCodeBridgeBot:
     def __init__(
         self,
         telegram_token: str,
         allowed_chat_ids: Set[int],
         bridge_client: BridgeClient,
+        codex_client: CodexCliClient,
     ) -> None:
         self.telegram_token = telegram_token
         self.allowed_chat_ids = set(allowed_chat_ids)
         self.bridge_client = bridge_client
+        self.codex_client = codex_client
         self.telegram_session = requests.Session()
         self.update_offset: Optional[int] = None
         self.last_command_ts: Dict[int, float] = {}
         self.state_file = Path(STATE_FILE_PATH)
+        self.chat_codex_thread_ids: Dict[int, str] = {}
         self._load_state()
 
     def run_forever(self) -> None:
@@ -136,11 +274,22 @@ class TelegramVsCodeBridgeBot:
 
         persisted_ids = data.get("allowed_chat_ids", [])
         if not isinstance(persisted_ids, list):
-            return
+            persisted_ids = []
 
         for value in persisted_ids:
             if isinstance(value, int):
                 self.allowed_chat_ids.add(value)
+
+        persisted_threads = data.get("chat_codex_thread_ids", {})
+        if isinstance(persisted_threads, dict):
+            for key, value in persisted_threads.items():
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                try:
+                    chat_id = int(key)
+                except (TypeError, ValueError):
+                    continue
+                self.chat_codex_thread_ids[chat_id] = value.strip()
 
         if self.allowed_chat_ids:
             self._log(f"Chats autorizados cargados desde disco: {sorted(self.allowed_chat_ids)}")
@@ -148,6 +297,10 @@ class TelegramVsCodeBridgeBot:
     def _save_state(self) -> None:
         payload = {
             "allowed_chat_ids": sorted(self.allowed_chat_ids),
+            "chat_codex_thread_ids": {
+                str(chat_id): thread_id
+                for chat_id, thread_id in sorted(self.chat_codex_thread_ids.items())
+            },
             "updated_at_epoch": int(time.time()),
         }
         try:
@@ -276,6 +429,15 @@ class TelegramVsCodeBridgeBot:
         if command == "/commands":
             self._handle_commands(chat_id)
             return
+        if command == "/ask":
+            self._handle_ask(chat_id, tail)
+            return
+        if command == "/newthread":
+            self._handle_newthread(chat_id)
+            return
+        if command == "/thread":
+            self._handle_thread(chat_id)
+            return
 
         self._send_message(
             chat_id,
@@ -366,6 +528,50 @@ class TelegramVsCodeBridgeBot:
         text = "Allowlist del bridge:\n" + "\n".join(f"- {cmd}" for cmd in commands)
         self._send_message(chat_id, text)
 
+    def _handle_ask(self, chat_id: int, tail: str) -> None:
+        prompt = tail.strip()
+        if not prompt:
+            self._send_message(chat_id, "Uso: /ask <mensaje>")
+            return
+
+        current_thread_id = self.chat_codex_thread_ids.get(chat_id)
+        ok, result = self.codex_client.ask(prompt=prompt, thread_id=current_thread_id)
+        if not ok:
+            self._send_message(chat_id, f"Error Codex: {result}")
+            return
+
+        thread_id = result.get("thread_id")
+        response_text = result.get("response_text", "")
+
+        if isinstance(thread_id, str) and thread_id.strip():
+            self.chat_codex_thread_ids[chat_id] = thread_id.strip()
+            self._save_state()
+
+        if not isinstance(response_text, str) or not response_text.strip():
+            response_text = "(Codex no devolvio texto.)"
+
+        header = ""
+        if isinstance(thread_id, str) and thread_id.strip():
+            header = f"[thread: {thread_id}]\n"
+
+        self._send_long_message(chat_id, f"{header}{response_text}".strip())
+
+    def _handle_newthread(self, chat_id: int) -> None:
+        if chat_id in self.chat_codex_thread_ids:
+            del self.chat_codex_thread_ids[chat_id]
+            self._save_state()
+        self._send_message(
+            chat_id,
+            "Thread reiniciado. El proximo /ask crea una conversacion nueva.",
+        )
+
+    def _handle_thread(self, chat_id: int) -> None:
+        thread_id = self.chat_codex_thread_ids.get(chat_id)
+        if not thread_id:
+            self._send_message(chat_id, "No hay thread activo para este chat. Usa /ask para iniciar uno.")
+            return
+        self._send_message(chat_id, f"Thread actual: {thread_id}")
+
     def _execute_bridge_command(self, chat_id: int, command_id: str, args: List[Any]) -> None:
         ok, data_or_error = self.bridge_client.run_command(command_id, args=args)
         if not ok:
@@ -399,7 +605,10 @@ class TelegramVsCodeBridgeBot:
             "/runcommand <commandId>\n"
             "/listdefaults\n"
             "/commands\n"
-            "/myid"
+            "/myid\n"
+            "/ask <mensaje>\n"
+            "/thread\n"
+            "/newthread"
         )
         self._send_message(chat_id, help_text)
 
@@ -411,6 +620,22 @@ class TelegramVsCodeBridgeBot:
         ok, result = self._telegram_api("sendMessage", payload, timeout_sec=REQUEST_TIMEOUT_SEC)
         if not ok:
             self._log(f"Fallo enviando mensaje a {chat_id}: {result}")
+
+    def _send_long_message(self, chat_id: int, text: str) -> None:
+        normalized = text.strip()
+        if not normalized:
+            normalized = "(mensaje vacio)"
+
+        if len(normalized) <= TELEGRAM_MAX_MESSAGE_LEN:
+            self._send_message(chat_id, normalized)
+            return
+
+        cursor = 0
+        total_len = len(normalized)
+        while cursor < total_len:
+            chunk = normalized[cursor : cursor + TELEGRAM_MAX_MESSAGE_LEN]
+            self._send_message(chat_id, chunk)
+            cursor += TELEGRAM_MAX_MESSAGE_LEN
 
     def _split_command(self, text: str) -> Tuple[str, str]:
         parts = text.split(maxsplit=1)
@@ -468,11 +693,17 @@ def main() -> None:
         token=VSCODE_BRIDGE_TOKEN,
         timeout_sec=REQUEST_TIMEOUT_SEC,
     )
+    codex_client = CodexCliClient(
+        executable=CODEX_EXECUTABLE,
+        workdir=CODEX_WORKDIR,
+        timeout_sec=CODEX_TIMEOUT_SEC,
+    )
 
     bot = TelegramVsCodeBridgeBot(
         telegram_token=TELEGRAM_BOT_TOKEN,
         allowed_chat_ids=ALLOWED_CHAT_IDS,
         bridge_client=bridge_client,
+        codex_client=codex_client,
     )
     bot.run_forever()
 

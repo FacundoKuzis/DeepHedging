@@ -70,14 +70,22 @@ class BaseAgent(ABC):
         Returns:
         - transformed_paths (tf.Tensor): The transformed instrument paths.
         """
+        paths = tf.convert_to_tensor(instrument_paths, dtype=tf.float32)
+        # Numerical guard for heavy-tail simulators (e.g., stressed GARCH):
+        # prevent log(0), log(inf) and overflow propagation into model inputs.
+        eps = tf.constant(1e-8, dtype=tf.float32)
+        max_price = tf.constant(1e12, dtype=tf.float32)
+        safe_paths = tf.clip_by_value(paths, eps, max_price)
+
         if transformation_type is None:
-            return instrument_paths
+            return paths
         elif transformation_type == 'log':
-            return tf.math.log(instrument_paths)
+            return tf.math.log(safe_paths)
         elif transformation_type == 'log_moneyness':
             if K is None:
                 raise ValueError("Strike price K must be provided for 'log moneyness' transformation.")
-            return tf.math.log(instrument_paths / K)
+            strike = tf.constant(max(float(K), 1e-8), dtype=tf.float32)
+            return tf.math.log(safe_paths / strike)
         else:
             raise ValueError(f"Unsupported transformation type: {transformation_type}")
 

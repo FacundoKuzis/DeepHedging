@@ -1,0 +1,27 @@
+{
+  "extends": "../../../../../A6/euro_garch_n50/wavenet/compare/vs_delta.json",
+  "run_name": "a7_euro_garch_stress_wavenet_vs_delta_cmp",
+  "description": "A7 stressed GARCH (n=50): trained WaveNet vs Delta Hedging benchmark.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a7_euro_garch_stress_wavenet_mny"
+    }
+  ],
+  "instrument_model": "garch",
+  "garch_alpha": 0.15,
+  "garch_beta": 0.65,
+  "garch_omega": null,
+  "garch_leverage": 0.09,
+  "garch_use_student_t": true,
+  "garch_student_t_df": 4.5,
+  "fixed_risk_free": 0.03,
+  "fixed_implied_vol": 0.2,
+  "eval_paths": 20000,
+  "eval_agent_batch_size": 2000,
+  "plot_min_x": -5.0,
+  "plot_max_x": 5.0,
+  "bootstrap_enabled": false,
+  "pricing_method": "fixed",
+  "price_computation_mode": "pathwise_if_available"
+}

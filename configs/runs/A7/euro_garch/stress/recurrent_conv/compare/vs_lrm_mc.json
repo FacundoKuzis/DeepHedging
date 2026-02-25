@@ -1,0 +1,64 @@
+{
+  "extends": "../../../../../A7/euro_garch/stress/compare/base.json",
+  "run_name": "a7_euro_garch_stress_recurrent_conv_ctx50_vs_lrm_mc_cmp",
+  "description": "A7 stressed GARCH: LRM-MC vs trained Recurrent+Conv(ctx=50).",
+  "benchmark_agent_name": "LocalRiskMinimizationAgent",
+  "benchmark_lrm_provider": "monte_carlo",
+  "benchmark_lrm_outer_paths": 192,
+  "benchmark_lrm_mc_inner_paths": 384,
+  "benchmark_lrm_mc_inner_chunk_size": 256,
+  "benchmark_lrm_mc_parallel_enabled": true,
+  "benchmark_lrm_mc_n_workers": 8,
+  "benchmark_lrm_mc_parallel_backend": "thread",
+  "benchmark_lrm_mc_parallel_chunk_size": 4096,
+  "benchmark_lrm_verbose": true,
+  "benchmark_lrm_log_every_t": 10,
+  "benchmark_lrm_mc_log_every_chunks": 400,
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "a7_euro_garch_stress_recurrent_conv_ctx50"
+    }
+  ],
+  "use_price_history_context": true,
+  "context_for_path_generation_only": false,
+  "context_length": 50,
+  "context_feature_mode": "log_moneyness",
+  "history_conv1d_enabled": true,
+  "history_conv1d_pooling": "global_max",
+  "history_conv1d_layers": [
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 1,
+      "activation": "relu",
+      "dropout": 0.0,
+      "use_batch_norm": false,
+      "use_residual": false
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 2,
+      "activation": "relu",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 4,
+      "activation": "relu",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true
+    }
+  ],
+  "benchmark_agents_to_compare": [],
+  "eval_paths": 12000,
+  "eval_agent_batch_size": 1000,
+  "bootstrap_enabled": false,
+  "plot_min_x": -5.0,
+  "plot_max_x": 5.0
+}

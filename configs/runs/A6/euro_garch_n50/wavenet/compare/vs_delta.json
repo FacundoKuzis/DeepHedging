@@ -1,0 +1,26 @@
+{
+  "extends": "../../../../../bases/A5/compare/euro_gbm_recurrent_lrm_compare_base.json",
+  "run_name": "a6_euro_garch_n50_wavenet_vs_delta_cmp",
+  "description": "A6 Euro compare under GARCH (n=50): Delta Hedging vs trained WaveNet.",
+  "n": 50,
+  "instrument_model": "garch",
+  "garch_alpha": 0.06,
+  "garch_beta": 0.9,
+  "garch_omega": null,
+  "garch_leverage": 0.08,
+  "garch_use_student_t": true,
+  "garch_student_t_df": 8.0,
+  "benchmark_agent_name": "DeltaHedgingAgent",
+  "pricing_method": "fixed",
+  "price_computation_mode": "pathwise_if_available",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a6_euro_garch_n50_wavenet_mny"
+    }
+  ],
+  "eval_paths": 12000,
+  "eval_agent_batch_size": 2000,
+  "bootstrap_enabled": false,
+  "benchmark_agents_to_compare": []
+}

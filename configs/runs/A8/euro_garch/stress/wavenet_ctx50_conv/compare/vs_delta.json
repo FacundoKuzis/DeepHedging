@@ -1,0 +1,53 @@
+{
+  "extends": "../../../../../A8/euro_garch/stress/wavenet/compare/vs_delta.json",
+  "run_name": "a8_euro_garch_stress_wavenet_mse_ctx50_conv_vs_delta_cmp",
+  "description": "A8 stressed GARCH: WaveNet (MSE + Conv1D seen context 50d) vs Delta Hedging.",
+  "benchmark_delta_sigma_mode": "garch_context_stepwise",
+  "benchmark_delta_sigma_context_days": 50,
+  "benchmark_delta_sigma_min_obs": 10,
+  "benchmark_delta_sigma_garch_alpha": 0.15,
+  "benchmark_delta_sigma_garch_beta": 0.65,
+  "benchmark_delta_sigma_garch_leverage": 0.09,
+  "benchmark_delta_sigma_floor": 1e-6,
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a8_euro_garch_stress_wavenet_mse_ctx50_conv"
+    }
+  ],
+  "use_price_history_context": true,
+  "context_for_path_generation_only": false,
+  "context_length": 50,
+  "context_feature_mode": "log_moneyness",
+  "history_conv1d_enabled": true,
+  "history_conv1d_pooling": "global_max",
+  "history_conv1d_layers": [
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 1,
+      "activation": "relu",
+      "dropout": 0.0,
+      "use_batch_norm": false,
+      "use_residual": false
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 2,
+      "activation": "relu",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 4,
+      "activation": "relu",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true
+    }
+  ]
+}

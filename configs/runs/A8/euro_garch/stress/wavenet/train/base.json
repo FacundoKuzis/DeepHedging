@@ -1,0 +1,10 @@
+{
+  "extends": "../../../../../A7/euro_garch/stress/wavenet/train/base.json",
+  "run_name": "a8_euro_garch_stress_wavenet_mse_train",
+  "description": "A8 Euro WaveNet training under stressed GARCH (n=50), minimizing MSE with early stopping patience=25.",
+  "model_name": "a8_euro_garch_stress_wavenet_mse",
+  "risk_measure_name": "MSE",
+  "early_stopping_enabled": true,
+  "early_stopping_patience": 25,
+  "early_stopping_min_delta": 0.0001
+}

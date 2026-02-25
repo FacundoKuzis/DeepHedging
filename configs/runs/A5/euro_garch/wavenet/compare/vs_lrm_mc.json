@@ -1,0 +1,34 @@
+{
+  "extends": "../../recurrent/compare/base.json",
+  "run_name": "a5_euro_garch_wavenet_vs_lrm_mc_cmp",
+  "description": "A5 Euro compare under GARCH: LRM MC vs trained WaveNet.",
+  "instrument_model": "garch",
+  "garch_alpha": 0.06,
+  "garch_beta": 0.9,
+  "garch_omega": null,
+  "garch_leverage": 0.08,
+  "garch_use_student_t": true,
+  "garch_student_t_df": 8.0,
+  "benchmark_agent_name": "LocalRiskMinimizationAgent",
+  "benchmark_lrm_provider": "monte_carlo",
+  "benchmark_lrm_outer_paths": 128,
+  "benchmark_lrm_mc_inner_paths": 256,
+  "benchmark_lrm_mc_inner_chunk_size": 128,
+  "benchmark_lrm_mc_parallel_enabled": true,
+  "benchmark_lrm_mc_n_workers": 8,
+  "benchmark_lrm_mc_parallel_backend": "thread",
+  "benchmark_lrm_mc_parallel_chunk_size": 2048,
+  "benchmark_lrm_verbose": true,
+  "benchmark_lrm_log_every_t": 5,
+  "benchmark_lrm_mc_log_every_chunks": 200,
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a5_euro_garch_wavenet_mny"
+    }
+  ],
+  "eval_paths": 8000,
+  "eval_agent_batch_size": 1000,
+  "bootstrap_enabled": false,
+  "benchmark_agents_to_compare": []
+}

@@ -1,0 +1,14 @@
+{
+  "extends": "../../../../../bases/A5/train/euro_gbm_recurrent_mny_base.json",
+  "run_name": "a6_euro_garch_wavenet_mny_train",
+  "description": "A6 Euro WaveNet training under GARCH simulator (log-moneyness).",
+  "agent_name": "WaveNetAgent",
+  "model_name": "a6_euro_garch_wavenet_mny",
+  "instrument_model": "garch",
+  "garch_alpha": 0.06,
+  "garch_beta": 0.9,
+  "garch_omega": null,
+  "garch_leverage": 0.08,
+  "garch_use_student_t": true,
+  "garch_student_t_df": 8.0
+}
