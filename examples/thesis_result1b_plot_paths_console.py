@@ -3,7 +3,7 @@ Console script to visualize path samples from unified compare configs.
 
 It saves:
 1) Paths in price levels S
-2) Paths in log-moneyness log(S/K)
+2) Paths in log-moneyness ln(S/K)
 """
 
 from __future__ import annotations
@@ -68,7 +68,9 @@ def _as_paths_2d(paths: tf.Tensor | np.ndarray) -> np.ndarray:
     return arr.astype(np.float32, copy=False)
 
 
-def _build_paths_from_config(config: dict, eval_paths_override: int | None = None) -> tuple[np.ndarray, int]:
+def _build_paths_from_config(
+    config: dict, eval_paths_override: int | None = None
+) -> tuple[np.ndarray, int, np.ndarray | None]:
     n = int(config["n"])
     trading_days = int(config["trading_days_per_year"])
     eval_paths = int(eval_paths_override) if eval_paths_override is not None else int(config["eval_paths"])
@@ -114,7 +116,7 @@ def _build_paths_from_config(config: dict, eval_paths_override: int | None = Non
             print(
                 "[plot][info] test_data_mode='historical_windows': context prefix is not included in paths."
             )
-        return windows_2d, 0
+        return windows_2d, 0, None
 
     cache_dir = _market_cache_dir()
     calib = calibrate_gbm_from_market_data(
@@ -149,10 +151,20 @@ def _build_paths_from_config(config: dict, eval_paths_override: int | None = Non
             n_context_steps=context_length,
             random_seed=eval_seed,
         )
-        return _as_paths_2d(full), context_length
+        sigma_vec = None
+        if hasattr(instrument, "get_last_sampled_sigmas"):
+            sigma_vec = instrument.get_last_sampled_sigmas()
+            if sigma_vec is not None:
+                sigma_vec = np.asarray(sigma_vec, dtype=np.float32).reshape(-1)
+        return _as_paths_2d(full), context_length, sigma_vec
 
     paths = instrument.generate_paths(num_paths=eval_paths, random_seed=eval_seed)
-    return _as_paths_2d(paths), 0
+    sigma_vec = None
+    if hasattr(instrument, "get_last_sampled_sigmas"):
+        sigma_vec = instrument.get_last_sampled_sigmas()
+        if sigma_vec is not None:
+            sigma_vec = np.asarray(sigma_vec, dtype=np.float32).reshape(-1)
+    return _as_paths_2d(paths), 0, sigma_vec
 
 
 def _select_plot_paths(paths_2d: np.ndarray, n_plot_paths: int, seed: int) -> np.ndarray:
@@ -195,11 +207,27 @@ def _plot_log_moneyness(paths_2d: np.ndarray, strike: float, out_path: str, cont
     if context_length > 0:
         ax.axvline(context_length, color="black", linestyle="--", linewidth=1.5, label="Inicio hedge")
     ax.axhline(0.0, color="gray", linestyle=":", linewidth=1.0)
-    ax.set_title("Paths simulados en log-moneyness: log(S/K)")
+    ax.set_title("Paths simulados en log-moneyness: ln(S/K)")
     ax.set_xlabel("Paso temporal")
-    ax.set_ylabel("log(S/K)")
+    ax.set_ylabel("ln(S/K)")
     if context_length > 0:
         ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=180)
+    plt.close(fig)
+
+
+def _plot_sigma_histogram(sigmas: np.ndarray, out_path: str) -> None:
+    vals = np.asarray(sigmas, dtype=np.float64).reshape(-1)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        raise ValueError("No finite sigma values available for histogram.")
+    fig, ax = plt.subplots(figsize=(11, 6))
+    ax.hist(vals, bins=60, alpha=0.8, edgecolor="black")
+    ax.set_title("Histograma de sigma por path")
+    ax.set_xlabel("sigma")
+    ax.set_ylabel("Frecuencia")
+    ax.grid(alpha=0.2)
     fig.tight_layout()
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
@@ -212,7 +240,9 @@ def run_plot(
     n_plot_paths: int,
     eval_paths_override: int | None = None,
 ) -> None:
-    paths_2d, context_length = _build_paths_from_config(config, eval_paths_override=eval_paths_override)
+    paths_2d, context_length, sigma_vec = _build_paths_from_config(
+        config, eval_paths_override=eval_paths_override
+    )
     sample = _select_plot_paths(
         paths_2d=paths_2d,
         n_plot_paths=n_plot_paths,
@@ -223,16 +253,24 @@ def run_plot(
     levels_path = os.path.join(out_dir, "sample_paths_levels.jpg")
     logm_path = os.path.join(out_dir, "sample_paths_log_moneyness.jpg")
     csv_path = os.path.join(out_dir, "sample_paths.csv")
+    sigma_hist_path = os.path.join(out_dir, "sampled_sigmas_hist.jpg")
+    sigma_csv_path = os.path.join(out_dir, "sampled_sigmas.csv")
 
     _plot_levels(sample, levels_path, context_length)
     _plot_log_moneyness(sample, float(config["strike"]), logm_path, context_length)
 
     cols = [f"t_{i}" for i in range(sample.shape[1])]
     pd.DataFrame(sample, columns=cols).to_csv(csv_path, index=False)
+    if sigma_vec is not None:
+        _plot_sigma_histogram(sigma_vec, sigma_hist_path)
+        pd.DataFrame({"sigma": np.asarray(sigma_vec, dtype=np.float32)}).to_csv(sigma_csv_path, index=False)
 
     print(f"[run:{run_name}] Saved levels plot: {levels_path}")
     print(f"[run:{run_name}] Saved log-moneyness plot: {logm_path}")
     print(f"[run:{run_name}] Saved sampled paths CSV: {csv_path}")
+    if sigma_vec is not None:
+        print(f"[run:{run_name}] Saved sigma histogram: {sigma_hist_path}")
+        print(f"[run:{run_name}] Saved sampled sigmas CSV: {sigma_csv_path}")
     if eval_paths_override is not None:
         print(f"[run:{run_name}] eval_paths override used: {int(eval_paths_override)}")
     if context_length > 0:

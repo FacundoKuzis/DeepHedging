@@ -1,0 +1,14 @@
+{
+  "extends": "../../../../../A9/euro_garch/stress/wavenet_ctx50_conv/compare/fast_vs_bs_est_sigma_ctx50.json",
+  "run_name": "a10_euro_garch_stress_wavenet_ctx50_conv_possig_uniform001_08_vs_bs_est_sigma_ctx50_cmp",
+  "description": "A10 compare: model trained with sigma Uniform[0.01,0.8] vs BS delta with 50d stepwise GARCH sigma.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a10_euro_garch_stress_wavenet_ctx50_conv_possig_uniform001_08"
+    }
+  ],
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.01,
+  "gbm_sigma_uniform_high": 0.8
+}

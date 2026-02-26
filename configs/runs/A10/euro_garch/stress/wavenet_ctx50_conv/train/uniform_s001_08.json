@@ -1,0 +1,11 @@
+{
+  "extends": "../../../../../A9/euro_garch/stress/wavenet_ctx50_conv/train/fast_possig.json",
+  "run_name": "a10_euro_garch_stress_wavenet_ctx50_conv_possig_uniform001_08_train",
+  "description": "A10: WaveNet fast architecture, 100 epochs (ES=25), trained on stressed GARCH with per-path sigma Uniform[0.01,0.8].",
+  "model_name": "a10_euro_garch_stress_wavenet_ctx50_conv_possig_uniform001_08",
+  "n_epochs": 100,
+  "early_stopping_patience": 25,
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.01,
+  "gbm_sigma_uniform_high": 0.8
+}

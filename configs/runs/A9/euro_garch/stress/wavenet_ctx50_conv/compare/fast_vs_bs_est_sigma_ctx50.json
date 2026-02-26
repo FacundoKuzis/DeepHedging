@@ -9,5 +9,9 @@
     }
   ],
   "sequence_output_mode": "position",
-  "position_activation": "sigmoid"
+  "position_activation": "sigmoid",
+  "plot_min_x": -10.0,
+  "plot_max_x": 10.0,
+  "eval_paths": 50000
+
 }

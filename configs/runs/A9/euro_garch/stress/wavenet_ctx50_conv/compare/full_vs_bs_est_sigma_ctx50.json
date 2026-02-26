@@ -1,0 +1,13 @@
+{
+  "extends": "../../../../../A8/euro_garch/stress/wavenet_ctx50_conv/compare/vs_bs_est_sigma_ctx50.json",
+  "run_name": "a9_euro_garch_stress_wavenet_ctx50_conv_possig_full_vs_bs_est_sigma_ctx50_cmp",
+  "description": "A9 full compare: WaveNet position(sigmoid) vs BS delta with 50d stepwise GARCH sigma.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a9_euro_garch_stress_wavenet_ctx50_conv_possig_full"
+    }
+  ],
+  "sequence_output_mode": "position",
+  "position_activation": "sigmoid"
+}
