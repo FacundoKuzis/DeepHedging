@@ -61,6 +61,8 @@ from DeepHedging.utils.historical_windows import (  # noqa: E402
 )
 from DeepHedging.utils.garch_context_sigma import (  # noqa: E402
     estimate_pathwise_garch_sigma_from_context,
+    fit_pathwise_garch_params_from_context,
+    fit_student_t_df_from_garch_context,
 )
 
 
@@ -167,6 +169,37 @@ def optional_keys() -> set[str]:
         "garch_leverage",
         "garch_use_student_t",
         "garch_student_t_df",
+        "r_per_path_mode",
+        "r_uniform_low",
+        "r_uniform_high",
+        "r_discrete_values",
+        "r_discrete_probs",
+        "garch_alpha_per_path_mode",
+        "garch_alpha_uniform_low",
+        "garch_alpha_uniform_high",
+        "garch_alpha_discrete_values",
+        "garch_alpha_discrete_probs",
+        "garch_beta_per_path_mode",
+        "garch_beta_uniform_low",
+        "garch_beta_uniform_high",
+        "garch_beta_discrete_values",
+        "garch_beta_discrete_probs",
+        "garch_leverage_per_path_mode",
+        "garch_leverage_uniform_low",
+        "garch_leverage_uniform_high",
+        "garch_leverage_discrete_values",
+        "garch_leverage_discrete_probs",
+        "garch_student_t_df_per_path_mode",
+        "garch_student_t_df_uniform_low",
+        "garch_student_t_df_uniform_high",
+        "garch_student_t_df_discrete_values",
+        "garch_student_t_df_discrete_probs",
+        "student_t_df",
+        "student_t_df_per_path_mode",
+        "student_t_df_uniform_low",
+        "student_t_df_uniform_high",
+        "student_t_df_discrete_values",
+        "student_t_df_discrete_probs",
         "history_conv1d_enabled",
         "history_conv1d_layers",
         "history_conv1d_pooling",
@@ -238,9 +271,16 @@ def optional_keys() -> set[str]:
         "benchmark_delta_sigma_garch_beta",
         "benchmark_delta_sigma_garch_leverage",
         "benchmark_delta_sigma_garch_omega",
+        "benchmark_delta_sigma_garch_fit_from_context",
         "benchmark_delta_sigma_floor",
         "benchmark_delta_sigma_cap",
         "benchmark_delta_sigma_default",
+        "benchmark_delta_student_t_fit_enabled",
+        "benchmark_delta_student_t_mode",
+        "benchmark_delta_student_t_min_obs",
+        "benchmark_delta_student_t_df_default",
+        "benchmark_delta_student_t_df_floor",
+        "benchmark_delta_student_t_df_cap",
         "benchmark_agents_to_compare",
     }
 
@@ -272,8 +312,8 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("strike must be > 0")
 
     instrument_model = str(config.get("instrument_model", "gbm")).strip().lower()
-    if instrument_model not in {"gbm", "garch"}:
-        raise ValueError("instrument_model must be one of {'gbm','garch'}.")
+    if instrument_model not in {"gbm", "garch", "student_t"}:
+        raise ValueError("instrument_model must be one of {'gbm','garch','student_t'}.")
 
     if int(config["eval_paths"]) <= 0:
         raise ValueError("eval_paths must be > 0")
@@ -392,27 +432,33 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(
                 "benchmark_delta_sigma_mode != 'none' requires benchmark_agent_name='DeltaHedgingAgent'."
             )
+        if "benchmark_delta_sigma_garch_fit_from_context" in config and not isinstance(
+            config["benchmark_delta_sigma_garch_fit_from_context"], bool
+        ):
+            raise ValueError("benchmark_delta_sigma_garch_fit_from_context must be bool when provided.")
+        garch_fit_from_context = bool(config.get("benchmark_delta_sigma_garch_fit_from_context", False))
         context_days = int(config.get("benchmark_delta_sigma_context_days", 50))
         if context_days <= 0:
             raise ValueError("benchmark_delta_sigma_context_days must be > 0.")
         min_obs = int(config.get("benchmark_delta_sigma_min_obs", 10))
         if min_obs < 1:
             raise ValueError("benchmark_delta_sigma_min_obs must be >= 1.")
-        alpha = _resolve_float_override(config, "benchmark_delta_sigma_garch_alpha", config.get("garch_alpha", 0.05))
-        beta = _resolve_float_override(config, "benchmark_delta_sigma_garch_beta", config.get("garch_beta", 0.9))
-        leverage = _resolve_float_override(config, "benchmark_delta_sigma_garch_leverage", config.get("garch_leverage", 0.0))
-        if alpha < 0.0 or beta < 0.0:
-            raise ValueError("benchmark_delta_sigma_garch_alpha/beta must be >= 0.")
-        stability_lhs = alpha + beta + 2.0 * leverage
-        if stability_lhs >= 1.0:
-            raise ValueError(
-                "Require benchmark_delta_sigma_garch_alpha + benchmark_delta_sigma_garch_beta + "
-                "2*benchmark_delta_sigma_garch_leverage < 1 for stationarity. "
-                f"Got {stability_lhs:.6f}."
-            )
-        if "benchmark_delta_sigma_garch_omega" in config and config["benchmark_delta_sigma_garch_omega"] is not None:
-            if float(config["benchmark_delta_sigma_garch_omega"]) <= 0.0:
-                raise ValueError("benchmark_delta_sigma_garch_omega must be > 0 when provided.")
+        if not garch_fit_from_context:
+            alpha = _resolve_float_override(config, "benchmark_delta_sigma_garch_alpha", config.get("garch_alpha", 0.05))
+            beta = _resolve_float_override(config, "benchmark_delta_sigma_garch_beta", config.get("garch_beta", 0.9))
+            leverage = _resolve_float_override(config, "benchmark_delta_sigma_garch_leverage", config.get("garch_leverage", 0.0))
+            if alpha < 0.0 or beta < 0.0:
+                raise ValueError("benchmark_delta_sigma_garch_alpha/beta must be >= 0.")
+            stability_lhs = alpha + beta + 2.0 * leverage
+            if stability_lhs >= 1.0:
+                raise ValueError(
+                    "Require benchmark_delta_sigma_garch_alpha + benchmark_delta_sigma_garch_beta + "
+                    "2*benchmark_delta_sigma_garch_leverage < 1 for stationarity. "
+                    f"Got {stability_lhs:.6f}."
+                )
+            if "benchmark_delta_sigma_garch_omega" in config and config["benchmark_delta_sigma_garch_omega"] is not None:
+                if float(config["benchmark_delta_sigma_garch_omega"]) <= 0.0:
+                    raise ValueError("benchmark_delta_sigma_garch_omega must be > 0 when provided.")
         sigma_floor = float(config.get("benchmark_delta_sigma_floor", 1e-6))
         if sigma_floor <= 0.0:
             raise ValueError("benchmark_delta_sigma_floor must be > 0.")
@@ -423,6 +469,31 @@ def validate_config(config: dict[str, Any]) -> None:
         if "benchmark_delta_sigma_default" in config and config["benchmark_delta_sigma_default"] is not None:
             if float(config["benchmark_delta_sigma_default"]) <= 0.0:
                 raise ValueError("benchmark_delta_sigma_default must be > 0 when provided.")
+
+    if "benchmark_delta_student_t_fit_enabled" in config and not isinstance(
+        config["benchmark_delta_student_t_fit_enabled"], bool
+    ):
+        raise ValueError("benchmark_delta_student_t_fit_enabled must be bool when provided.")
+    if bool(config.get("benchmark_delta_student_t_fit_enabled", False)):
+        if delta_sigma_mode == "none":
+            raise ValueError(
+                "benchmark_delta_student_t_fit_enabled=true requires benchmark_delta_sigma_mode != 'none'."
+            )
+        t_mode = str(config.get("benchmark_delta_student_t_mode", "static")).strip().lower()
+        if t_mode not in {"static", "stepwise"}:
+            raise ValueError("benchmark_delta_student_t_mode must be 'static' or 'stepwise'.")
+        min_obs_t = int(config.get("benchmark_delta_student_t_min_obs", 10))
+        if min_obs_t < 1:
+            raise ValueError("benchmark_delta_student_t_min_obs must be >= 1.")
+        df_default = float(config.get("benchmark_delta_student_t_df_default", 8.0))
+        if df_default <= 2.0:
+            raise ValueError("benchmark_delta_student_t_df_default must be > 2.")
+        df_floor = float(config.get("benchmark_delta_student_t_df_floor", 2.1))
+        if df_floor <= 2.0:
+            raise ValueError("benchmark_delta_student_t_df_floor must be > 2.")
+        df_cap = float(config.get("benchmark_delta_student_t_df_cap", 200.0))
+        if df_cap <= df_floor:
+            raise ValueError("benchmark_delta_student_t_df_cap must be > benchmark_delta_student_t_df_floor.")
 
     if "historical_sigma_window_days" in config and config["historical_sigma_window_days"] is not None:
         if int(config["historical_sigma_window_days"]) < 2:
@@ -463,26 +534,117 @@ def validate_config(config: dict[str, Any]) -> None:
             if sum(float(p) for p in probs) <= 0.0:
                 raise ValueError("gbm_sigma_discrete_probs must sum to > 0.")
 
-    if instrument_model == "garch":
-        alpha = float(config.get("garch_alpha", 0.05))
-        beta = float(config.get("garch_beta", 0.9))
-        if alpha < 0.0 or beta < 0.0:
-            raise ValueError("garch_alpha and garch_beta must be >= 0.")
-        if alpha + beta >= 1.0:
-            raise ValueError("Require garch_alpha + garch_beta < 1 for stability.")
-        leverage = float(config.get("garch_leverage", 0.0))
-        stability_lhs = alpha + beta + 2.0 * leverage
-        if stability_lhs >= 1.0:
+    def _validate_mode_for_param(
+        param_name: str,
+        default_value: float,
+        min_inclusive: float | None = None,
+        min_exclusive: float | None = None,
+    ):
+        mode = str(config.get(f"{param_name}_per_path_mode", "fixed")).strip().lower()
+        if mode not in {"fixed", "uniform", "discrete"}:
             raise ValueError(
-                "Require garch_alpha + garch_beta + 2*garch_leverage < 1 for stationarity. "
-                f"Got {stability_lhs:.6f}."
+                f"{param_name}_per_path_mode must be one of {'fixed','uniform','discrete'}."
+            )
+        values = []
+        if mode == "fixed":
+            values = [float(config.get(param_name, default_value))]
+        elif mode == "uniform":
+            lo_key = f"{param_name}_uniform_low"
+            hi_key = f"{param_name}_uniform_high"
+            if lo_key not in config or hi_key not in config:
+                raise ValueError(
+                    f"{lo_key} and {hi_key} are required when {param_name}_per_path_mode='uniform'."
+                )
+            lo = float(config[lo_key])
+            hi = float(config[hi_key])
+            if lo >= hi:
+                raise ValueError(f"Require {lo_key} < {hi_key}.")
+            values = [lo, hi]
+        else:
+            vals_key = f"{param_name}_discrete_values"
+            probs_key = f"{param_name}_discrete_probs"
+            vals = config.get(vals_key)
+            if not isinstance(vals, list) or len(vals) == 0:
+                raise ValueError(
+                    f"{vals_key} must be a non-empty list when {param_name}_per_path_mode='discrete'."
+                )
+            values = [float(v) for v in vals]
+            probs = config.get(probs_key)
+            if probs is not None:
+                if not isinstance(probs, list) or len(probs) != len(vals):
+                    raise ValueError(
+                        f"{probs_key} must be a list with same length as {vals_key}."
+                    )
+                if any(float(p) < 0.0 for p in probs):
+                    raise ValueError(f"{probs_key} must be >= 0.")
+                if sum(float(p) for p in probs) <= 0.0:
+                    raise ValueError(f"{probs_key} must sum to > 0.")
+        if min_inclusive is not None and any(float(v) < float(min_inclusive) for v in values):
+            raise ValueError(f"{param_name} values must be >= {float(min_inclusive)}.")
+        if min_exclusive is not None and any(float(v) <= float(min_exclusive) for v in values):
+            raise ValueError(f"{param_name} values must be > {float(min_exclusive)}.")
+        return mode, values
+
+    if instrument_model == "garch":
+        _, alpha_vals = _validate_mode_for_param("garch_alpha", 0.05, min_inclusive=0.0)
+        _, beta_vals = _validate_mode_for_param("garch_beta", 0.9, min_inclusive=0.0)
+        _, lev_vals = _validate_mode_for_param("garch_leverage", 0.0, min_inclusive=0.0)
+        _, r_vals = _validate_mode_for_param("r", float(config.get("fixed_risk_free", 0.0)))
+        if max(alpha_vals) + max(beta_vals) >= 1.0:
+            raise ValueError("Require max(garch_alpha) + max(garch_beta) < 1 for stability.")
+        worst_stationary_lhs = max(alpha_vals) + max(beta_vals) + 2.0 * max(lev_vals)
+        if worst_stationary_lhs >= 1.0:
+            raise ValueError(
+                "Require max(garch_alpha) + max(garch_beta) + 2*max(garch_leverage) < 1 "
+                f"for stationarity. Got {worst_stationary_lhs:.6f}."
             )
         if config.get("garch_omega", None) is not None and float(config.get("garch_omega")) <= 0.0:
             raise ValueError("garch_omega must be > 0 when provided.")
         if bool(config.get("garch_use_student_t", False)):
-            df = float(config.get("garch_student_t_df", 8.0))
-            if df <= 2.0:
-                raise ValueError("garch_student_t_df must be > 2 when garch_use_student_t=true.")
+            _validate_mode_for_param("garch_student_t_df", 8.0, min_exclusive=2.0)
+        if any(not np.isfinite(float(v)) for v in r_vals):
+            raise ValueError("r values must be finite.")
+
+    if instrument_model == "student_t":
+        df_mode = str(config.get("student_t_df_per_path_mode", "fixed")).strip().lower()
+        if df_mode not in {"fixed", "uniform", "discrete"}:
+            raise ValueError(
+                "student_t_df_per_path_mode must be one of {'fixed','uniform','discrete'}."
+            )
+        if df_mode == "fixed":
+            if float(config.get("student_t_df", 8.0)) <= 2.0:
+                raise ValueError("student_t_df must be > 2 when student_t_df_per_path_mode='fixed'.")
+        elif df_mode == "uniform":
+            if "student_t_df_uniform_low" not in config or "student_t_df_uniform_high" not in config:
+                raise ValueError(
+                    "student_t_df_uniform_low and student_t_df_uniform_high are required "
+                    "when student_t_df_per_path_mode='uniform'."
+                )
+            lo = float(config["student_t_df_uniform_low"])
+            hi = float(config["student_t_df_uniform_high"])
+            if lo <= 2.0 or hi <= 2.0 or lo >= hi:
+                raise ValueError("Require 2 < student_t_df_uniform_low < student_t_df_uniform_high.")
+        else:
+            vals = config.get("student_t_df_discrete_values")
+            if not isinstance(vals, list) or len(vals) == 0:
+                raise ValueError(
+                    "student_t_df_discrete_values must be a non-empty list when "
+                    "student_t_df_per_path_mode='discrete'."
+                )
+            for v in vals:
+                if float(v) <= 2.0:
+                    raise ValueError("student_t_df_discrete_values must contain values > 2.")
+            probs = config.get("student_t_df_discrete_probs")
+            if probs is not None:
+                if not isinstance(probs, list) or len(probs) != len(vals):
+                    raise ValueError(
+                        "student_t_df_discrete_probs must be a list with same length as "
+                        "student_t_df_discrete_values."
+                    )
+                if any(float(p) < 0.0 for p in probs):
+                    raise ValueError("student_t_df_discrete_probs must be >= 0.")
+                if sum(float(p) for p in probs) <= 0.0:
+                    raise ValueError("student_t_df_discrete_probs must sum to > 0.")
 
     use_context = bool(config.get("use_price_history_context", False))
     if "context_for_path_generation_only" in config and not isinstance(config["context_for_path_generation_only"], bool):
@@ -1028,15 +1190,16 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
 
     test_data_mode = str(config["test_data_mode"]).strip().lower()
     delta_sigma_mode = _benchmark_delta_sigma_mode(config)
+    delta_sigma_fit_from_context = bool(config.get("benchmark_delta_sigma_garch_fit_from_context", False))
     delta_sigma_context_days = int(config.get("benchmark_delta_sigma_context_days", 50))
     delta_sigma_min_obs = int(config.get("benchmark_delta_sigma_min_obs", 10))
-    delta_sigma_alpha = _resolve_float_override(
+    delta_sigma_alpha_default = _resolve_float_override(
         config, "benchmark_delta_sigma_garch_alpha", config.get("garch_alpha", 0.05)
     )
-    delta_sigma_beta = _resolve_float_override(
+    delta_sigma_beta_default = _resolve_float_override(
         config, "benchmark_delta_sigma_garch_beta", config.get("garch_beta", 0.9)
     )
-    delta_sigma_leverage = _resolve_float_override(
+    delta_sigma_leverage_default = _resolve_float_override(
         config, "benchmark_delta_sigma_garch_leverage", config.get("garch_leverage", 0.0)
     )
     delta_sigma_omega = config.get("benchmark_delta_sigma_garch_omega", None)
@@ -1045,6 +1208,13 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     delta_sigma_default = _resolve_float_override(
         config, "benchmark_delta_sigma_default", float(calib.sigma_train)
     )
+    fit_delta_student_t = bool(config.get("benchmark_delta_student_t_fit_enabled", False))
+    delta_student_t_mode = str(config.get("benchmark_delta_student_t_mode", "static")).strip().lower()
+    delta_student_t_min_obs = int(config.get("benchmark_delta_student_t_min_obs", 10))
+    delta_student_t_df_default = float(config.get("benchmark_delta_student_t_df_default", 8.0))
+    delta_student_t_df_floor = float(config.get("benchmark_delta_student_t_df_floor", 2.1))
+    delta_student_t_df_cap = float(config.get("benchmark_delta_student_t_df_cap", 200.0))
+    per_path_student_t_df = None
 
     if test_data_mode == "historical_windows":
         test_csv = os.path.join(
@@ -1242,15 +1412,39 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
 
         if delta_sigma_mode != "none":
             garch_mode = "stepwise" if delta_sigma_mode == "garch_context_stepwise" else "static"
+            garch_alpha_for_delta = float(delta_sigma_alpha_default)
+            garch_beta_for_delta = float(delta_sigma_beta_default)
+            garch_leverage_for_delta = float(delta_sigma_leverage_default)
+            if delta_sigma_fit_from_context:
+                (
+                    garch_alpha_for_delta,
+                    garch_beta_for_delta,
+                    garch_leverage_for_delta,
+                ) = fit_pathwise_garch_params_from_context(
+                    hedge_paths_2d=eval_paths_2d,
+                    pre_history_prices_2d=pre_hist_for_sigma,
+                    context_days=int(delta_sigma_context_days),
+                    trading_days_per_year=int(config["trading_days_per_year"]),
+                    min_obs=int(delta_sigma_min_obs),
+                    default_alpha=float(delta_sigma_alpha_default),
+                    default_beta=float(delta_sigma_beta_default),
+                    default_leverage=float(delta_sigma_leverage_default),
+                )
+                print(
+                    f"[run:{run_name}] benchmark_delta_sigma_garch_fit_from_context=true: "
+                    f"alpha mean={float(np.mean(garch_alpha_for_delta)):.6f}, "
+                    f"beta mean={float(np.mean(garch_beta_for_delta)):.6f}, "
+                    f"leverage mean={float(np.mean(garch_leverage_for_delta)):.6f}"
+                )
             per_path_sigma = estimate_pathwise_garch_sigma_from_context(
                 hedge_paths_2d=eval_paths_2d,
                 pre_history_prices_2d=pre_hist_for_sigma,
                 context_days=int(delta_sigma_context_days),
                 mode=garch_mode,
                 trading_days_per_year=int(config["trading_days_per_year"]),
-                garch_alpha=float(delta_sigma_alpha),
-                garch_beta=float(delta_sigma_beta),
-                garch_leverage=float(delta_sigma_leverage),
+                garch_alpha=garch_alpha_for_delta,
+                garch_beta=garch_beta_for_delta,
+                garch_leverage=garch_leverage_for_delta,
                 garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
                 min_obs=int(delta_sigma_min_obs),
                 default_sigma=float(delta_sigma_default),
@@ -1269,6 +1463,36 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                     f"sigma_t0 mean={float(np.mean(sigma_t0)):.6f}, std={float(np.std(sigma_t0)):.6f}, "
                     f"steps={int(np.asarray(per_path_sigma).shape[1])}"
                 )
+            if fit_delta_student_t:
+                per_path_student_t_df = fit_student_t_df_from_garch_context(
+                    hedge_paths_2d=eval_paths_2d,
+                    pre_history_prices_2d=pre_hist_for_sigma,
+                    context_days=int(delta_sigma_context_days),
+                    mode=str(delta_student_t_mode),
+                    trading_days_per_year=int(config["trading_days_per_year"]),
+                    garch_alpha=garch_alpha_for_delta,
+                    garch_beta=garch_beta_for_delta,
+                    garch_leverage=garch_leverage_for_delta,
+                    garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
+                    min_obs=int(delta_student_t_min_obs),
+                    default_sigma=float(delta_sigma_default),
+                    default_df=float(delta_student_t_df_default),
+                    df_floor=float(delta_student_t_df_floor),
+                    df_cap=float(delta_student_t_df_cap),
+                )
+                if np.ndim(per_path_student_t_df) == 1:
+                    print(
+                        f"[run:{run_name}] benchmark_delta_student_t_fit enabled: "
+                        f"df mean={float(np.mean(per_path_student_t_df)):.6f}, "
+                        f"std={float(np.std(per_path_student_t_df)):.6f}"
+                    )
+                else:
+                    df_t0 = np.asarray(per_path_student_t_df)[:, 0]
+                    print(
+                        f"[run:{run_name}] benchmark_delta_student_t_fit enabled: "
+                        f"df_t0 mean={float(np.mean(df_t0)):.6f}, std={float(np.std(df_t0)):.6f}, "
+                        f"steps={int(np.asarray(per_path_student_t_df).shape[1])}"
+                    )
 
         windows_meta["risk_free_window"] = per_path_r
         if np.ndim(per_path_sigma) == 1:
@@ -1279,6 +1503,17 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             sigma_steps_csv = os.path.join(dirs["tables_dir"], "sigma_window_stepwise.csv")
             pd.DataFrame(sigma_arr).to_csv(sigma_steps_csv, index=False)
             print(f"[run:{run_name}] Saved stepwise sigma matrix: {sigma_steps_csv}")
+        if per_path_student_t_df is not None:
+            if np.ndim(per_path_student_t_df) == 1:
+                windows_meta["student_t_df_window"] = per_path_student_t_df
+            else:
+                df_arr = np.asarray(per_path_student_t_df, dtype=np.float32)
+                windows_meta["student_t_df_t0"] = df_arr[:, 0]
+                df_steps_csv = os.path.join(
+                    dirs["tables_dir"], "student_t_df_window_stepwise.csv"
+                )
+                pd.DataFrame(df_arr).to_csv(df_steps_csv, index=False)
+                print(f"[run:{run_name}] Saved stepwise student-t df matrix: {df_steps_csv}")
         window_csv = os.path.join(dirs["tables_dir"], "historical_window_metadata.csv")
         windows_meta.to_csv(window_csv, index=False)
         print(f"[run:{run_name}] Saved historical window metadata: {window_csv}")
@@ -1307,21 +1542,56 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             pre_history_for_sigma = None
 
         eval_paths_2d = np.asarray(eval_paths_tensor, dtype=np.float32)[:, :, 0]
-        if str(config["risk_free_source"]).strip().lower() == "fixed":
+        inferred_path_r = env._infer_per_path_r_if_available(
+            per_path_r=None,
+            n_paths=int(eval_paths_tensor.shape[0]),
+        )
+        if inferred_path_r is not None:
+            per_path_r = inferred_path_r.astype(np.float32)
+            print(
+                f"[run:{run_name}] Using per-path risk-free rates sampled by the instrument "
+                f"(n={int(per_path_r.shape[0])}, mean={float(np.mean(per_path_r)):.6f}, "
+                f"std={float(np.std(per_path_r)):.6f})."
+            )
+        elif str(config["risk_free_source"]).strip().lower() == "fixed":
             per_path_r = np.full((eval_paths_tensor.shape[0],), float(config["fixed_risk_free"]), dtype=np.float32)
         else:
             per_path_r = np.full((eval_paths_tensor.shape[0],), float(calib.r_train), dtype=np.float32)
 
         garch_mode = "stepwise" if delta_sigma_mode == "garch_context_stepwise" else "static"
+        garch_alpha_for_delta = float(delta_sigma_alpha_default)
+        garch_beta_for_delta = float(delta_sigma_beta_default)
+        garch_leverage_for_delta = float(delta_sigma_leverage_default)
+        if delta_sigma_fit_from_context:
+            (
+                garch_alpha_for_delta,
+                garch_beta_for_delta,
+                garch_leverage_for_delta,
+            ) = fit_pathwise_garch_params_from_context(
+                hedge_paths_2d=eval_paths_2d,
+                pre_history_prices_2d=None if pre_history_for_sigma is None else np.asarray(pre_history_for_sigma, dtype=np.float32),
+                context_days=int(delta_sigma_context_days),
+                trading_days_per_year=int(config["trading_days_per_year"]),
+                min_obs=int(delta_sigma_min_obs),
+                default_alpha=float(delta_sigma_alpha_default),
+                default_beta=float(delta_sigma_beta_default),
+                default_leverage=float(delta_sigma_leverage_default),
+            )
+            print(
+                f"[run:{run_name}] benchmark_delta_sigma_garch_fit_from_context=true (simulated): "
+                f"alpha mean={float(np.mean(garch_alpha_for_delta)):.6f}, "
+                f"beta mean={float(np.mean(garch_beta_for_delta)):.6f}, "
+                f"leverage mean={float(np.mean(garch_leverage_for_delta)):.6f}"
+            )
         per_path_sigma = estimate_pathwise_garch_sigma_from_context(
             hedge_paths_2d=eval_paths_2d,
             pre_history_prices_2d=None if pre_history_for_sigma is None else np.asarray(pre_history_for_sigma, dtype=np.float32),
             context_days=int(delta_sigma_context_days),
             mode=garch_mode,
             trading_days_per_year=int(config["trading_days_per_year"]),
-            garch_alpha=float(delta_sigma_alpha),
-            garch_beta=float(delta_sigma_beta),
-            garch_leverage=float(delta_sigma_leverage),
+            garch_alpha=garch_alpha_for_delta,
+            garch_beta=garch_beta_for_delta,
+            garch_leverage=garch_leverage_for_delta,
             garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
             min_obs=int(delta_sigma_min_obs),
             default_sigma=float(delta_sigma_default),
@@ -1340,6 +1610,44 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 f"sigma_t0 mean={float(np.mean(sigma_t0)):.6f}, std={float(np.std(sigma_t0)):.6f}, "
                 f"steps={int(np.asarray(per_path_sigma).shape[1])}"
             )
+        if fit_delta_student_t:
+            per_path_student_t_df = fit_student_t_df_from_garch_context(
+                hedge_paths_2d=eval_paths_2d,
+                pre_history_prices_2d=None if pre_history_for_sigma is None else np.asarray(pre_history_for_sigma, dtype=np.float32),
+                context_days=int(delta_sigma_context_days),
+                mode=str(delta_student_t_mode),
+                trading_days_per_year=int(config["trading_days_per_year"]),
+                garch_alpha=garch_alpha_for_delta,
+                garch_beta=garch_beta_for_delta,
+                garch_leverage=garch_leverage_for_delta,
+                garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
+                min_obs=int(delta_student_t_min_obs),
+                default_sigma=float(delta_sigma_default),
+                default_df=float(delta_student_t_df_default),
+                df_floor=float(delta_student_t_df_floor),
+                df_cap=float(delta_student_t_df_cap),
+            )
+            if np.ndim(per_path_student_t_df) == 1:
+                print(
+                    f"[run:{run_name}] benchmark_delta_student_t_fit enabled (simulated): "
+                    f"df mean={float(np.mean(per_path_student_t_df)):.6f}, "
+                    f"std={float(np.std(per_path_student_t_df)):.6f}"
+                )
+            else:
+                df_t0 = np.asarray(per_path_student_t_df)[:, 0]
+                print(
+                    f"[run:{run_name}] benchmark_delta_student_t_fit enabled (simulated): "
+                    f"df_t0 mean={float(np.mean(df_t0)):.6f}, std={float(np.std(df_t0)):.6f}, "
+                    f"steps={int(np.asarray(per_path_student_t_df).shape[1])}"
+                )
+            if np.ndim(per_path_student_t_df) == 1:
+                df_csv = os.path.join(dirs["tables_dir"], "student_t_df_simulated.csv")
+                pd.DataFrame({"student_t_df": per_path_student_t_df}).to_csv(df_csv, index=False)
+                print(f"[run:{run_name}] Saved student-t df vector: {df_csv}")
+            else:
+                df_csv = os.path.join(dirs["tables_dir"], "student_t_df_simulated_stepwise.csv")
+                pd.DataFrame(np.asarray(per_path_student_t_df, dtype=np.float32)).to_csv(df_csv, index=False)
+                print(f"[run:{run_name}] Saved student-t df matrix: {df_csv}")
 
     actions_cache_dir = None
     if bool(config.get("reuse_actions_between_steps", True)):
@@ -1362,11 +1670,19 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
             "benchmark_delta_sigma_context_days": int(config.get("benchmark_delta_sigma_context_days", 50)),
             "benchmark_delta_sigma_min_obs": int(config.get("benchmark_delta_sigma_min_obs", 10)),
+            "benchmark_delta_sigma_garch_fit_from_context": bool(
+                config.get("benchmark_delta_sigma_garch_fit_from_context", False)
+            ),
             "benchmark_delta_sigma_garch_alpha": config.get("benchmark_delta_sigma_garch_alpha"),
             "benchmark_delta_sigma_garch_beta": config.get("benchmark_delta_sigma_garch_beta"),
             "benchmark_delta_sigma_garch_leverage": config.get("benchmark_delta_sigma_garch_leverage"),
             "benchmark_delta_sigma_garch_omega": config.get("benchmark_delta_sigma_garch_omega"),
             "instrument_model": str(config.get("instrument_model", "gbm")).strip().lower(),
+            "r_per_path_mode": str(config.get("r_per_path_mode", "fixed")),
+            "r_uniform_low": config.get("r_uniform_low"),
+            "r_uniform_high": config.get("r_uniform_high"),
+            "r_discrete_values": config.get("r_discrete_values"),
+            "r_discrete_probs": config.get("r_discrete_probs"),
             "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
             "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
             "gbm_sigma_uniform_high": config.get("gbm_sigma_uniform_high"),
@@ -1378,6 +1694,34 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "garch_leverage": config.get("garch_leverage"),
             "garch_use_student_t": config.get("garch_use_student_t"),
             "garch_student_t_df": config.get("garch_student_t_df"),
+            "garch_alpha_per_path_mode": str(config.get("garch_alpha_per_path_mode", "fixed")),
+            "garch_alpha_uniform_low": config.get("garch_alpha_uniform_low"),
+            "garch_alpha_uniform_high": config.get("garch_alpha_uniform_high"),
+            "garch_alpha_discrete_values": config.get("garch_alpha_discrete_values"),
+            "garch_alpha_discrete_probs": config.get("garch_alpha_discrete_probs"),
+            "garch_beta_per_path_mode": str(config.get("garch_beta_per_path_mode", "fixed")),
+            "garch_beta_uniform_low": config.get("garch_beta_uniform_low"),
+            "garch_beta_uniform_high": config.get("garch_beta_uniform_high"),
+            "garch_beta_discrete_values": config.get("garch_beta_discrete_values"),
+            "garch_beta_discrete_probs": config.get("garch_beta_discrete_probs"),
+            "garch_leverage_per_path_mode": str(config.get("garch_leverage_per_path_mode", "fixed")),
+            "garch_leverage_uniform_low": config.get("garch_leverage_uniform_low"),
+            "garch_leverage_uniform_high": config.get("garch_leverage_uniform_high"),
+            "garch_leverage_discrete_values": config.get("garch_leverage_discrete_values"),
+            "garch_leverage_discrete_probs": config.get("garch_leverage_discrete_probs"),
+            "garch_student_t_df_per_path_mode": str(config.get("garch_student_t_df_per_path_mode", "fixed")),
+            "garch_student_t_df_uniform_low": config.get("garch_student_t_df_uniform_low"),
+            "garch_student_t_df_uniform_high": config.get("garch_student_t_df_uniform_high"),
+            "garch_student_t_df_discrete_values": config.get("garch_student_t_df_discrete_values"),
+            "garch_student_t_df_discrete_probs": config.get("garch_student_t_df_discrete_probs"),
+            "student_t_df": config.get("student_t_df"),
+            "student_t_df_per_path_mode": str(config.get("student_t_df_per_path_mode", "fixed")),
+            "student_t_df_uniform_low": config.get("student_t_df_uniform_low"),
+            "student_t_df_uniform_high": config.get("student_t_df_uniform_high"),
+            "student_t_df_discrete_values": config.get("student_t_df_discrete_values"),
+            "student_t_df_discrete_probs": config.get("student_t_df_discrete_probs"),
+            "benchmark_delta_student_t_fit_enabled": bool(config.get("benchmark_delta_student_t_fit_enabled", False)),
+            "benchmark_delta_student_t_mode": str(config.get("benchmark_delta_student_t_mode", "static")),
             "per_path_sigma_signature": _vector_signature(per_path_sigma),
             "use_price_history_context": bool(config.get("use_price_history_context", False)),
             "context_for_path_generation_only": bool(config.get("context_for_path_generation_only", False)),
@@ -1545,6 +1889,9 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 "sigma_mode": _sigma_mode(config),
                 "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
                 "benchmark_delta_sigma_context_days": int(config.get("benchmark_delta_sigma_context_days", 50)),
+                "benchmark_delta_sigma_garch_fit_from_context": bool(
+                    config.get("benchmark_delta_sigma_garch_fit_from_context", False)
+                ),
                 "historical_sigma_window_days": _historical_sigma_window_days(config),
                 "use_price_history_context": bool(config.get("use_price_history_context", False)),
                 "context_for_path_generation_only": bool(config.get("context_for_path_generation_only", False)),
@@ -1554,16 +1901,65 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 "history_conv1d_enabled": bool(config.get("history_conv1d_enabled", False)),
                 "history_conv1d_layers": json.dumps(config.get("history_conv1d_layers")),
                 "history_conv1d_pooling": str(config.get("history_conv1d_pooling", "global_max")),
+                "r_per_path_mode": str(config.get("r_per_path_mode", "fixed")),
+                "r_uniform_low": config.get("r_uniform_low"),
+                "r_uniform_high": config.get("r_uniform_high"),
+                "r_discrete_values": json.dumps(config.get("r_discrete_values")),
+                "r_discrete_probs": json.dumps(config.get("r_discrete_probs")),
                 "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
                 "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
                 "gbm_sigma_uniform_high": config.get("gbm_sigma_uniform_high"),
                 "gbm_sigma_discrete_values": json.dumps(config.get("gbm_sigma_discrete_values")),
                 "gbm_sigma_discrete_probs": json.dumps(config.get("gbm_sigma_discrete_probs")),
+                "garch_alpha": config.get("garch_alpha"),
+                "garch_beta": config.get("garch_beta"),
+                "garch_omega": config.get("garch_omega"),
+                "garch_leverage": config.get("garch_leverage"),
+                "garch_use_student_t": config.get("garch_use_student_t"),
+                "garch_student_t_df": config.get("garch_student_t_df"),
+                "garch_alpha_per_path_mode": str(config.get("garch_alpha_per_path_mode", "fixed")),
+                "garch_alpha_uniform_low": config.get("garch_alpha_uniform_low"),
+                "garch_alpha_uniform_high": config.get("garch_alpha_uniform_high"),
+                "garch_alpha_discrete_values": json.dumps(config.get("garch_alpha_discrete_values")),
+                "garch_alpha_discrete_probs": json.dumps(config.get("garch_alpha_discrete_probs")),
+                "garch_beta_per_path_mode": str(config.get("garch_beta_per_path_mode", "fixed")),
+                "garch_beta_uniform_low": config.get("garch_beta_uniform_low"),
+                "garch_beta_uniform_high": config.get("garch_beta_uniform_high"),
+                "garch_beta_discrete_values": json.dumps(config.get("garch_beta_discrete_values")),
+                "garch_beta_discrete_probs": json.dumps(config.get("garch_beta_discrete_probs")),
+                "garch_leverage_per_path_mode": str(config.get("garch_leverage_per_path_mode", "fixed")),
+                "garch_leverage_uniform_low": config.get("garch_leverage_uniform_low"),
+                "garch_leverage_uniform_high": config.get("garch_leverage_uniform_high"),
+                "garch_leverage_discrete_values": json.dumps(config.get("garch_leverage_discrete_values")),
+                "garch_leverage_discrete_probs": json.dumps(config.get("garch_leverage_discrete_probs")),
+                "garch_student_t_df_per_path_mode": str(config.get("garch_student_t_df_per_path_mode", "fixed")),
+                "garch_student_t_df_uniform_low": config.get("garch_student_t_df_uniform_low"),
+                "garch_student_t_df_uniform_high": config.get("garch_student_t_df_uniform_high"),
+                "garch_student_t_df_discrete_values": json.dumps(config.get("garch_student_t_df_discrete_values")),
+                "garch_student_t_df_discrete_probs": json.dumps(config.get("garch_student_t_df_discrete_probs")),
+                "student_t_df": config.get("student_t_df"),
+                "student_t_df_per_path_mode": str(config.get("student_t_df_per_path_mode", "fixed")),
+                "student_t_df_uniform_low": config.get("student_t_df_uniform_low"),
+                "student_t_df_uniform_high": config.get("student_t_df_uniform_high"),
+                "student_t_df_discrete_values": json.dumps(config.get("student_t_df_discrete_values")),
+                "student_t_df_discrete_probs": json.dumps(config.get("student_t_df_discrete_probs")),
+                "benchmark_delta_student_t_fit_enabled": bool(config.get("benchmark_delta_student_t_fit_enabled", False)),
+                "benchmark_delta_student_t_mode": str(config.get("benchmark_delta_student_t_mode", "static")),
                 "risk_free_source": str(config["risk_free_source"]),
                 "risk_free_mode": str(config["risk_free_mode"]),
                 "sigma_train": float(calib.sigma_train),
                 "sigma_eval_mean": float(np.mean(per_path_sigma)) if per_path_sigma is not None else float(calib.sigma_train),
                 "sigma_eval_std": float(np.std(per_path_sigma)) if per_path_sigma is not None else 0.0,
+                "student_t_df_eval_mean": (
+                    float(np.mean(per_path_student_t_df))
+                    if per_path_student_t_df is not None
+                    else np.nan
+                ),
+                "student_t_df_eval_std": (
+                    float(np.std(per_path_student_t_df))
+                    if per_path_student_t_df is not None
+                    else np.nan
+                ),
                 "r_train": float(calib.r_train),
                 "mu_train": float(calib.mu_train),
                 "train_rows": int(calib.train_rows),
@@ -1588,6 +1984,11 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         "sigma_mode": _sigma_mode(config),
         "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
         "benchmark_delta_sigma_context_days": int(config.get("benchmark_delta_sigma_context_days", 50)),
+        "benchmark_delta_sigma_garch_fit_from_context": bool(
+            config.get("benchmark_delta_sigma_garch_fit_from_context", False)
+        ),
+        "benchmark_delta_student_t_fit_enabled": bool(config.get("benchmark_delta_student_t_fit_enabled", False)),
+        "benchmark_delta_student_t_mode": str(config.get("benchmark_delta_student_t_mode", "static")),
         "historical_sigma_window_days": _historical_sigma_window_days(config),
         "bootstrap_enabled": bool(config["bootstrap_enabled"]),
         "bootstrap_n_bootstraps": int(config["bootstrap_n_bootstraps"]),

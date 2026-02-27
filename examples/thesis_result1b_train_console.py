@@ -21,6 +21,7 @@ os.environ.setdefault("TF_NUM_INTEROP_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import pandas as pd
+import numpy as np
 import tensorflow as tf
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -148,12 +149,43 @@ def optional_keys() -> set[str]:
         "gbm_sigma_uniform_high",
         "gbm_sigma_discrete_values",
         "gbm_sigma_discrete_probs",
+        "r_per_path_mode",
+        "r_uniform_low",
+        "r_uniform_high",
+        "r_discrete_values",
+        "r_discrete_probs",
         "garch_alpha",
         "garch_beta",
         "garch_omega",
         "garch_leverage",
         "garch_use_student_t",
         "garch_student_t_df",
+        "garch_alpha_per_path_mode",
+        "garch_alpha_uniform_low",
+        "garch_alpha_uniform_high",
+        "garch_alpha_discrete_values",
+        "garch_alpha_discrete_probs",
+        "garch_beta_per_path_mode",
+        "garch_beta_uniform_low",
+        "garch_beta_uniform_high",
+        "garch_beta_discrete_values",
+        "garch_beta_discrete_probs",
+        "garch_leverage_per_path_mode",
+        "garch_leverage_uniform_low",
+        "garch_leverage_uniform_high",
+        "garch_leverage_discrete_values",
+        "garch_leverage_discrete_probs",
+        "garch_student_t_df_per_path_mode",
+        "garch_student_t_df_uniform_low",
+        "garch_student_t_df_uniform_high",
+        "garch_student_t_df_discrete_values",
+        "garch_student_t_df_discrete_probs",
+        "student_t_df",
+        "student_t_df_per_path_mode",
+        "student_t_df_uniform_low",
+        "student_t_df_uniform_high",
+        "student_t_df_discrete_values",
+        "student_t_df_discrete_probs",
         "reduce_on_plateau_factor",
         "reduce_on_plateau_patience",
         "reduce_on_plateau_min_delta",
@@ -320,8 +352,8 @@ def validate_config(config: dict[str, Any]) -> None:
     if path_t not in {"none", "log", "log_moneyness"}:
         raise ValueError("path_transformation_type must be one of {'none','log','log_moneyness'}.")
     instrument_model = str(config.get("instrument_model", "gbm")).strip().lower()
-    if instrument_model not in {"gbm", "garch"}:
-        raise ValueError("instrument_model must be one of {'gbm','garch'}.")
+    if instrument_model not in {"gbm", "garch", "student_t"}:
+        raise ValueError("instrument_model must be one of {'gbm','garch','student_t'}.")
 
     sigma_path_mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
     if sigma_path_mode not in {"fixed", "uniform", "discrete"}:
@@ -355,32 +387,123 @@ def validate_config(config: dict[str, Any]) -> None:
             if sum(float(p) for p in probs) <= 0.0:
                 raise ValueError("gbm_sigma_discrete_probs must sum to > 0.")
 
+    def _validate_mode_for_param(
+        param_name: str,
+        default_value: float,
+        min_inclusive: float | None = None,
+        min_exclusive: float | None = None,
+    ):
+        mode = str(config.get(f"{param_name}_per_path_mode", "fixed")).strip().lower()
+        if mode not in {"fixed", "uniform", "discrete"}:
+            raise ValueError(
+                f"{param_name}_per_path_mode must be one of {'fixed','uniform','discrete'}."
+            )
+        values = []
+        if mode == "fixed":
+            values = [float(config.get(param_name, default_value))]
+        elif mode == "uniform":
+            lo_key = f"{param_name}_uniform_low"
+            hi_key = f"{param_name}_uniform_high"
+            if lo_key not in config or hi_key not in config:
+                raise ValueError(
+                    f"{lo_key} and {hi_key} are required when {param_name}_per_path_mode='uniform'."
+                )
+            lo = float(config[lo_key])
+            hi = float(config[hi_key])
+            if lo >= hi:
+                raise ValueError(f"Require {lo_key} < {hi_key}.")
+            values = [lo, hi]
+        else:
+            vals_key = f"{param_name}_discrete_values"
+            probs_key = f"{param_name}_discrete_probs"
+            vals = config.get(vals_key)
+            if not isinstance(vals, list) or len(vals) == 0:
+                raise ValueError(
+                    f"{vals_key} must be a non-empty list when {param_name}_per_path_mode='discrete'."
+                )
+            values = [float(v) for v in vals]
+            probs = config.get(probs_key)
+            if probs is not None:
+                if not isinstance(probs, list) or len(probs) != len(vals):
+                    raise ValueError(
+                        f"{probs_key} must be a list with same length as {vals_key}."
+                    )
+                if any(float(p) < 0.0 for p in probs):
+                    raise ValueError(f"{probs_key} must be >= 0.")
+                if sum(float(p) for p in probs) <= 0.0:
+                    raise ValueError(f"{probs_key} must sum to > 0.")
+        if min_inclusive is not None:
+            if any(float(v) < float(min_inclusive) for v in values):
+                raise ValueError(f"{param_name} values must be >= {float(min_inclusive)}.")
+        if min_exclusive is not None:
+            if any(float(v) <= float(min_exclusive) for v in values):
+                raise ValueError(f"{param_name} values must be > {float(min_exclusive)}.")
+        return mode, values
+
     if instrument_model == "garch":
-        alpha = float(config.get("garch_alpha", 0.05))
-        beta = float(config.get("garch_beta", 0.9))
-        if alpha < 0.0:
-            raise ValueError("garch_alpha must be >= 0.")
-        if beta < 0.0:
-            raise ValueError("garch_beta must be >= 0.")
-        if alpha + beta >= 1.0:
-            raise ValueError("Require garch_alpha + garch_beta < 1 for stability.")
+        _, alpha_vals = _validate_mode_for_param("garch_alpha", 0.05, min_inclusive=0.0)
+        _, beta_vals = _validate_mode_for_param("garch_beta", 0.9, min_inclusive=0.0)
+        _, lev_vals = _validate_mode_for_param("garch_leverage", 0.0, min_inclusive=0.0)
+        _, r_vals = _validate_mode_for_param("r", float(config.get("fixed_risk_free", 0.0)))
+        if max(alpha_vals) + max(beta_vals) >= 1.0:
+            raise ValueError("Require max(garch_alpha) + max(garch_beta) < 1 for stability.")
+        worst_stationary_lhs = max(alpha_vals) + max(beta_vals) + 2.0 * max(lev_vals)
+        if worst_stationary_lhs >= 1.0:
+            raise ValueError(
+                "Require max(garch_alpha) + max(garch_beta) + 2*max(garch_leverage) < 1 "
+                f"for stationarity. Got {worst_stationary_lhs:.6f}."
+            )
         if "garch_omega" in config and config["garch_omega"] is not None:
             if float(config["garch_omega"]) <= 0.0:
                 raise ValueError("garch_omega must be > 0 when provided.")
-        if "garch_leverage" in config and not isinstance(config["garch_leverage"], (int, float)):
-            raise ValueError("garch_leverage must be numeric when provided.")
-        leverage = float(config.get("garch_leverage", 0.0))
-        stability_lhs = alpha + beta + 2.0 * leverage
-        if stability_lhs >= 1.0:
-            raise ValueError(
-                "Require garch_alpha + garch_beta + 2*garch_leverage < 1 for stationarity. "
-                f"Got {stability_lhs:.6f}."
-            )
         if "garch_use_student_t" in config and not isinstance(config["garch_use_student_t"], bool):
             raise ValueError("garch_use_student_t must be bool when provided.")
         if bool(config.get("garch_use_student_t", False)):
-            if float(config.get("garch_student_t_df", 8.0)) <= 2.0:
-                raise ValueError("garch_student_t_df must be > 2 when garch_use_student_t=true.")
+            _validate_mode_for_param("garch_student_t_df", 8.0, min_exclusive=2.0)
+        # r per path supports negative rates, but keep them finite.
+        if any(not np.isfinite(float(v)) for v in r_vals):
+            raise ValueError("r values must be finite.")
+
+    if instrument_model == "student_t":
+        df_mode = str(config.get("student_t_df_per_path_mode", "fixed")).strip().lower()
+        if df_mode not in {"fixed", "uniform", "discrete"}:
+            raise ValueError(
+                "student_t_df_per_path_mode must be one of {'fixed','uniform','discrete'}."
+            )
+        if df_mode == "fixed":
+            if float(config.get("student_t_df", 8.0)) <= 2.0:
+                raise ValueError("student_t_df must be > 2 when student_t_df_per_path_mode='fixed'.")
+        elif df_mode == "uniform":
+            if "student_t_df_uniform_low" not in config or "student_t_df_uniform_high" not in config:
+                raise ValueError(
+                    "student_t_df_uniform_low and student_t_df_uniform_high are required "
+                    "when student_t_df_per_path_mode='uniform'."
+                )
+            lo = float(config["student_t_df_uniform_low"])
+            hi = float(config["student_t_df_uniform_high"])
+            if lo <= 2.0 or hi <= 2.0 or lo >= hi:
+                raise ValueError("Require 2 < student_t_df_uniform_low < student_t_df_uniform_high.")
+        else:
+            vals = config.get("student_t_df_discrete_values")
+            if not isinstance(vals, list) or len(vals) == 0:
+                raise ValueError(
+                    "student_t_df_discrete_values must be a non-empty list when "
+                    "student_t_df_per_path_mode='discrete'."
+                )
+            for v in vals:
+                if float(v) <= 2.0:
+                    raise ValueError("student_t_df_discrete_values must contain values > 2.")
+            probs = config.get("student_t_df_discrete_probs")
+            if probs is not None:
+                if not isinstance(probs, list) or len(probs) != len(vals):
+                    raise ValueError(
+                        "student_t_df_discrete_probs must be a list with same length as "
+                        "student_t_df_discrete_values."
+                    )
+                if any(float(p) < 0.0 for p in probs):
+                    raise ValueError("student_t_df_discrete_probs must be >= 0.")
+                if sum(float(p) for p in probs) <= 0.0:
+                    raise ValueError("student_t_df_discrete_probs must sum to > 0.")
 
     for key in [
         "run_name",
@@ -605,10 +728,101 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
             env.load_optimizer(optimizer_path, only_weights=True)
             print(f"[run:{run_name}] Loaded existing optimizer: {optimizer_path}")
 
+    def _sampling_desc(
+        name: str,
+        mode_key: str,
+        fixed_key: str,
+        uniform_low_key: str,
+        uniform_high_key: str,
+        discrete_values_key: str,
+        default_fixed,
+    ) -> str:
+        mode = str(config.get(mode_key, "fixed")).strip().lower()
+        if mode == "uniform":
+            lo = config.get(uniform_low_key)
+            hi = config.get(uniform_high_key)
+            return f"{name}=uniform[{lo},{hi}]"
+        if mode == "discrete":
+            values = config.get(discrete_values_key)
+            n_vals = 0 if values is None else len(values)
+            return f"{name}=discrete(n={n_vals})"
+        fixed_val = config.get(fixed_key, default_fixed)
+        return f"{name}=fixed({fixed_val})"
+
+    instrument_model = str(config.get("instrument_model", "gbm")).strip().lower()
+    sampling_bits = [
+        _sampling_desc(
+            name="sigma",
+            mode_key="gbm_sigma_per_path_mode",
+            fixed_key="sigma",
+            uniform_low_key="gbm_sigma_uniform_low",
+            uniform_high_key="gbm_sigma_uniform_high",
+            discrete_values_key="gbm_sigma_discrete_values",
+            default_fixed=config.get("sigma", calib.sigma_train),
+        )
+    ]
+    if instrument_model == "garch":
+        sampling_bits.append(
+            _sampling_desc(
+                name="r",
+                mode_key="r_per_path_mode",
+                fixed_key="r",
+                uniform_low_key="r_uniform_low",
+                uniform_high_key="r_uniform_high",
+                discrete_values_key="r_discrete_values",
+                default_fixed=config.get("r", calib.r_train),
+            )
+        )
+        sampling_bits.append(
+            _sampling_desc(
+                name="alpha",
+                mode_key="garch_alpha_per_path_mode",
+                fixed_key="garch_alpha",
+                uniform_low_key="garch_alpha_uniform_low",
+                uniform_high_key="garch_alpha_uniform_high",
+                discrete_values_key="garch_alpha_discrete_values",
+                default_fixed=config.get("garch_alpha", 0.05),
+            )
+        )
+        sampling_bits.append(
+            _sampling_desc(
+                name="beta",
+                mode_key="garch_beta_per_path_mode",
+                fixed_key="garch_beta",
+                uniform_low_key="garch_beta_uniform_low",
+                uniform_high_key="garch_beta_uniform_high",
+                discrete_values_key="garch_beta_discrete_values",
+                default_fixed=config.get("garch_beta", 0.9),
+            )
+        )
+        sampling_bits.append(
+            _sampling_desc(
+                name="leverage",
+                mode_key="garch_leverage_per_path_mode",
+                fixed_key="garch_leverage",
+                uniform_low_key="garch_leverage_uniform_low",
+                uniform_high_key="garch_leverage_uniform_high",
+                discrete_values_key="garch_leverage_discrete_values",
+                default_fixed=config.get("garch_leverage", 0.0),
+            )
+        )
+        if bool(config.get("garch_use_student_t", False)):
+            sampling_bits.append(
+                _sampling_desc(
+                    name="t_df",
+                    mode_key="garch_student_t_df_per_path_mode",
+                    fixed_key="garch_student_t_df",
+                    uniform_low_key="garch_student_t_df_uniform_low",
+                    uniform_high_key="garch_student_t_df_uniform_high",
+                    discrete_values_key="garch_student_t_df_discrete_values",
+                    default_fixed=config.get("garch_student_t_df", 8.0),
+                )
+            )
+
     print(
         f"[run:{run_name}] Training agent={config['agent_name']} claim={config['contingent_claim']} "
-        f"instrument={str(config.get('instrument_model', 'gbm')).strip().lower()} "
-        f"with calibrated r={calib.r_train:.6f}, sigma={calib.sigma_train:.6f}"
+        f"instrument={instrument_model} with calibrated r={calib.r_train:.6f}, sigma={calib.sigma_train:.6f}. "
+        f"Pathwise sampling: {'; '.join(sampling_bits)}"
     )
     t0 = time.perf_counter()
     out = env.train(
@@ -661,6 +875,11 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
                 "history_conv1d_layers": json.dumps(config.get("history_conv1d_layers")),
                 "history_conv1d_pooling": str(config.get("history_conv1d_pooling", "global_max")),
                 "instrument_model": str(config.get("instrument_model", "gbm")),
+                "r_per_path_mode": str(config.get("r_per_path_mode", "fixed")),
+                "r_uniform_low": config.get("r_uniform_low"),
+                "r_uniform_high": config.get("r_uniform_high"),
+                "r_discrete_values": json.dumps(config.get("r_discrete_values")),
+                "r_discrete_probs": json.dumps(config.get("r_discrete_probs")),
                 "gbm_sigma_per_path_mode": str(config.get("gbm_sigma_per_path_mode", "fixed")),
                 "gbm_sigma_uniform_low": config.get("gbm_sigma_uniform_low"),
                 "gbm_sigma_uniform_high": config.get("gbm_sigma_uniform_high"),
@@ -672,6 +891,32 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
                 "garch_leverage": config.get("garch_leverage"),
                 "garch_use_student_t": config.get("garch_use_student_t"),
                 "garch_student_t_df": config.get("garch_student_t_df"),
+                "garch_alpha_per_path_mode": str(config.get("garch_alpha_per_path_mode", "fixed")),
+                "garch_alpha_uniform_low": config.get("garch_alpha_uniform_low"),
+                "garch_alpha_uniform_high": config.get("garch_alpha_uniform_high"),
+                "garch_alpha_discrete_values": json.dumps(config.get("garch_alpha_discrete_values")),
+                "garch_alpha_discrete_probs": json.dumps(config.get("garch_alpha_discrete_probs")),
+                "garch_beta_per_path_mode": str(config.get("garch_beta_per_path_mode", "fixed")),
+                "garch_beta_uniform_low": config.get("garch_beta_uniform_low"),
+                "garch_beta_uniform_high": config.get("garch_beta_uniform_high"),
+                "garch_beta_discrete_values": json.dumps(config.get("garch_beta_discrete_values")),
+                "garch_beta_discrete_probs": json.dumps(config.get("garch_beta_discrete_probs")),
+                "garch_leverage_per_path_mode": str(config.get("garch_leverage_per_path_mode", "fixed")),
+                "garch_leverage_uniform_low": config.get("garch_leverage_uniform_low"),
+                "garch_leverage_uniform_high": config.get("garch_leverage_uniform_high"),
+                "garch_leverage_discrete_values": json.dumps(config.get("garch_leverage_discrete_values")),
+                "garch_leverage_discrete_probs": json.dumps(config.get("garch_leverage_discrete_probs")),
+                "garch_student_t_df_per_path_mode": str(config.get("garch_student_t_df_per_path_mode", "fixed")),
+                "garch_student_t_df_uniform_low": config.get("garch_student_t_df_uniform_low"),
+                "garch_student_t_df_uniform_high": config.get("garch_student_t_df_uniform_high"),
+                "garch_student_t_df_discrete_values": json.dumps(config.get("garch_student_t_df_discrete_values")),
+                "garch_student_t_df_discrete_probs": json.dumps(config.get("garch_student_t_df_discrete_probs")),
+                "student_t_df": config.get("student_t_df"),
+                "student_t_df_per_path_mode": str(config.get("student_t_df_per_path_mode", "fixed")),
+                "student_t_df_uniform_low": config.get("student_t_df_uniform_low"),
+                "student_t_df_uniform_high": config.get("student_t_df_uniform_high"),
+                "student_t_df_discrete_values": json.dumps(config.get("student_t_df_discrete_values")),
+                "student_t_df_discrete_probs": json.dumps(config.get("student_t_df_discrete_probs")),
                 "learning_rate_strategy": str(config.get("learning_rate_strategy", "constant")),
                 "early_stopping_enabled": bool(config.get("early_stopping_enabled", False)),
                 "early_stopping_patience": int(config.get("early_stopping_patience", 20)),

@@ -47,7 +47,7 @@ from DeepHedging.ContingentClaims import (
 )
 from DeepHedging.CostFunctions import ProportionalCost
 from DeepHedging.Environments import Environment
-from DeepHedging.HedgingInstruments import GBMStock, GARCHStock
+from DeepHedging.HedgingInstruments import GBMStock, StudentTStock, GARCHStock
 from DeepHedging.RiskMeasures import CVaR, MAE, Mean, StdDev, WorstCase
 from DeepHedging.RiskMeasures import MSE
 
@@ -244,6 +244,56 @@ def _path_sigma_kwargs_from_config(config: dict[str, Any], base_sigma: float) ->
     return kwargs
 
 
+def _path_r_kwargs_from_config(config: dict[str, Any], base_r: float) -> dict[str, Any]:
+    mode = str(config.get("r_per_path_mode", "fixed")).strip().lower()
+    kwargs: dict[str, Any] = {
+        "r_per_path_mode": mode,
+    }
+    if mode == "uniform":
+        kwargs["r_uniform_low"] = float(config["r_uniform_low"])
+        kwargs["r_uniform_high"] = float(config["r_uniform_high"])
+    elif mode == "discrete":
+        kwargs["r_discrete_values"] = [float(v) for v in config["r_discrete_values"]]
+        if config.get("r_discrete_probs") is not None:
+            kwargs["r_discrete_probs"] = [float(p) for p in config["r_discrete_probs"]]
+    _ = base_r
+    return kwargs
+
+
+def _garch_param_kwargs_from_config(config: dict[str, Any]) -> dict[str, Any]:
+    def _mode_payload(prefix: str, default_value: float):
+        mode = str(config.get(f"{prefix}_per_path_mode", "fixed")).strip().lower()
+        payload: dict[str, Any] = {
+            prefix: float(config.get(prefix, default_value)),
+            f"{prefix}_per_path_mode": mode,
+        }
+        if mode == "uniform":
+            payload[f"{prefix}_uniform_low"] = float(config[f"{prefix}_uniform_low"])
+            payload[f"{prefix}_uniform_high"] = float(config[f"{prefix}_uniform_high"])
+        elif mode == "discrete":
+            payload[f"{prefix}_discrete_values"] = [
+                float(v) for v in config[f"{prefix}_discrete_values"]
+            ]
+            if config.get(f"{prefix}_discrete_probs") is not None:
+                payload[f"{prefix}_discrete_probs"] = [
+                    float(p) for p in config[f"{prefix}_discrete_probs"]
+                ]
+        return payload
+
+    kwargs: dict[str, Any] = {}
+    kwargs.update(_mode_payload("garch_alpha", float(config.get("garch_alpha", 0.05))))
+    kwargs.update(_mode_payload("garch_beta", float(config.get("garch_beta", 0.9))))
+    kwargs.update(_mode_payload("garch_leverage", float(config.get("garch_leverage", 0.0))))
+    kwargs.update(
+        _mode_payload("garch_student_t_df", float(config.get("garch_student_t_df", 8.0)))
+    )
+    kwargs["garch_omega"] = (
+        None if config.get("garch_omega", None) is None else float(config.get("garch_omega"))
+    )
+    kwargs["garch_use_student_t"] = bool(config.get("garch_use_student_t", False))
+    return kwargs
+
+
 def build_instrument_from_config(config: dict[str, Any]):
     n = int(config["n"])
     trading_days = int(config["trading_days_per_year"])
@@ -261,26 +311,55 @@ def build_instrument_from_config(config: dict[str, Any]):
         )
 
     if instrument_model == "garch":
-        garch_kwargs: dict[str, Any] = {
-            "garch_alpha": float(config.get("garch_alpha", 0.05)),
-            "garch_beta": float(config.get("garch_beta", 0.9)),
-            "garch_omega": (
-                None if config.get("garch_omega", None) is None else float(config.get("garch_omega"))
-            ),
-            "garch_leverage": float(config.get("garch_leverage", 0.0)),
-            "garch_use_student_t": bool(config.get("garch_use_student_t", False)),
-            "garch_student_t_df": float(config.get("garch_student_t_df", 8.0)),
-        }
+        garch_kwargs = _garch_param_kwargs_from_config(config)
+        r_kwargs = _path_r_kwargs_from_config(config=config, base_r=float(config["r"]))
         return GARCHStock(
             S0=float(config["s0"]),
             T=t,
             N=n,
             r=float(config["r"]),
             **sigma_kwargs,
+            **r_kwargs,
             **garch_kwargs,
         )
 
-    raise ValueError("instrument_model must be one of {'gbm','garch'}.")
+    if instrument_model == "student_t":
+        student_t_kwargs: dict[str, Any] = {
+            "student_t_df": float(config.get("student_t_df", 8.0)),
+            "student_t_df_per_path_mode": str(
+                config.get("student_t_df_per_path_mode", "fixed")
+            ).strip().lower(),
+            "student_t_df_uniform_low": (
+                None
+                if config.get("student_t_df_uniform_low", None) is None
+                else float(config.get("student_t_df_uniform_low"))
+            ),
+            "student_t_df_uniform_high": (
+                None
+                if config.get("student_t_df_uniform_high", None) is None
+                else float(config.get("student_t_df_uniform_high"))
+            ),
+            "student_t_df_discrete_values": (
+                None
+                if config.get("student_t_df_discrete_values", None) is None
+                else [float(v) for v in config.get("student_t_df_discrete_values", [])]
+            ),
+            "student_t_df_discrete_probs": (
+                None
+                if config.get("student_t_df_discrete_probs", None) is None
+                else [float(p) for p in config.get("student_t_df_discrete_probs", [])]
+            ),
+        }
+        return StudentTStock(
+            S0=float(config["s0"]),
+            T=t,
+            N=n,
+            r=float(config["r"]),
+            **sigma_kwargs,
+            **student_t_kwargs,
+        )
+
+    raise ValueError("instrument_model must be one of {'gbm','garch','student_t'}.")
 
 
 def build_claim_from_config(config: dict[str, Any]):

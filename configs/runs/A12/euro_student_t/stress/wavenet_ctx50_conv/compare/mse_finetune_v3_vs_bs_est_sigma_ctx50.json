@@ -1,0 +1,11 @@
+{
+  "extends": "./vs_bs_est_sigma_ctx50.json",
+  "run_name": "a12_euro_garch_tinnov_stress_wavenet_ctx50_conv_mse_finetune_v3_vs_bs_est_sigma_ctx50_cmp",
+  "description": "A12 tuning v3 compare: MSE fine-tuned WaveNet vs BS delta estimated from 50d context.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a12_euro_garch_tinnov_stress_wavenet_ctx50_conv_mse_finetune_v3"
+    }
+  ]
+}

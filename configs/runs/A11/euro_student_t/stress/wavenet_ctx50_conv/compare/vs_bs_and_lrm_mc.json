@@ -1,0 +1,25 @@
+{
+  "extends": "./vs_bs_est_sigma_ctx50.json",
+  "run_name": "a11_euro_garch_tinnov_stress_wavenet_ctx50_conv_possig_vs_bs_and_lrm_mc_cmp",
+  "description": "A11 compare: WaveNet vs BS Delta and LRM MonteCarlo on GARCH+Student-t innovations paths.",
+  "pricing_method": "individual",
+  "benchmark_agents_to_compare": [
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM MC",
+      "config_overrides": {
+        "benchmark_lrm_provider": "monte_carlo",
+        "benchmark_lrm_outer_paths": 128,
+        "benchmark_lrm_mc_inner_paths": 256,
+        "benchmark_lrm_mc_inner_chunk_size": 512,
+        "benchmark_lrm_mc_parallel_enabled": true,
+        "benchmark_lrm_mc_n_workers": 8,
+        "benchmark_lrm_mc_parallel_backend": "thread",
+        "benchmark_lrm_mc_parallel_chunk_size": 8192,
+        "benchmark_lrm_verbose": true,
+        "benchmark_lrm_log_every_t": 10,
+        "benchmark_lrm_mc_log_every_chunks": 200
+      }
+    }
+  ]
+}

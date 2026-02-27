@@ -52,6 +52,12 @@ def _apply_relaxed_defaults_train(config: dict[str, Any], pipeline: str) -> dict
             "garch_leverage": 0.0,
             "garch_use_student_t": False,
             "garch_student_t_df": 8.0,
+            "student_t_df": 8.0,
+            "student_t_df_per_path_mode": "fixed",
+            "student_t_df_uniform_low": None,
+            "student_t_df_uniform_high": None,
+            "student_t_df_discrete_values": None,
+            "student_t_df_discrete_probs": None,
             "fixed_implied_vol": None,
             "fixed_risk_free": None,
         }

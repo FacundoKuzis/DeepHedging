@@ -58,6 +58,7 @@ class Environment:
         self._history_context_counter = 0
         self._history_context_seed_base = self._derive_seed(self.train_random_seed, 50_000_000)
         self._last_generated_path_sigma = None
+        self._last_generated_path_r = None
 
         self.train_losses = []
         self.val_losses = []
@@ -219,6 +220,21 @@ class Environment:
             return
         self._last_generated_path_sigma = sigma_vec
 
+    def _capture_last_generated_path_r(self, n_paths):
+        self._last_generated_path_r = None
+        if len(self.instrument_list) != 1 or int(self.n_instruments) != 1:
+            return
+        instrument = self.instrument_list[0]
+        if not hasattr(instrument, "get_last_sampled_rates"):
+            return
+        r_vec = instrument.get_last_sampled_rates()
+        if r_vec is None:
+            return
+        r_vec = np.asarray(r_vec, dtype=np.float32).reshape(-1)
+        if r_vec.shape[0] != int(n_paths):
+            return
+        self._last_generated_path_r = r_vec
+
     def _infer_per_path_sigma_if_available(self, per_path_sigma, n_paths):
         if per_path_sigma is not None:
             return per_path_sigma
@@ -229,6 +245,17 @@ class Environment:
         if sigma_vec.shape[0] != int(n_paths):
             return None
         return sigma_vec
+
+    def _infer_per_path_r_if_available(self, per_path_r, n_paths):
+        if per_path_r is not None:
+            return per_path_r
+        r_vec = self._last_generated_path_r
+        if r_vec is None:
+            return None
+        r_vec = np.asarray(r_vec, dtype=np.float32).reshape(-1)
+        if r_vec.shape[0] != int(n_paths):
+            return None
+        return r_vec
 
     def generate_data(self, n_paths, random_seed=None):
 
@@ -256,6 +283,7 @@ class Environment:
 
         data_transposed = tf.transpose(data, perm=[1, 2, 0])
         self._capture_last_generated_path_sigma(n_paths=n_paths)
+        self._capture_last_generated_path_r(n_paths=n_paths)
         
         return data_transposed # (n_paths, N+1, n_instruments)
 
@@ -301,6 +329,7 @@ class Environment:
             hedge_paths = full_paths[:, self.history_context_length :]
             hedge_paths = tf.expand_dims(hedge_paths, axis=-1)
             self._capture_last_generated_path_sigma(n_paths=n_paths)
+            self._capture_last_generated_path_r(n_paths=n_paths)
             return hedge_paths, pre_history_prices
 
         return self.generate_data(n_paths, random_seed=random_seed), None
@@ -403,18 +432,29 @@ class Environment:
 
         train_data = None
         train_pre_history = None
+        train_path_r = None
         if not self.resample_each_epoch:
             train_data, train_pre_history = self._generate_data_and_context(
                 train_paths,
                 random_seed=train_seed,
             ) # (n_paths, N+1, n_instruments)
+            train_path_r = self._infer_per_path_r_if_available(
+                per_path_r=None,
+                n_paths=int(train_paths),
+            )
 
         if val_paths > 0:
             val_data, val_pre_history = self._generate_data_and_context(
                 val_paths,
                 random_seed=val_seed,
             )
+            val_path_r = self._infer_per_path_r_if_available(
+                per_path_r=None,
+                n_paths=int(val_paths),
+            )
             T_minus_t_val =  self.get_T_minus_t(val_paths)
+        else:
+            val_path_r = None
 
         total_epochs = int(self.n_epochs)
         if total_epochs <= 0:
@@ -457,12 +497,17 @@ class Environment:
                     train_paths,
                     random_seed=epoch_seed,
                 )
+                train_path_r = self._infer_per_path_r_if_available(
+                    per_path_r=None,
+                    n_paths=int(train_paths),
+                )
 
             # Training
             epoch_losses = []
             for i in range(0, train_paths, self.batch_size):
                 batch_paths = train_data[i:i+self.batch_size]
                 batch_T_minus_t = self.get_T_minus_t(batch_paths.shape[0])
+                batch_path_r = None if train_path_r is None else train_path_r[i:i+self.batch_size]
                 batch_pre_history = None
                 if train_pre_history is not None:
                     batch_pre_history = train_pre_history[i:i+self.batch_size]
@@ -479,11 +524,16 @@ class Environment:
                         simulate_pre_history=(train_pre_history is None),
                         pre_history_prices=batch_pre_history,
                     )
+                loss_fn_for_batch = (
+                    (lambda p, a, _r=batch_path_r: self.loss_function(p, a, path_r=_r))
+                    if batch_path_r is not None
+                    else self.loss_function
+                )
                 loss = self.agent.train_batch(
                     batch_paths,
                     batch_T_minus_t,
                     self.optimizer,
-                    self.loss_function,
+                    loss_fn_for_batch,
                     batch_history_features=batch_history_features,
                     batch_pre_history_prices=batch_pre_history if use_temporal_prefix else None,
                 )
@@ -511,10 +561,11 @@ class Environment:
                     self.agent,
                     val_data,
                     T_minus_t_val,
+                    batch_path_r=val_path_r,
                     batch_history_features=val_history_features,
                     batch_pre_history_prices=val_pre_history if use_temporal_prefix else None,
                 )
-                val_loss = self.loss_function(val_data, val_actions)
+                val_loss = self.loss_function(val_data, val_actions, path_r=val_path_r)
                 self.val_losses.append(val_loss.numpy())
                 print(
                     f"Epoch {epoch+1}/{total_epochs}, Train Loss: {avg_train_loss:.4f}, "
@@ -584,6 +635,10 @@ class Environment:
         if not isinstance(paths, tf.Tensor):
             paths = tf.convert_to_tensor(paths, dtype=tf.float32)
         if generated_internally:
+            path_r = self._infer_per_path_r_if_available(
+                per_path_r=path_r,
+                n_paths=int(paths.shape[0]),
+            )
             path_sigma = self._infer_per_path_sigma_if_available(
                 per_path_sigma=path_sigma,
                 n_paths=int(paths.shape[0]),
@@ -862,6 +917,17 @@ class Environment:
             if per_path_r.shape[0] != int(n_paths):
                 raise ValueError(
                     f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
+                )
+        elif generated_internally:
+            inferred_r = self._infer_per_path_r_if_available(
+                per_path_r=None,
+                n_paths=n_paths,
+            )
+            if inferred_r is not None:
+                per_path_r = inferred_r
+                self._log_terminal(
+                    f"Inferred per-path r from generated instrument paths "
+                    f"(n={int(per_path_r.shape[0])})."
                 )
         if per_path_sigma is not None:
             per_path_sigma = np.asarray(per_path_sigma, dtype=np.float32)
@@ -1631,6 +1697,17 @@ class Environment:
             if per_path_r.shape[0] != int(n_paths):
                 raise ValueError(
                     f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
+                )
+        elif generated_internally:
+            inferred_r = self._infer_per_path_r_if_available(
+                per_path_r=None,
+                n_paths=n_paths,
+            )
+            if inferred_r is not None:
+                per_path_r = inferred_r
+                self._log_terminal(
+                    f"Inferred per-path r from generated instrument paths "
+                    f"(n={int(per_path_r.shape[0])})."
                 )
         if per_path_sigma is not None:
             per_path_sigma = np.asarray(per_path_sigma, dtype=np.float32)

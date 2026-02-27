@@ -1,0 +1,42 @@
+{
+  "extends": "../../../../../A10/euro_garch/stress/wavenet_ctx50_conv/compare/uniform_s001_08_vs_bs_est_sigma_ctx50.json",
+  "run_name": "a11_euro_garch_tinnov_stress_wavenet_ctx50_conv_possig_vs_bs_est_sigma_ctx50_cmp",
+  "description": "A11 compare: per-path random r/GARCH/t generated paths vs BS Delta (stepwise sigma from 50-day context, fitted GARCH params).",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a11_euro_garch_tinnov_stress_wavenet_ctx50_conv_possig"
+    }
+  ],
+  "instrument_model": "garch",
+  "garch_use_student_t": true,
+  "r_per_path_mode": "uniform",
+  "r_uniform_low": 0.0,
+  "r_uniform_high": 0.08,
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.01,
+  "gbm_sigma_uniform_high": 0.8,
+  "garch_alpha_per_path_mode": "uniform",
+  "garch_alpha_uniform_low": 0.03,
+  "garch_alpha_uniform_high": 0.14,
+  "garch_beta_per_path_mode": "uniform",
+  "garch_beta_uniform_low": 0.55,
+  "garch_beta_uniform_high": 0.78,
+  "garch_leverage_per_path_mode": "uniform",
+  "garch_leverage_uniform_low": 0.0,
+  "garch_leverage_uniform_high": 0.03,
+  "garch_student_t_df_per_path_mode": "uniform",
+  "garch_student_t_df_uniform_low": 3.2,
+  "garch_student_t_df_uniform_high": 18.0,
+  "benchmark_delta_sigma_mode": "garch_context_stepwise",
+  "benchmark_delta_sigma_garch_fit_from_context": true,
+  "benchmark_delta_sigma_context_days": 50,
+  "benchmark_delta_student_t_fit_enabled": true,
+  "benchmark_delta_student_t_mode": "stepwise",
+  "benchmark_delta_student_t_min_obs": 10,
+  "benchmark_delta_student_t_df_default": 8.0,
+  "benchmark_delta_student_t_df_floor": 2.1,
+  "benchmark_delta_student_t_df_cap": 200.0,
+  "bootstrap_enabled": false,
+  "eval_paths": 30000
+}

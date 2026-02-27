@@ -1,0 +1,37 @@
+{
+  "extends": "../../../../../A12/euro_student_t/stress/wavenet_ctx50_conv/compare/vs_bs_est_sigma_ctx50.json",
+  "run_name": "a13_euro_garch_tinnov_stress_asym_wavenet_ctx50_conv_vs_bs_est_sigma_ctx50_cmp",
+  "description": "A13 compare: asymmetric GARCH+t world vs BS delta with 50d stepwise GARCH sigma fitted from context.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "a13_euro_garch_tinnov_stress_asym_wavenet_ctx50_conv"
+    }
+  ],
+
+  "r_per_path_mode": "discrete",
+  "r_discrete_values": [-0.03, 0.01, 0.06],
+  "r_discrete_probs": [0.40, 0.35, 0.25],
+
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.06,
+  "gbm_sigma_uniform_high": 0.90,
+
+  "garch_alpha_per_path_mode": "uniform",
+  "garch_alpha_uniform_low": 0.05,
+  "garch_alpha_uniform_high": 0.12,
+
+  "garch_beta_per_path_mode": "uniform",
+  "garch_beta_uniform_low": 0.42,
+  "garch_beta_uniform_high": 0.62,
+
+  "garch_leverage_per_path_mode": "uniform",
+  "garch_leverage_uniform_low": 0.03,
+  "garch_leverage_uniform_high": 0.08,
+
+  "garch_student_t_df_per_path_mode": "uniform",
+  "garch_student_t_df_uniform_low": 2.2,
+  "garch_student_t_df_uniform_high": 5.5,
+  "plot_min_x": -30.0,
+  "plot_max_x": 30.0
+}
