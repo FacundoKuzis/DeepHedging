@@ -1,10 +1,11 @@
 {
-  "extends": "../compare/vs_geo_bs_and_lrm_mc.json",
+  "extends": "../compare/vs_geo_bs.json",
   "run_name": "tf_w1_1b_2_cmp_band_0010",
   "description": "template banda NI",
-  "benchmark_actions_reuse_from_run": "THESIS_FINAL/W1_gbm_fixed/1b_1_asian_geo_tc0_cvar50/compare/vs_geo_bs_and_lrm_mc",
+  "benchmark_actions_reuse_from_run": "THESIS_FINAL/W1_gbm_fixed/1b_1_asian_geo_tc0_cvar50/compare/vs_geo_bs",
   "benchmark_actions_reuse_agent_name": "GeometricAsianDeltaHedgingAgent",
   "benchmark_actions_reuse_apply_no_intervention": true,
   "benchmark_no_intervention_mode": "percentage",
   "benchmark_no_intervention_bound": 0.01
 }
+

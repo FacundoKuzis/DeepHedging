@@ -3,9 +3,7 @@
   "gbm_sigma_per_path_mode": "uniform",
   "gbm_sigma_uniform_low": 0.04,
   "gbm_sigma_uniform_high": 0.8,
-  "r_per_path_mode": "uniform",
-  "r_uniform_low": 0.0,
-  "r_uniform_high": 0.08,
+  "r_per_path_mode": "fixed",
   "garch_alpha_per_path_mode": "uniform",
   "garch_alpha_uniform_low": 0.03,
   "garch_alpha_uniform_high": 0.12,
@@ -59,9 +57,6 @@
   "benchmark_delta_student_t_fit_enabled": true,
   "benchmark_delta_student_t_mode": "stepwise",
   "benchmark_delta_student_t_min_obs": 10,
-  "benchmark_delta_r_mode": "context_stepwise",
-  "benchmark_delta_r_context_days": 50,
-  "plot_min_x": -10.0,
-  "plot_max_x": 10.0,
+  "benchmark_delta_r_mode": "none",
   "extends": "common.json"
 }

@@ -887,8 +887,8 @@ class Environment:
         colors=None,
         save_stats_path=None,
         loss_functions=None,
-        min_x=-0.3,
-        max_x=0.3,
+        min_x=None,
+        max_x=None,
         language='es',
         save_actions_path=None,
         fixed_actions_paths=None,
@@ -897,6 +897,7 @@ class Environment:
         agent_eval_batch_size=None,
         progress_log_every_agent_batches=5,
         return_errors=False,
+        error_output_mode='hedging_error',
     ):
         """
         Computes terminal hedging error for multiple agents, generates plots, and saves statistics.
@@ -912,6 +913,11 @@ class Environment:
         - losses (dict or None): Dictionary of loss function results for each agent.
         """
         eval_start_time = time.perf_counter()
+        error_mode = str(error_output_mode).strip().lower()
+        if error_mode not in {'hedging_error', 'discounted_pnl', 'pnl'}:
+            raise ValueError(
+                "error_output_mode must be one of {'hedging_error','discounted_pnl','pnl'}."
+            )
 
         # Generate/load evaluation paths.
         if paths_to_test is not None:
@@ -1248,16 +1254,43 @@ class Environment:
                     n_required_steps = int(paths.shape[1]) - 1
                     integrated_r = tf.reduce_sum(r_t[:, :n_required_steps], axis=1) * float(self.dt)
                     discount = tf.exp(-integrated_r)
-            error = tf.cast(price, tf.float32) + pnl * discount
+            if error_mode == 'hedging_error':
+                error = tf.cast(price, tf.float32) + pnl * discount
+            elif error_mode == 'discounted_pnl':
+                error = pnl * discount
+            else:  # 'pnl'
+                error = pnl
 
             errors.append(error)
-            mean_errors.append(tf.reduce_mean(error).numpy())
-            std_errors.append(tf.math.reduce_std(error).numpy())
+            error_np_stats = np.asarray(error.numpy(), dtype=np.float32).reshape(-1)
+            finite_error_mask = np.isfinite(error_np_stats)
+            n_finite_error = int(np.count_nonzero(finite_error_mask))
+            if n_finite_error < int(error_np_stats.size):
+                self._log_terminal(
+                    f"agent={agent_id}: filtered non-finite terminal values "
+                    f"({int(error_np_stats.size - n_finite_error)}/{int(error_np_stats.size)}).",
+                    warning=True,
+                )
+            if n_finite_error > 0:
+                finite_error = tf.convert_to_tensor(error_np_stats[finite_error_mask], dtype=tf.float32)
+                mean_errors.append(tf.reduce_mean(finite_error).numpy())
+                std_errors.append(tf.math.reduce_std(finite_error).numpy())
+            else:
+                mean_errors.append(np.nan)
+                std_errors.append(np.nan)
 
             # Compute additional loss functions if provided
             if loss_functions:
+                pnl_np_stats = np.asarray(pnl.numpy(), dtype=np.float32).reshape(-1)
+                finite_pnl_mask = np.isfinite(pnl_np_stats)
+                finite_pnl = None
+                if np.count_nonzero(finite_pnl_mask) > 0:
+                    finite_pnl = tf.convert_to_tensor(pnl_np_stats[finite_pnl_mask], dtype=tf.float32)
                 for loss_fn in loss_functions:
-                    loss_value = loss_fn(pnl)
+                    if finite_pnl is None:
+                        loss_results[loss_fn.name].append(np.nan)
+                        continue
+                    loss_value = loss_fn(finite_pnl)
                     loss_results[loss_fn.name].append(tf.reduce_mean(loss_value).numpy())
 
             total_agent_elapsed = time.perf_counter() - agent_start_time
@@ -1266,31 +1299,27 @@ class Environment:
         if plot_error:
             plt.figure(figsize=(10, 6))
 
-            # Define histogram bins. If the configured range excludes all values,
-            # fall back to an automatic range from finite errors.
-            bins = np.linspace(min_x, max_x, 60)  # 60 bins across the specified range
             error_arrays = [np.asarray(error, dtype=np.float64).reshape(-1) for error in errors]
             finite_errors = [arr[np.isfinite(arr)] for arr in error_arrays]
-            in_range_counts = [
-                int(np.count_nonzero((arr >= float(min_x)) & (arr <= float(max_x))))
-                for arr in finite_errors
-            ]
-            if sum(in_range_counts) == 0:
-                combined = np.concatenate([arr for arr in finite_errors if arr.size > 0], axis=0)
-                if combined.size > 0:
-                    auto_lo = float(np.quantile(combined, 0.005))
-                    auto_hi = float(np.quantile(combined, 0.995))
-                    if not np.isfinite(auto_lo) or not np.isfinite(auto_hi) or auto_lo >= auto_hi:
-                        center = float(np.nanmean(combined))
-                        auto_lo = center - 1.0
-                        auto_hi = center + 1.0
-                    bins = np.linspace(auto_lo, auto_hi, 60)
-                    self._log_terminal(
-                        "Histogram range had zero in-range samples. "
-                        f"Auto-adjusted range to [{auto_lo:.6g}, {auto_hi:.6g}].",
-                        warning=True,
-                    )
+            non_empty = [arr for arr in finite_errors if arr.size > 0]
+            if len(non_empty) > 0:
+                combined = np.concatenate(non_empty, axis=0)
             else:
+                combined = np.array([], dtype=np.float64)
+
+            explicit_range = (
+                min_x is not None
+                and max_x is not None
+                and np.isfinite(float(min_x))
+                and np.isfinite(float(max_x))
+                and float(min_x) < float(max_x)
+            )
+            if explicit_range:
+                bins = np.linspace(float(min_x), float(max_x), 60)
+                in_range_counts = [
+                    int(np.count_nonzero((arr >= float(min_x)) & (arr <= float(max_x))))
+                    for arr in finite_errors
+                ]
                 total_counts = [int(arr.size) for arr in finite_errors]
                 low_coverage_agents = [
                     i for i, (in_count, total) in enumerate(zip(in_range_counts, total_counts))
@@ -1303,6 +1332,27 @@ class Environment:
                         "Plot may look sparse.",
                         warning=True,
                     )
+            else:
+                if combined.size > 0:
+                    auto_lo = float(np.quantile(combined, 0.001))
+                    auto_hi = float(np.quantile(combined, 0.999))
+                    if (not np.isfinite(auto_lo)) or (not np.isfinite(auto_hi)) or auto_lo >= auto_hi:
+                        center = float(np.nanmean(combined))
+                        auto_lo = center - 1.0
+                        auto_hi = center + 1.0
+                    # Add 5% padding on each side to avoid clipping near quantile bounds.
+                    width = float(auto_hi - auto_lo)
+                    if np.isfinite(width) and width > 0.0:
+                        pad = 0.05 * width
+                        auto_lo -= pad
+                        auto_hi += pad
+                else:
+                    auto_lo, auto_hi = -1.0, 1.0
+                bins = np.linspace(auto_lo, auto_hi, 60)
+                self._log_terminal(
+                    "Histogram range auto-set from quantiles q0.1%-q99.9% "
+                    f"with +5% padding each side to [{auto_lo:.6g}, {auto_hi:.6g}]."
+                )
 
             # Use explicit colors if provided; otherwise prioritize each agent.plot_color.
             if colors is None:
@@ -1317,9 +1367,10 @@ class Environment:
                     if resolved_colors[i] is None:
                         resolved_colors[i] = self._get_agent_plot_color(agent, i)
 
-            resolved_title = plot_title
-            if language == 'es' and (plot_title is None or str(plot_title).strip() == "" or str(plot_title).strip() == "Terminal Hedging Error"):
-                resolved_title = "Error de Cobertura Terminal"
+            # Title is opt-in: only show if explicit non-empty title is provided.
+            resolved_title = None
+            if plot_title is not None and str(plot_title).strip() != "":
+                resolved_title = str(plot_title).strip()
 
             # Plot each agent's error histogram
             for i, error in enumerate(errors):
@@ -1327,11 +1378,22 @@ class Environment:
                         label=self._get_agent_plot_name(agents[i], language))
 
             plt.grid(True, linestyle='--', alpha=0.7)
-            plt.title(resolved_title, fontsize=14)
+            if resolved_title is not None:
+                plt.title(resolved_title, fontsize=14)
             if language == 'es':
-                plt.xlabel('Error de Cobertura', fontsize=12)
+                if error_mode == 'hedging_error':
+                    plt.xlabel('Error de Cobertura', fontsize=12)
+                elif error_mode == 'discounted_pnl':
+                    plt.xlabel('Valor Final Descontado', fontsize=12)
+                else:
+                    plt.xlabel('PnL Final', fontsize=12)
             else:
-                plt.xlabel('Error', fontsize=12)
+                if error_mode == 'hedging_error':
+                    plt.xlabel('Error', fontsize=12)
+                elif error_mode == 'discounted_pnl':
+                    plt.xlabel('Discounted Final Value', fontsize=12)
+                else:
+                    plt.xlabel('Final PnL', fontsize=12)
 
             # Set y-axis label based on language
             if language == 'es':
@@ -1666,7 +1728,7 @@ class Environment:
     def bootstrap_confidence_intervals(
         self,
         agents,
-        statistics, 
+        statistics,
         n_paths=10_000, 
         n_bootstraps=1_000,
         confidence_level=0.95,
@@ -1682,6 +1744,7 @@ class Environment:
         fixed_actions_paths=None,
         pricing_method='fixed',
         price_computation_mode='pathwise_if_available',
+        error_output_mode='hedging_error',
         bootstrap_method='iid',
         moving_block_size=None,
         batch_size=100,  # New parameter for batch processing
@@ -1705,6 +1768,7 @@ class Environment:
         - save_actions_path (str): If provided, directory to save actions of each agent (default: None).
         - fixed_actions_paths (dict): If provided, dictionary mapping agent_name to path of precomputed actions.
         - pricing_method (str): 'fixed' or 'individual', same as terminal_hedging_error_multiple_agents method.
+        - error_output_mode (str): 'hedging_error' (price + discounted pnl), 'discounted_pnl', or 'pnl'.
         - batch_size (int): Number of bootstrap samples to process in each batch (default: 100).
         - progress_log_every_batches (int|None): If provided, emits bootstrap progress every N batches.
           If None, uses an automatic interval based on total batches.
@@ -1717,6 +1781,12 @@ class Environment:
         # Ensure statistics is a list
         if not isinstance(statistics, list):
             statistics = [statistics]
+
+        error_mode = str(error_output_mode).strip().lower()
+        if error_mode not in {'hedging_error', 'discounted_pnl', 'pnl'}:
+            raise ValueError(
+                "error_output_mode must be one of {'hedging_error','discounted_pnl','pnl'}."
+            )
 
         # Generate/load evaluation paths.
         if paths_to_test is not None:
@@ -1998,8 +2068,27 @@ class Environment:
                     n_required_steps = int(paths.shape[1]) - 1
                     integrated_r = tf.reduce_sum(r_t[:, :n_required_steps], axis=1) * float(self.dt)
                     discount = tf.exp(-integrated_r)
-            error = tf.cast(price, tf.float32) + pnl * discount
+            if error_mode == 'hedging_error':
+                error = tf.cast(price, tf.float32) + pnl * discount
+            elif error_mode == 'discounted_pnl':
+                error = pnl * discount
+            else:  # 'pnl'
+                error = pnl
             error_np = error.numpy().astype(np.float32)  # Use float32 to save memory
+            finite_mask = np.isfinite(error_np)
+            n_finite = int(np.count_nonzero(finite_mask))
+            if n_finite < int(error_np.shape[0]):
+                tqdm.write(
+                    f"[bootstrap] agent={agent_id}: filtered non-finite values "
+                    f"({int(error_np.shape[0] - n_finite)}/{int(error_np.shape[0])})."
+                )
+            error_np = error_np[finite_mask]
+            n_boot_paths = int(error_np.shape[0])
+            if n_boot_paths <= 1:
+                raise ValueError(
+                    f"[bootstrap] agent={agent_id}: not enough finite samples after filtering "
+                    f"(n={n_boot_paths})."
+                )
             tqdm.write(
                 f"[bootstrap] agent={agent_id}: pnl/error ready "
                 f"(n_errors={error_np.shape[0]})"
@@ -2023,17 +2112,19 @@ class Environment:
                 current_batch_size = min(batch_size, n_bootstraps - batch_idx * batch_size)
                 # Generate bootstrap indices for the current batch
                 if bootstrap_method == "iid":
-                    bootstrap_indices = rng.integers(0, n_paths, size=(current_batch_size, n_paths))
+                    bootstrap_indices = rng.integers(
+                        0, n_boot_paths, size=(current_batch_size, n_boot_paths)
+                    )
                 else:
                     block = int(moving_block_size)
-                    starts_max = max(1, n_paths - block + 1)
-                    n_blocks = int(np.ceil(n_paths / float(block)))
+                    starts_max = max(1, n_boot_paths - block + 1)
+                    n_blocks = int(np.ceil(n_boot_paths / float(block)))
                     block_starts = rng.integers(0, starts_max, size=(current_batch_size, n_blocks))
                     offsets = np.arange(block, dtype=np.int32).reshape(1, 1, -1)
                     bootstrap_indices = (block_starts[:, :, None] + offsets).reshape(current_batch_size, -1)
-                    bootstrap_indices = bootstrap_indices[:, :n_paths]
+                    bootstrap_indices = bootstrap_indices[:, :n_boot_paths]
                 # Extract bootstrap samples
-                bootstrap_samples = error_np[bootstrap_indices]  # Shape: (current_batch_size, n_paths)
+                bootstrap_samples = error_np[bootstrap_indices]  # Shape: (current_batch_size, n_boot_paths)
 
                 # Compute statistics for the current batch
                 for stat_fn in statistics:

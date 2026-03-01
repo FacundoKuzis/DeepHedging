@@ -1240,6 +1240,10 @@ class HMMMatrixGARCHStock(GARCHStock):
                 self.hmm_r_multipliers[None, :], (n_paths, k)
             ).astype(np.float64)
 
+        # If r is configured as fixed, keep it fixed across states as well.
+        if str(self.r_per_path_mode).strip().lower() == "fixed":
+            r_multipliers = np.ones_like(r_multipliers, dtype=np.float64)
+
         state_vars = np.square(sigma_long_run[:, None] * vol_multipliers)
         state_vars = np.maximum(state_vars, 1e-12)
         if self.garch_omega is None:

@@ -219,6 +219,10 @@ def optional_keys() -> set[str]:
         "early_stopping_enabled",
         "early_stopping_patience",
         "early_stopping_min_delta",
+        "max_epochs_extension_enabled",
+        "max_epochs_extension_window_epochs",
+        "max_epochs_extension_by",
+        "max_added_epochs",
         "checkpoint_enabled",
         "checkpoint_every_epochs",
         "checkpoint_save_best",
@@ -301,6 +305,19 @@ def validate_config(config: dict[str, Any]) -> None:
         es_min_delta = float(config.get("early_stopping_min_delta", 1e-4))
         if es_min_delta < 0.0:
             raise ValueError("early_stopping_min_delta must be >= 0.")
+
+    if "max_epochs_extension_enabled" in config and not isinstance(config["max_epochs_extension_enabled"], bool):
+        raise ValueError("max_epochs_extension_enabled must be bool when provided.")
+    if bool(config.get("max_epochs_extension_enabled", False)):
+        extend_window = int(config.get("max_epochs_extension_window_epochs", 10))
+        if extend_window <= 0:
+            raise ValueError("max_epochs_extension_window_epochs must be > 0.")
+        extend_by = int(config.get("max_epochs_extension_by", 10))
+        if extend_by <= 0:
+            raise ValueError("max_epochs_extension_by must be > 0.")
+        max_added_epochs = int(config.get("max_added_epochs", 100))
+        if max_added_epochs <= 0:
+            raise ValueError("max_added_epochs must be > 0 when max_epochs_extension_enabled=true.")
 
     if "checkpoint_enabled" in config and not isinstance(config["checkpoint_enabled"], bool):
         raise ValueError("checkpoint_enabled must be bool when provided.")
@@ -843,9 +860,17 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
     early_stop_enabled = bool(config.get("early_stopping_enabled", False))
     early_patience = int(config.get("early_stopping_patience", 20))
     early_min_delta = float(config.get("early_stopping_min_delta", 1e-4))
+    max_epochs_extension_enabled = bool(config.get("max_epochs_extension_enabled", False))
+    max_epochs_extension_window_epochs = int(config.get("max_epochs_extension_window_epochs", 10))
+    max_epochs_extension_by = int(config.get("max_epochs_extension_by", 10))
+    max_added_epochs = int(config.get("max_added_epochs", 100))
     early_state = {
         "best": None,
         "bad_epochs": 0,
+    }
+    max_epochs_extension_state = {
+        "best_metric": None,
+        "best_epoch": None,
     }
 
     def _combined_epoch_callback(epoch_info: dict[str, Any]) -> dict[str, Any]:
@@ -910,10 +935,59 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
         "best_metric": None,
         "best_epoch": None,
     }
-    planned_total_epochs = int(config["n_epochs"])
+    base_total_epochs = int(config["n_epochs"])
+    max_total_epochs = int(base_total_epochs + max_added_epochs)
+    planned_total_epochs = int(base_total_epochs)
     resume_start_epoch = 0
     skip_training = False
     _warned_missing_val_once = False
+
+    def _remaining_extension_budget() -> int:
+        return max(0, int(max_total_epochs) - int(planned_total_epochs))
+
+    def _apply_dynamic_extension(best_epoch: int, reason: str) -> int:
+        nonlocal planned_total_epochs
+        remaining = _remaining_extension_budget()
+        if remaining <= 0:
+            print(
+                f"[run:{run_name}] Dynamic extension skipped ({reason}): "
+                f"max_added_epochs reached ({max_added_epochs})."
+            )
+            return 0
+        extend_now = min(int(max_epochs_extension_by), int(remaining))
+        if extend_now <= 0:
+            return 0
+        prev_total = int(planned_total_epochs)
+        planned_total_epochs = int(planned_total_epochs) + int(extend_now)
+        print(
+            f"[run:{run_name}] Dynamic extension ({reason}): planned_epochs {prev_total} -> "
+            f"{planned_total_epochs} (best_epoch={int(best_epoch)} in last "
+            f"{int(max_epochs_extension_window_epochs)} epochs, added={int(extend_now)}, "
+            f"remaining_budget={_remaining_extension_budget()})."
+        )
+        return int(extend_now)
+
+    def _maybe_extend_plan_from_recent_best(resume_epoch: int) -> None:
+        """
+        If training has already reached the planned limit but the best epoch is
+        still inside the most recent extension window, extend the plan so a
+        resumed run keeps training.
+        """
+        nonlocal planned_total_epochs
+        if not max_epochs_extension_enabled:
+            return
+        best_epoch = checkpoint_state.get("best_epoch")
+        if best_epoch is None:
+            return
+        while resume_epoch >= int(planned_total_epochs):
+            in_recent_window = int(best_epoch) > (
+                int(planned_total_epochs) - int(max_epochs_extension_window_epochs)
+            )
+            if not in_recent_window:
+                break
+            added = _apply_dynamic_extension(int(best_epoch), reason="resume")
+            if added <= 0:
+                break
 
     checkpoints_root = os.path.join(dirs["run_dir"], "checkpoints")
     latest_ckpt_model_path = os.path.join(checkpoints_root, "latest", os.path.basename(model_path))
@@ -1023,6 +1097,7 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
                 if best_meta is not None:
                     checkpoint_state["best_metric"] = float(best_meta.get("metric_value"))
                     checkpoint_state["best_epoch"] = int(best_meta.get("epoch"))
+            _maybe_extend_plan_from_recent_best(resume_start_epoch)
             remaining_epochs = max(0, planned_total_epochs - resume_start_epoch)
             if remaining_epochs <= 0:
                 skip_training = True
@@ -1048,6 +1123,7 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
             if best_meta is not None:
                 checkpoint_state["best_metric"] = float(best_meta.get("metric_value"))
                 checkpoint_state["best_epoch"] = int(best_meta.get("epoch"))
+        _maybe_extend_plan_from_recent_best(resume_start_epoch)
         remaining_epochs = max(0, planned_total_epochs - resume_start_epoch)
         if remaining_epochs <= 0:
             skip_training = True
@@ -1063,13 +1139,41 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
             )
 
     def _checkpointed_epoch_callback(epoch_info: dict[str, Any]) -> dict[str, Any]:
-        nonlocal _warned_missing_val_once
-        callback_out = _combined_epoch_callback(epoch_info)
-        if not checkpoint_enabled:
-            return callback_out
-
+        nonlocal _warned_missing_val_once, planned_total_epochs
         local_epoch = int(epoch_info.get("epoch", 0))
         abs_epoch = int(resume_start_epoch + local_epoch)
+        epoch_info_with_abs = dict(epoch_info)
+        epoch_info_with_abs["epoch_abs"] = int(abs_epoch)
+        callback_out = _combined_epoch_callback(epoch_info_with_abs)
+
+        # Independent max-epochs extension monitor (best epoch wrt val_loss/train_loss).
+        ext_val_loss = epoch_info.get("val_loss")
+        ext_metric = float(ext_val_loss) if ext_val_loss is not None else float(epoch_info["train_loss"])
+        ext_best = max_epochs_extension_state["best_metric"]
+        if (ext_best is None) or (ext_metric < float(ext_best)):
+            max_epochs_extension_state["best_metric"] = float(ext_metric)
+            max_epochs_extension_state["best_epoch"] = int(abs_epoch)
+
+        if not checkpoint_enabled:
+            if (
+                max_epochs_extension_enabled
+                and abs_epoch >= int(planned_total_epochs)
+            ):
+                best_epoch = max_epochs_extension_state.get("best_epoch")
+                if best_epoch is not None:
+                    in_recent_window = int(best_epoch) > (
+                        int(planned_total_epochs) - int(max_epochs_extension_window_epochs)
+                    )
+                    if in_recent_window:
+                        added = _apply_dynamic_extension(int(best_epoch), reason="runtime")
+                        if added > 0:
+                            callback_out["extend_n_epochs_by"] = int(
+                                callback_out.get("extend_n_epochs_by", 0)
+                            ) + int(added)
+                            if bool(callback_out.get("stop_training", False)):
+                                callback_out["stop_training"] = False
+            return callback_out
+
         metric_key = checkpoint_metric
         if metric_key == "auto":
             metric_key = "val_loss" if epoch_info.get("val_loss") is not None else "train_loss"
@@ -1120,6 +1224,26 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
                     f"[run:{run_name}] Checkpoint saved (best): epoch={abs_epoch}, "
                     f"{metric_key}={metric_value:.6f}"
                 )
+
+        if (
+            max_epochs_extension_enabled
+            and abs_epoch >= int(planned_total_epochs)
+        ):
+            best_epoch = max_epochs_extension_state.get("best_epoch")
+            if best_epoch is None:
+                best_epoch = checkpoint_state.get("best_epoch")
+            if best_epoch is not None:
+                in_recent_window = int(best_epoch) > (
+                    int(planned_total_epochs) - int(max_epochs_extension_window_epochs)
+                )
+                if in_recent_window:
+                    added = _apply_dynamic_extension(int(best_epoch), reason="runtime")
+                    if added > 0:
+                        callback_out["extend_n_epochs_by"] = int(
+                            callback_out.get("extend_n_epochs_by", 0)
+                        ) + int(added)
+                        if bool(callback_out.get("stop_training", False)):
+                            callback_out["stop_training"] = False
 
         return callback_out
 
@@ -1261,25 +1385,50 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
 
     if int(config["val_paths"]) > 0:
         train_losses, val_losses = out
+        epoch_start = int(resume_start_epoch) + 1
         hist_df = pd.DataFrame(
             {
-                "epoch": list(range(1, len(train_losses) + 1)),
+                "epoch": list(range(epoch_start, epoch_start + len(train_losses))),
                 "train_loss": train_losses,
                 "val_loss": val_losses,
             }
         )
     else:
         train_losses = out
+        epoch_start = int(resume_start_epoch) + 1
         hist_df = pd.DataFrame(
             {
-                "epoch": list(range(1, len(train_losses) + 1)),
+                "epoch": list(range(epoch_start, epoch_start + len(train_losses))),
                 "train_loss": train_losses,
             }
         )
 
     hist_path = os.path.join(dirs["tables_dir"], "training_history.csv")
-    hist_df.to_csv(hist_path, index=False)
-    print(f"[run:{run_name}] Saved training history: {hist_path}")
+    if hist_df.empty:
+        if os.path.isfile(hist_path):
+            print(
+                f"[run:{run_name}] No new epochs were executed; keeping existing training history: {hist_path}"
+            )
+        else:
+            hist_df.to_csv(hist_path, index=False)
+            print(f"[run:{run_name}] Saved empty training history header: {hist_path}")
+    else:
+        if os.path.isfile(hist_path):
+            try:
+                prev_hist_df = pd.read_csv(hist_path)
+            except Exception:
+                prev_hist_df = pd.DataFrame()
+            merged_hist_df = pd.concat([prev_hist_df, hist_df], ignore_index=True, sort=False)
+            if "epoch" in merged_hist_df.columns:
+                merged_hist_df = (
+                    merged_hist_df.drop_duplicates(subset=["epoch"], keep="last")
+                    .sort_values("epoch")
+                    .reset_index(drop=True)
+                )
+            merged_hist_df.to_csv(hist_path, index=False)
+        else:
+            hist_df.to_csv(hist_path, index=False)
+        print(f"[run:{run_name}] Saved training history (append-aware): {hist_path}")
 
     calibration_manifest = pd.DataFrame(
         [
@@ -1358,6 +1507,18 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
                 "early_stopping_enabled": bool(config.get("early_stopping_enabled", False)),
                 "early_stopping_patience": int(config.get("early_stopping_patience", 20)),
                 "early_stopping_min_delta": float(config.get("early_stopping_min_delta", 1e-4)),
+                "max_epochs_extension_enabled": bool(
+                    config.get("max_epochs_extension_enabled", False)
+                ),
+                "max_epochs_extension_window_epochs": int(
+                    config.get("max_epochs_extension_window_epochs", 10)
+                ),
+                "max_epochs_extension_by": int(
+                    config.get("max_epochs_extension_by", 10)
+                ),
+                "max_added_epochs": int(
+                    config.get("max_added_epochs", 100)
+                ),
                 "sigma_train": float(calib.sigma_train),
                 "r_train": float(calib.r_train),
                 "mu_train": float(calib.mu_train),
@@ -1392,6 +1553,11 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
         "calibrated_sigma": float(calib.sigma_train),
         "model_path": model_path,
         "optimizer_path": optimizer_path,
+        "max_epochs_extension_enabled": bool(config.get("max_epochs_extension_enabled", False)),
+        "max_epochs_extension_window_epochs": int(config.get("max_epochs_extension_window_epochs", 10)),
+        "max_epochs_extension_by": int(config.get("max_epochs_extension_by", 10)),
+        "max_added_epochs": int(config.get("max_added_epochs", 100)),
+        "planned_total_epochs_final": int(planned_total_epochs),
     }
     metadata_path = os.path.join(dirs["run_dir"], "run_metadata.json")
     with open(metadata_path, "w", encoding="utf-8") as f:

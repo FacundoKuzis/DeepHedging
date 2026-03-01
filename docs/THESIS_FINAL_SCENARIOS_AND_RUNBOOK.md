@@ -39,48 +39,72 @@ Cada carpeta `.2` trae:
 - `compare/*_banded.json`: compare final con banda ya seteada (default 0.03).
 
 Grilla obligatoria de banda NI: desde `0.5%` hasta `10%`, en pasos de `0.5%` (i.e. `0.005, 0.010, ..., 0.100`).
-En cada carpeta `calibration/` ya se generaron configs listos: `band_0005.json` ... `band_0100.json`.\nLa selección final debe hacerse minimizando CVaR50 del benchmark en tablas guardadas.
+En cada carpeta `calibration/` ya se generaron configs listos: `band_0005.json` ... `band_0100.json`.
+La selección final debe hacerse minimizando CVaR50 del benchmark en tablas guardadas.
 
 ## 7. Comandos de Ejecución
 Entrenamiento:
 ```bash
 python examples/train_console.py THESIS_FINAL/<MUNDO>/<SUBESCENARIO>/train/<config_sin_json>
 ```
+Comportamiento default:
+- Si el target ya está completo, no re-entrena (skip).
+- Para forzar re-ejecución completa: `--force-run`.
+
+Notas de entrenamiento THESIS_FINAL:
+- `early_stopping_patience=20`.
+- Extensión dinámica de tope de épocas habilitada (`max_epochs_extension_enabled=true`):
+  al llegar al tope de épocas (por default 100), si el mejor epoch está dentro de los últimos
+  `max_epochs_extension_window_epochs` (default 10), se extiende `max_epochs_extension_by`
+  (default +10) y se repite ese criterio.
+
 Comparación:
 ```bash
 python examples/compare_console.py THESIS_FINAL/<MUNDO>/<SUBESCENARIO>/compare/<config_sin_json>
 ```
+Comportamiento default:
+- Si el target de compare ya está completo, no recomputa (skip).
+- Si solo falta `bootstrap_metrics_wide.csv` y existe payload raw, corre solo bootstrap.
+- Para forzar re-ejecución completa: `--force-run`.
+
 Calibración (escenarios `.2`):
 ```bash
 python examples/compare_console.py THESIS_FINAL/<MUNDO>/<SUBESCENARIO>/calibration/band_template
 ```
 
+Ejecución por carpeta (train -> compare, secuencial):
+```bash
+python examples/run_scenarios_console.py THESIS_FINAL/<MUNDO> --checkpoint-every-epochs 5
+```
+Opcional:
+- `--force-run`: ignora artefactos existentes y re-ejecuta todo.
+
 ## 8. Ejemplos Directos
 - `THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/train/recurrent`
 - `THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/train/lstm`
-- `THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/compare/vs_bs_and_lrm_mc`
+- `THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/compare/vs_bs`
 - `THESIS_FINAL/W1_gbm_fixed/1a_1p_euro_tc0_lstm_cvar_sweep/compare/lstm_cvar_sweep`
-- `THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs_and_lrm_mc`
+- `THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs`
 - `THESIS_FINAL/W5_hmm3_garch_t_ctx100/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_banded`
 
 ## 9. Inventario Completo de Configs
-- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/compare/vs_bs_and_lrm_mc.json`
+- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/compare/vs_bs.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1p_euro_tc0_lstm_cvar_sweep/compare/lstm_cvar_sweep.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1p_euro_tc0_lstm_cvar_sweep/train/lstm_cvar90.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1p_euro_tc0_lstm_cvar_sweep/train/lstm_cvar99.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_2_euro_tc1_band/calibration/band_template.json`
-- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc.json`
-- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc_banded.json`
+- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_2_euro_tc1_band/compare/vs_bs.json`
+- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_2_euro_tc1_band/compare/vs_bs_banded.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_2_euro_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_2_euro_tc1_band/train/recurrent.json`
-- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_1_asian_geo_tc0_cvar50/compare/vs_geo_bs_and_lrm_mc.json`
+- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_1_asian_geo_tc0_cvar50/compare/vs_geo_bs.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_1_asian_geo_tc0_cvar50/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_1_asian_geo_tc0_cvar50/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_2_asian_geo_tc1_band/calibration/band_template.json`
-- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_2_asian_geo_tc1_band/compare/vs_geo_bs_and_lrm_mc.json`
-- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_2_asian_geo_tc1_band/compare/vs_geo_bs_and_lrm_mc_banded.json`
+- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_2_asian_geo_tc1_band/compare/vs_geo_bs.json`
+- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_2_asian_geo_tc1_band/compare/vs_geo_bs_banded.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_2_asian_geo_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1b_2_asian_geo_tc1_band/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1c_1_asian_arith_tc0_cvar50/compare/vs_lrm_mc.json`
@@ -91,12 +115,12 @@ python examples/compare_console.py THESIS_FINAL/<MUNDO>/<SUBESCENARIO>/calibrati
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_banded.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1c_2_asian_arith_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1c_2_asian_arith_tc1_band/train/recurrent.json`
-- `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs_and_lrm_mc.json`
+- `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs.json`
 - `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_1_euro_tc0_cvar50/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_1_euro_tc0_cvar50/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/calibration/band_template.json`
-- `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc.json`
-- `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc_banded.json`
+- `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs.json`
+- `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_banded.json`
 - `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_1_asian_arith_tc0_cvar50/compare/vs_lrm_mc.json`
@@ -107,12 +131,12 @@ python examples/compare_console.py THESIS_FINAL/<MUNDO>/<SUBESCENARIO>/calibrati
 - `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_banded.json`
 - `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_2_asian_arith_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_2_asian_arith_tc1_band/train/recurrent.json`
-- `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs_and_lrm_mc.json`
+- `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs.json`
 - `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/calibration/band_template.json`
-- `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc.json`
-- `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc_banded.json`
+- `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs.json`
+- `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_banded.json`
 - `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_1_asian_arith_tc0_cvar50/compare/vs_lrm_mc.json`
@@ -123,12 +147,12 @@ python examples/compare_console.py THESIS_FINAL/<MUNDO>/<SUBESCENARIO>/calibrati
 - `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_banded.json`
 - `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_2_asian_arith_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_2_asian_arith_tc1_band/train/recurrent.json`
-- `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs_and_lrm_mc.json`
+- `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs.json`
 - `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_1_euro_tc0_cvar50/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_1_euro_tc0_cvar50/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_2_euro_tc1_band/calibration/band_template.json`
-- `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc.json`
-- `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc_banded.json`
+- `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_2_euro_tc1_band/compare/vs_bs.json`
+- `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_2_euro_tc1_band/compare/vs_bs_banded.json`
 - `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_2_euro_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1a_2_euro_tc1_band/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1c_1_asian_arith_tc0_cvar50/compare/vs_lrm_mc.json`
@@ -139,12 +163,12 @@ python examples/compare_console.py THESIS_FINAL/<MUNDO>/<SUBESCENARIO>/calibrati
 - `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_banded.json`
 - `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1c_2_asian_arith_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W4_garch_t_tail_ctx50/1c_2_asian_arith_tc1_band/train/recurrent.json`
-- `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_1_euro_tc0_cvar50/compare/vs_bs_and_lrm_mc.json`
+- `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_1_euro_tc0_cvar50/compare/vs_bs.json`
 - `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_1_euro_tc0_cvar50/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_1_euro_tc0_cvar50/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_2_euro_tc1_band/calibration/band_template.json`
-- `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc.json`
-- `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_2_euro_tc1_band/compare/vs_bs_and_lrm_mc_banded.json`
+- `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_2_euro_tc1_band/compare/vs_bs.json`
+- `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_2_euro_tc1_band/compare/vs_bs_banded.json`
 - `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_2_euro_tc1_band/train/lstm.json`
 - `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1a_2_euro_tc1_band/train/recurrent.json`
 - `configs/runs/THESIS_FINAL/W5_hmm3_garch_t_ctx100/1c_1_asian_arith_tc0_cvar50/compare/vs_lrm_mc.json`
@@ -158,3 +182,4 @@ python examples/compare_console.py THESIS_FINAL/<MUNDO>/<SUBESCENARIO>/calibrati
 
 ## 10. Artefactos para análisis sin rerun
 Cada comparación guarda tablas y caches (errores por path, métricas, acciones cacheadas, snapshots de config), suficientes para recalcular indicadores sin volver a computar acciones.
+

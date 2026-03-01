@@ -26,6 +26,42 @@ from examples.unified_console_common import (  # noqa: E402
 )
 
 
+THESIS_MODELS_ROOT = os.path.normpath(r"G:\Mi unidad\Tesis2026\Models\Organized")
+
+
+def _normalize_path_separators(path: str) -> str:
+    return str(path).replace("\\", "/")
+
+
+def _get_config_relative_stem(config_path: str) -> str:
+    abs_path = os.path.abspath(config_path)
+    try:
+        rel = os.path.relpath(abs_path, ROOT_DIR)
+    except ValueError:
+        rel = os.path.basename(abs_path)
+    rel = _normalize_path_separators(rel)
+    rel_no_ext, _ = os.path.splitext(rel)
+
+    prefixes = [
+        "configs/runs/",
+        "configs/",
+        "thesis_result1b_configs/",
+        "thesis_result1_configs/",
+    ]
+    for p in prefixes:
+        if rel_no_ext.startswith(p):
+            rel_no_ext = rel_no_ext[len(p):]
+            break
+    rel_no_ext = rel_no_ext.strip("/").strip()
+    if not rel_no_ext:
+        rel_no_ext = os.path.splitext(os.path.basename(abs_path))[0]
+    if rel_no_ext.startswith("train/") or rel_no_ext.startswith("compare/"):
+        rel_no_ext = f"thesis_result1b/{rel_no_ext}"
+    elif rel_no_ext.startswith("option_market_compare/"):
+        rel_no_ext = f"thesis_result1b/{rel_no_ext}"
+    return rel_no_ext
+
+
 def _apply_relaxed_defaults_compare(config: dict[str, Any], pipeline: str) -> dict[str, Any]:
     cfg = dict(config)
     if pipeline == "result1b":
@@ -147,12 +183,71 @@ def _dispatch_compare(
     run_comparison(run_name=run_name, config_path=config_path_for_snapshot, config=config)
 
 
+def _result1b_run_dir_from_config_path(config_path: str) -> str:
+    rel_stem = _get_config_relative_stem(config_path)
+    return os.path.normpath(os.path.join(THESIS_MODELS_ROOT, rel_stem))
+
+
+def _result1b_compare_missing_core_outputs(run_dir: str) -> list[str]:
+    required_rel = [
+        "run_metadata.json",
+        "raw/raw_payload_manifest.json",
+        "raw/terminal_errors_by_agent.npy",
+        "tables/pairwise_terminal_stats.csv",
+        "tables/point_metrics.csv",
+        "tables/empirical_risk_metrics.csv",
+        "tables/terminal_errors_long.csv",
+        "tables/terminal_errors_wide.csv",
+        "tables/calibration_manifest.csv",
+    ]
+    missing: list[str] = []
+    for rel in required_rel:
+        full = os.path.join(run_dir, rel.replace("/", os.sep))
+        if not os.path.exists(full):
+            missing.append(rel)
+    return missing
+
+
+def _result1b_compare_plan(config_path: str, config: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    run_dir = _result1b_run_dir_from_config_path(config_path)
+    details: dict[str, Any] = {"run_dir": run_dir}
+    if not os.path.isdir(run_dir):
+        details["reason"] = "run_dir_missing"
+        return "full", details
+
+    missing_core = _result1b_compare_missing_core_outputs(run_dir)
+    details["missing_core"] = missing_core
+    if missing_core:
+        details["reason"] = "missing_core_outputs"
+        return "full", details
+
+    bootstrap_enabled = bool(config.get("bootstrap_enabled", False))
+    boot_csv = os.path.join(run_dir, "tables", "bootstrap_metrics_wide.csv")
+    details["bootstrap_enabled"] = bootstrap_enabled
+    details["bootstrap_csv"] = boot_csv
+    if bootstrap_enabled and not os.path.isfile(boot_csv):
+        raw_err = os.path.join(run_dir, "raw", "terminal_errors_by_agent.npy")
+        raw_manifest = os.path.join(run_dir, "raw", "raw_payload_manifest.json")
+        can_boot_only = os.path.isfile(raw_err) and os.path.isfile(raw_manifest)
+        details["reason"] = "bootstrap_missing"
+        details["bootstrap_only_possible"] = can_boot_only
+        return ("bootstrap_only" if can_boot_only else "full"), details
+
+    details["reason"] = "already_complete"
+    return "skip", details
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Unified compare console.")
     parser.add_argument(
         "config_name",
         nargs="?",
         help="Config path/name under ./configs (extension optional).",
+    )
+    parser.add_argument(
+        "--force-run",
+        action="store_true",
+        help="Force full compare run even if output artifacts already exist.",
     )
     args = parser.parse_args()
 
@@ -173,6 +268,30 @@ def main() -> None:
 
     print(f"[run:{run_name}] Loaded config: {source_path}")
     print(f"[run:{run_name}] Pipeline: {pipeline}")
+
+    if not bool(args.force_run) and pipeline == "result1b":
+        action, details = _result1b_compare_plan(config_path=source_path, config=config_clean)
+        run_dir = str(details.get("run_dir"))
+        if action == "skip":
+            print(
+                f"[run:{run_name}] Compare outputs already complete at '{run_dir}'. "
+                "Skipping (use --force-run to recompute)."
+            )
+            return
+        if action == "bootstrap_only":
+            from examples.thesis_result1b_compare_console import run_bootstrap_only_from_saved_payload
+
+            print(
+                f"[run:{run_name}] Only bootstrap output is missing at '{run_dir}'. "
+                "Running bootstrap-only recovery."
+            )
+            run_bootstrap_only_from_saved_payload(
+                run_name=run_name,
+                config_path=source_path,
+                config=config_clean,
+            )
+            return
+
     _dispatch_compare(
         pipeline=pipeline,
         run_name=run_name,

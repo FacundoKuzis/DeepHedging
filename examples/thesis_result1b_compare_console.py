@@ -14,6 +14,7 @@ import hashlib
 import re
 import sys
 from typing import Any
+import math
 
 os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
@@ -100,6 +101,174 @@ def _run_dirs(run_name: str, config_path: str) -> dict[str, str]:
     }
 
 
+def _generate_bootstrap_indices(
+    rng: np.random.Generator,
+    n_paths: int,
+    batch_size: int,
+    bootstrap_method: str,
+    moving_block_size: int,
+) -> np.ndarray:
+    if bootstrap_method == "iid":
+        return rng.integers(0, n_paths, size=(batch_size, n_paths))
+
+    block = max(1, min(int(moving_block_size), int(n_paths)))
+    starts_max = max(1, n_paths - block + 1)
+    n_blocks = int(np.ceil(n_paths / float(block)))
+    block_starts = rng.integers(0, starts_max, size=(batch_size, n_blocks))
+    offsets = np.arange(block, dtype=np.int32).reshape(1, 1, -1)
+    idx = (block_starts[:, :, None] + offsets).reshape(batch_size, -1)
+    return idx[:, :n_paths]
+
+
+def _compute_bootstrap_table_from_error_matrix(
+    error_matrix: np.ndarray,
+    agent_display_names: list[str],
+    n_bootstraps: int,
+    confidence_level: float,
+    batch_size: int,
+    random_seed: int | None,
+    bootstrap_method: str,
+    moving_block_size: int | None,
+) -> pd.DataFrame:
+    if error_matrix.ndim != 2:
+        raise ValueError(
+            f"error_matrix must be rank-2 (n_agents, n_paths). Got shape={error_matrix.shape}."
+        )
+    n_agents, n_paths = int(error_matrix.shape[0]), int(error_matrix.shape[1])
+    if n_agents <= 0 or n_paths <= 0:
+        raise ValueError("error_matrix must have positive n_agents and n_paths.")
+    if len(agent_display_names) != n_agents:
+        raise ValueError(
+            f"agent_display_names length mismatch: expected {n_agents}, got {len(agent_display_names)}."
+        )
+
+    stats = bootstrap_statistics_list()
+    rng = np.random.default_rng(random_seed)
+    bootstrap_method = str(bootstrap_method).strip().lower()
+    if bootstrap_method not in {"iid", "moving_block"}:
+        raise ValueError("bootstrap_method must be 'iid' or 'moving_block'.")
+    if moving_block_size is None:
+        moving_block_size = max(2, int(np.sqrt(max(2, n_paths))))
+    moving_block_size = max(1, min(int(moving_block_size), int(n_paths)))
+    n_bootstraps = int(n_bootstraps)
+    batch_size = max(1, int(batch_size))
+    n_batches = int(math.ceil(n_bootstraps / float(batch_size)))
+
+    rows: list[dict[str, float | str]] = []
+    for agent_idx in range(n_agents):
+        errors = np.asarray(error_matrix[agent_idx], dtype=np.float32).reshape(-1)
+        row: dict[str, float | str] = {"Agent": str(agent_display_names[agent_idx])}
+
+        point_estimates: dict[str, float] = {}
+        samples_by_stat: dict[Any, list[float]] = {s: [] for s in stats}
+        for stat_fn in stats:
+            val = stat_fn(errors)
+            if isinstance(val, tf.Tensor):
+                val = val.numpy()
+            point_estimates[stat_fn.name] = float(np.asarray(val).reshape(()))
+
+        for batch_idx in range(n_batches):
+            current = min(batch_size, n_bootstraps - batch_idx * batch_size)
+            indices = _generate_bootstrap_indices(
+                rng=rng,
+                n_paths=n_paths,
+                batch_size=current,
+                bootstrap_method=bootstrap_method,
+                moving_block_size=moving_block_size,
+            )
+            boot_samples = errors[indices]  # (current, n_paths)
+
+            for stat_fn in stats:
+                try:
+                    candidate = stat_fn(boot_samples)
+                    if isinstance(candidate, tf.Tensor):
+                        candidate = candidate.numpy()
+                    candidate = np.asarray(candidate)
+                    if candidate.ndim == 0 or candidate.shape[0] != current:
+                        raise ValueError("non-vectorized output")
+                    stat_values = candidate.reshape(-1)
+                except Exception:
+                    stat_values = np.array(
+                        [
+                            (
+                                stat_fn(sample).numpy()
+                                if isinstance(stat_fn(sample), tf.Tensor)
+                                else stat_fn(sample)
+                            )
+                            for sample in boot_samples
+                        ],
+                        dtype=np.float32,
+                    ).reshape(-1)
+                samples_by_stat[stat_fn].extend(stat_values.tolist())
+
+        for stat_fn in stats:
+            stat_name = stat_fn.name
+            vals = np.asarray(samples_by_stat[stat_fn], dtype=np.float32)
+            lower = float(np.percentile(vals, 100.0 * (1.0 - confidence_level) / 2.0))
+            upper = float(np.percentile(vals, 100.0 * (1.0 - (1.0 - confidence_level) / 2.0)))
+            row[f"{stat_name}_point_estimate"] = float(point_estimates[stat_name])
+            row[f"{stat_name}_ci_lower"] = lower
+            row[f"{stat_name}_ci_upper"] = upper
+
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def run_bootstrap_only_from_saved_payload(run_name: str, config_path: str, config: dict[str, Any]) -> str:
+    dirs = _run_dirs(run_name, config_path=config_path)
+    raw_dir = os.path.join(dirs["run_dir"], "raw")
+    error_path = os.path.join(raw_dir, "terminal_errors_by_agent.npy")
+    raw_manifest_path = os.path.join(raw_dir, "raw_payload_manifest.json")
+    if not os.path.isfile(error_path):
+        raise FileNotFoundError(
+            f"Cannot run bootstrap-only: missing raw errors file '{error_path}'."
+        )
+    if not os.path.isfile(raw_manifest_path):
+        raise FileNotFoundError(
+            f"Cannot run bootstrap-only: missing raw payload manifest '{raw_manifest_path}'."
+        )
+
+    with open(raw_manifest_path, "r", encoding="utf-8") as f:
+        raw_meta = json.load(f)
+
+    error_matrix = np.asarray(np.load(error_path), dtype=np.float32)
+    if error_matrix.ndim != 2:
+        raise ValueError(
+            f"Expected terminal_errors_by_agent.npy as rank-2 array. Got shape={error_matrix.shape}."
+        )
+
+    display_names = raw_meta.get("agent_display_names_order")
+    if not isinstance(display_names, list) or len(display_names) != int(error_matrix.shape[0]):
+        names_fallback = raw_meta.get("agent_names_order")
+        if isinstance(names_fallback, list) and len(names_fallback) == int(error_matrix.shape[0]):
+            display_names = [str(x) for x in names_fallback]
+        else:
+            display_names = [f"agent_{i:02d}" for i in range(int(error_matrix.shape[0]))]
+
+    print(
+        f"[run:{run_name}] Bootstrap-only mode from saved payload: "
+        f"n_agents={int(error_matrix.shape[0])}, n_paths={int(error_matrix.shape[1])}, "
+        f"n_bootstraps={int(config['bootstrap_n_bootstraps'])}."
+    )
+    boot_df = _compute_bootstrap_table_from_error_matrix(
+        error_matrix=error_matrix,
+        agent_display_names=[str(x) for x in display_names],
+        n_bootstraps=int(config["bootstrap_n_bootstraps"]),
+        confidence_level=float(config["bootstrap_confidence_level"]),
+        batch_size=int(config["bootstrap_batch_size"]),
+        random_seed=None if config.get("eval_seed") is None else int(config.get("eval_seed")),
+        bootstrap_method=str(config["bootstrap_method"]),
+        moving_block_size=None
+        if config.get("moving_block_size") is None
+        else int(config.get("moving_block_size")),
+    )
+    boot_csv = os.path.join(dirs["tables_dir"], "bootstrap_metrics_wide.csv")
+    boot_df.to_csv(boot_csv, index=False)
+    print(f"[run:{run_name}] Saved bootstrap wide table (bootstrap-only): {boot_csv}")
+    return boot_csv
+
+
 
 def required_keys() -> set[str]:
     return {
@@ -124,8 +293,6 @@ def required_keys() -> set[str]:
         "eval_paths",
         "eval_seed",
         "pricing_method",
-        "plot_min_x",
-        "plot_max_x",
         "language",
         "bootstrap_enabled",
         "bootstrap_n_bootstraps",
@@ -158,6 +325,8 @@ def required_keys() -> set[str]:
 def optional_keys() -> set[str]:
     return {
         "compare_mode",
+        "plot_min_x",
+        "plot_max_x",
         "benchmark_agent_name",
         "benchmark_bump_size",
         "benchmark_num_simulations",
@@ -378,8 +547,19 @@ def validate_config(config: dict[str, Any]) -> None:
     if int(config["eval_seed"]) < 0:
         raise ValueError("eval_seed must be >= 0")
 
-    if float(config["plot_min_x"]) >= float(config["plot_max_x"]):
-        raise ValueError("plot_min_x must be < plot_max_x")
+    plot_min_raw = config.get("plot_min_x", None)
+    plot_max_raw = config.get("plot_max_x", None)
+    has_plot_min = plot_min_raw is not None
+    has_plot_max = plot_max_raw is not None
+    if has_plot_min != has_plot_max:
+        raise ValueError("plot_min_x and plot_max_x must be both set or both omitted/null.")
+    if has_plot_min and has_plot_max:
+        plot_min = float(plot_min_raw)
+        plot_max = float(plot_max_raw)
+        if not np.isfinite(plot_min) or not np.isfinite(plot_max):
+            raise ValueError("plot_min_x/plot_max_x must be finite numbers when provided.")
+        if plot_min >= plot_max:
+            raise ValueError("plot_min_x must be < plot_max_x")
 
     if str(config["pricing_method"]).strip().lower() not in {"fixed", "individual"}:
         raise ValueError("pricing_method must be 'fixed' or 'individual'.")
@@ -1082,6 +1262,17 @@ def _slugify_label(value: str) -> str:
     return cleaned or "agent"
 
 
+def _infer_trained_label_and_color(model_name: str) -> tuple[str | None, str | None]:
+    name = str(model_name).strip().lower()
+    if "cvar50" in name:
+        return "LSTM CVaR50", "#2ca02c"  # verde principal
+    if "cvar90" in name:
+        return "LSTM CVaR90", "#ff7f0e"
+    if "cvar99" in name:
+        return "LSTM CVaR99", "#1f77b4"
+    return None, None
+
+
 def _model_path(agent, model_name: str) -> str:
     target_name = f"{model_name}.keras"
     matches: list[str] = []
@@ -1108,8 +1299,16 @@ def _model_path(agent, model_name: str) -> str:
 
 def _compute_empirical_error_metrics(errors: np.ndarray) -> dict[str, float]:
     arr = np.asarray(errors, dtype=np.float64).reshape(-1)
+    arr = arr[np.isfinite(arr)]
     if arr.size == 0:
         raise ValueError("Cannot compute metrics on empty error array.")
+
+    def _left_tail_cvar(alpha: float) -> float:
+        # CVaR(alpha) on left tail: average values below VaR at (1-alpha) quantile.
+        q = float(np.quantile(arr, 1.0 - float(alpha)))
+        tail = arr[arr <= q]
+        return float(np.mean(tail)) if tail.size > 0 else q
+
     out = {
         "mean_error": float(np.mean(arr)),
         "std_error": float(np.std(arr, ddof=0)),
@@ -1121,6 +1320,10 @@ def _compute_empirical_error_metrics(errors: np.ndarray) -> dict[str, float]:
         "q_1pct": float(np.quantile(arr, 0.01)),
         "q_0_5pct": float(np.quantile(arr, 0.005)),
         "q_0_1pct": float(np.quantile(arr, 0.001)),
+        "cvar_50": _left_tail_cvar(0.50),
+        "cvar_90": _left_tail_cvar(0.90),
+        "cvar_95": _left_tail_cvar(0.95),
+        "cvar_99": _left_tail_cvar(0.99),
     }
     tail95 = arr[arr <= out["var_95"]]
     tail99 = arr[arr <= out["var_99"]]
@@ -1466,6 +1669,14 @@ def _historical_sigma_window_days(config: dict[str, Any]) -> int:
     return int(raw)
 
 
+def _resolve_plot_bounds(config: dict[str, Any]) -> tuple[float | None, float | None]:
+    raw_min = config.get("plot_min_x", None)
+    raw_max = config.get("plot_max_x", None)
+    if raw_min is None or raw_max is None:
+        return None, None
+    return float(raw_min), float(raw_max)
+
+
 def _benchmark_delta_sigma_mode(config: dict[str, Any]) -> str:
     return str(config.get("benchmark_delta_sigma_mode", "none")).strip().lower()
 
@@ -1581,7 +1792,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         )
 
     trained_agents = []
-    for item in config["trained_agents"]:
+    for idx_tr, item in enumerate(config["trained_agents"], start=1):
         agent = build_agent_from_config(
             agent_name=str(item["agent_name"]),
             instrument=instrument,
@@ -1593,6 +1804,16 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             raise FileNotFoundError(f"Model not found for trained agent {item['agent_name']} at: {model_path}")
         agent.load_model(model_path)
         print(f"[run:{run_name}] Loaded model: {model_path}")
+
+        # Special CVaR sweep labels/colors are only for trained-only overlays.
+        if compare_mode == "trained_only":
+            inferred_label, inferred_color = _infer_trained_label_and_color(str(item["model_name"]))
+            if inferred_label is not None:
+                agent.plot_name = {"es": inferred_label, "en": inferred_label}
+            if inferred_color is not None:
+                agent.plot_color = str(inferred_color)
+        agent.agent_id = f"tr_{idx_tr:02d}_{_slugify_label(str(item['model_name']))}"
+
         trained_agents.append(agent)
 
     benchmark_compare_agents = []
@@ -1700,10 +1921,19 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     delta_r_mode = str(config.get("benchmark_delta_r_mode", "none")).strip().lower()
     delta_r_context_days = int(config.get("benchmark_delta_r_context_days", 50))
     delta_r_min_obs = int(config.get("benchmark_delta_r_min_obs", 10))
-    delta_r_default = float(config.get("benchmark_delta_r_default", float(calib.r_train)))
+    # Prefer calibrated train r; if unavailable, fall back to config fixed/default r.
+    delta_r_fallback = calib.r_train
+    if delta_r_fallback is None:
+        delta_r_fallback = config.get("fixed_risk_free", config.get("r", 0.03))
+    delta_r_default = _resolve_float_override(
+        config,
+        "benchmark_delta_r_default",
+        float(delta_r_fallback),
+    )
     delta_r_floor = config.get("benchmark_delta_r_floor", None)
     delta_r_cap = config.get("benchmark_delta_r_cap", None)
     per_path_student_t_df = None
+    hmm_states_stepwise = None
 
     if test_data_mode == "historical_windows":
         test_csv = os.path.join(
@@ -2468,50 +2698,52 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
 
     eval_agent_batch_size = config.get("eval_agent_batch_size")
     terminal_progress_every = config.get("terminal_progress_log_every_agent_batches")
+    plot_min_x, plot_max_x = _resolve_plot_bounds(config)
 
     loss_fns = [CVaR(0.5), CVaR(0.95), CVaR(0.99), MAE(), WorstCase()]
     pairwise_rows = []
-    for agent in compare_targets:
-        pair_name = f"{benchmark_agent.name}_vs_{agent.name}"
-        plot_path = os.path.join(dirs["plots_dir"], f"{pair_name}.jpg")
-        stats_path = os.path.join(dirs["tables_dir"], f"{pair_name}.xlsx")
-        pair_df = env.terminal_hedging_error_multiple_agents(
-            agents=[benchmark_agent, agent],
-            n_paths=int(config["eval_paths"]),
-            random_seed=eval_seed,
-            paths_to_test=eval_paths_tensor,
-            pre_history_prices_to_test=eval_pre_history_tensor,
-            per_path_r=per_path_r,
-            per_path_sigma=per_path_sigma,
-            plot_error=True,
-            plot_title="",
-            save_plot_path=plot_path,
-            save_stats_path=stats_path,
-            loss_functions=loss_fns,
-            min_x=float(config["plot_min_x"]),
-            max_x=float(config["plot_max_x"]),
-            language="es",
-            pricing_method=str(effective_pricing_method),
-            price_computation_mode=str(config.get("price_computation_mode", "pathwise_if_available")),
-            agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
-            progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
-            save_actions_path=actions_cache_dir,
-            fixed_actions_paths=fixed_actions_paths,
-        )
-        pair_df.insert(0, "pair_name", pair_name)
-        pairwise_rows.append(pair_df)
-        print(f"[run:{run_name}] Saved pair plot: {plot_path}")
-        print(f"[run:{run_name}] Saved pair stats: {stats_path}")
-        scatter_path = _save_actions_scatter_plot(
-            benchmark_agent=benchmark_agent,
-            compare_agent=agent,
-            actions_cache_dir=actions_cache_dir,
-            plots_dir=dirs["plots_dir"],
-            pair_name=pair_name,
-            run_name=run_name,
-        )
-        if scatter_path is not None:
-            print(f"[run:{run_name}] Saved pair action scatter: {scatter_path}")
+    if compare_mode == "benchmark_vs_targets":
+        for agent in compare_targets:
+            pair_name = f"{benchmark_agent.name}_vs_{agent.name}"
+            plot_path = os.path.join(dirs["plots_dir"], f"{pair_name}.jpg")
+            stats_path = os.path.join(dirs["tables_dir"], f"{pair_name}.xlsx")
+            pair_df = env.terminal_hedging_error_multiple_agents(
+                agents=[benchmark_agent, agent],
+                n_paths=int(config["eval_paths"]),
+                random_seed=eval_seed,
+                paths_to_test=eval_paths_tensor,
+                pre_history_prices_to_test=eval_pre_history_tensor,
+                per_path_r=per_path_r,
+                per_path_sigma=per_path_sigma,
+                plot_error=True,
+                plot_title="",
+                save_plot_path=plot_path,
+                save_stats_path=stats_path,
+                loss_functions=loss_fns,
+                min_x=plot_min_x,
+                max_x=plot_max_x,
+                language="es",
+                pricing_method=str(effective_pricing_method),
+                price_computation_mode=str(config.get("price_computation_mode", "pathwise_if_available")),
+                agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
+                progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
+                save_actions_path=actions_cache_dir,
+                fixed_actions_paths=fixed_actions_paths,
+            )
+            pair_df.insert(0, "pair_name", pair_name)
+            pairwise_rows.append(pair_df)
+            print(f"[run:{run_name}] Saved pair plot: {plot_path}")
+            print(f"[run:{run_name}] Saved pair stats: {stats_path}")
+            scatter_path = _save_actions_scatter_plot(
+                benchmark_agent=benchmark_agent,
+                compare_agent=agent,
+                actions_cache_dir=actions_cache_dir,
+                plots_dir=dirs["plots_dir"],
+                pair_name=pair_name,
+                run_name=run_name,
+            )
+            if scatter_path is not None:
+                print(f"[run:{run_name}] Saved pair action scatter: {scatter_path}")
 
     if pairwise_rows:
         pairwise_all = pd.concat(pairwise_rows, ignore_index=True)
@@ -2519,6 +2751,20 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         pairwise_all = pd.DataFrame()
     pairwise_csv = os.path.join(dirs["tables_dir"], "pairwise_terminal_stats.csv")
     pairwise_all.to_csv(pairwise_csv, index=False)
+
+    trained_only_plot_path = None
+    trained_only_stats_path = None
+    trained_only_colors = None
+    if compare_mode == "trained_only":
+        trained_only_plot_path = os.path.join(dirs["plots_dir"], "lstm_cvar_sweep_overlay.jpg")
+        trained_only_stats_path = os.path.join(dirs["tables_dir"], "lstm_cvar_sweep_overlay.xlsx")
+        trained_only_colors = []
+        fallback_palette = ["#2ca02c", "#ff7f0e", "#1f77b4", "#d62728", "#9467bd"]
+        for i, agent in enumerate(all_agents):
+            color = getattr(agent, "plot_color", None)
+            if color is None or not str(color).strip():
+                color = fallback_palette[i % len(fallback_palette)]
+            trained_only_colors.append(str(color))
 
     point_payload, errors_all = env.terminal_hedging_error_multiple_agents(
         agents=all_agents,
@@ -2528,19 +2774,29 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         pre_history_prices_to_test=eval_pre_history_tensor,
         per_path_r=per_path_r,
         per_path_sigma=per_path_sigma,
-        plot_error=False,
+        plot_error=bool(compare_mode == "trained_only"),
+        plot_title="",
+        save_plot_path=trained_only_plot_path,
+        colors=trained_only_colors,
+        save_stats_path=None,
         loss_functions=loss_fns,
-        min_x=float(config["plot_min_x"]),
-        max_x=float(config["plot_max_x"]),
+        min_x=plot_min_x,
+        max_x=plot_max_x,
         language="es",
         pricing_method=str(effective_pricing_method),
         price_computation_mode=str(config.get("price_computation_mode", "pathwise_if_available")),
+        error_output_mode=("discounted_pnl" if compare_mode == "trained_only" else "hedging_error"),
         agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
         progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
         save_actions_path=actions_cache_dir,
         fixed_actions_paths=fixed_actions_paths,
         return_errors=True,
     )
+    if compare_mode == "trained_only":
+        print(
+            f"[run:{run_name}] Saved trained-only overlay plot (histogramas superpuestos): "
+            f"{trained_only_plot_path}"
+        )
     mean_errors, std_errors, loss_results = point_payload
 
     # Persist full evaluation payload so any downstream metric can be recomputed
@@ -2609,6 +2865,13 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     point_rows = []
     empirical_rows = []
     benchmark_error = np.asarray(errors_all[0]).reshape(-1)
+    benchmark_error = benchmark_error[np.isfinite(benchmark_error)]
+    if benchmark_error.size == 0:
+        raise ValueError(
+            "Benchmark terminal error contains no finite values; cannot compute risk metrics."
+        )
+    benchmark_q_1pct = float(np.quantile(benchmark_error, 0.01))
+    benchmark_q_0_1pct = float(np.quantile(benchmark_error, 0.001))
     for i, agent in enumerate(all_agents):
         row = {
             "Agent": _display_name(agent, str(config["language"])),
@@ -2620,16 +2883,42 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         point_rows.append(row)
 
         err = np.asarray(errors_all[i]).reshape(-1)
+        err = err[np.isfinite(err)]
         risk_row = {"Agent": _display_name(agent, str(config["language"]))}
-        risk_row.update(_compute_empirical_error_metrics(err))
-        risk_row["exceedance_left_1pct"] = float(np.mean(err <= np.quantile(benchmark_error, 0.01)))
-        risk_row["exceedance_left_0_1pct"] = float(np.mean(err <= np.quantile(benchmark_error, 0.001)))
+        if err.size == 0:
+            risk_row.update({
+                "mean_error": np.nan,
+                "std_error": np.nan,
+                "mae_error": np.nan,
+                "mse_error": np.nan,
+                "worst_case": np.nan,
+                "var_95": np.nan,
+                "var_99": np.nan,
+                "q_1pct": np.nan,
+                "q_0_5pct": np.nan,
+                "q_0_1pct": np.nan,
+                "cvar_50": np.nan,
+                "cvar_90": np.nan,
+                "cvar_95": np.nan,
+                "cvar_99": np.nan,
+                "es_95": np.nan,
+                "es_99": np.nan,
+                "exceedance_left_1pct": np.nan,
+                "exceedance_left_0_1pct": np.nan,
+            })
+        else:
+            risk_row.update(_compute_empirical_error_metrics(err))
+            risk_row["exceedance_left_1pct"] = float(np.mean(err <= benchmark_q_1pct))
+            risk_row["exceedance_left_0_1pct"] = float(np.mean(err <= benchmark_q_0_1pct))
         empirical_rows.append(risk_row)
 
     point_df = pd.DataFrame(point_rows)
     point_csv = os.path.join(dirs["tables_dir"], "point_metrics.csv")
     point_df.to_csv(point_csv, index=False)
     print(f"[run:{run_name}] Saved point metrics: {point_csv}")
+    if compare_mode == "trained_only" and trained_only_stats_path is not None:
+        point_df.to_excel(trained_only_stats_path, index=False)
+        print(f"[run:{run_name}] Saved trained-only overlay stats: {trained_only_stats_path}")
 
     empirical_df = pd.DataFrame(empirical_rows)
     empirical_csv = os.path.join(dirs["tables_dir"], "empirical_risk_metrics.csv")
@@ -2671,6 +2960,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             moving_block_size=None if config["moving_block_size"] is None else int(config["moving_block_size"]),
             save_actions_path=actions_cache_dir,
             fixed_actions_paths=fixed_actions_paths,
+            error_output_mode=("discounted_pnl" if compare_mode == "trained_only" else "hedging_error"),
         )
         boot_csv = os.path.join(dirs["tables_dir"], "bootstrap_metrics_wide.csv")
         boot_df.to_csv(boot_csv, index=False)

@@ -26,12 +26,13 @@ if ROOT_DIR not in sys.path:
 from examples.compare_console import (  # noqa: E402
     _apply_relaxed_defaults_compare,
     _dispatch_compare,
+    _result1b_compare_plan,
 )
 from examples.train_console import (  # noqa: E402
     _apply_relaxed_defaults_train,
     _dispatch_train,
+    _result1b_train_missing_outputs,
 )
-from examples.thesis_result1b_plot_paths_console import run_plot  # noqa: E402
 from examples.unified_console_common import (  # noqa: E402
     CONFIGS_ROOT,
     detect_pipeline,
@@ -107,6 +108,9 @@ def _discover_configs(folder_path: str) -> tuple[list[str], list[str]]:
         for fname in sorted(files):
             if not fname.endswith(".json"):
                 continue
+            # Template files are blueprints and should not be executed as runs.
+            if "template" in fname.lower():
+                continue
             cfg = os.path.normpath(os.path.join(root, fname))
             task = _classify_task(cfg)
             if task == "train":
@@ -121,6 +125,7 @@ def _discover_configs(folder_path: str) -> tuple[list[str], list[str]]:
 def _run_train_config(
     config_path: str,
     checkpoint_every_epochs: int,
+    force_run: bool,
     logger: BatchLogger,
 ) -> tuple[bool, float]:
     t0 = time.perf_counter()
@@ -137,6 +142,17 @@ def _run_train_config(
         cfg["checkpoint_every_epochs"] = int(cfg.get("checkpoint_every_epochs", int(checkpoint_every_epochs)))
         if "checkpoint_every_epochs" not in merged:
             cfg["checkpoint_every_epochs"] = int(checkpoint_every_epochs)
+
+    if pipeline == "result1b" and not bool(force_run):
+        run_dir, missing = _result1b_train_missing_outputs(
+            config_path=source_path,
+            config=cfg,
+        )
+        if len(missing) == 0:
+            logger.log(
+                f"TRAIN skip  | run={run_name} | reason=already_complete | run_dir={run_dir}"
+            )
+            return True, time.perf_counter() - t0
 
     logger.log(
         f"TRAIN start | run={run_name} | pipeline={pipeline} | config={source_path} | "
@@ -156,6 +172,7 @@ def _run_train_config(
 def _run_compare_config(
     config_path: str,
     plot_all_paths: bool,
+    force_run: bool,
     logger: BatchLogger,
 ) -> tuple[bool, float]:
     t0 = time.perf_counter()
@@ -168,26 +185,76 @@ def _run_compare_config(
     cfg = strip_meta_keys(merged)
     cfg = _apply_relaxed_defaults_compare(cfg, pipeline=pipeline)
 
-    logger.log(f"COMPARE start | run={run_name} | pipeline={pipeline} | config={source_path}")
-    _dispatch_compare(
-        pipeline=pipeline,
-        run_name=run_name,
-        config_path_for_snapshot=source_path,
-        config=cfg,
-    )
-    logger.log(f"COMPARE done  | run={run_name} | elapsed={time.perf_counter() - t0:.2f}s")
+    compare_executed = False
+    run_dir = None
+    if pipeline == "result1b":
+        action = "full"
+        details: dict[str, Any] = {}
+        if not bool(force_run):
+            action, details = _result1b_compare_plan(config_path=source_path, config=cfg)
+            run_dir = str(details.get("run_dir"))
+        if bool(force_run) or action == "full":
+            logger.log(f"COMPARE start | run={run_name} | pipeline={pipeline} | config={source_path}")
+            _dispatch_compare(
+                pipeline=pipeline,
+                run_name=run_name,
+                config_path_for_snapshot=source_path,
+                config=cfg,
+            )
+            compare_executed = True
+            logger.log(f"COMPARE done  | run={run_name} | elapsed={time.perf_counter() - t0:.2f}s")
+        elif action == "bootstrap_only":
+            from examples.thesis_result1b_compare_console import run_bootstrap_only_from_saved_payload
+
+            logger.log(
+                f"COMPARE partial | run={run_name} | mode=bootstrap_only | "
+                f"config={source_path}"
+            )
+            run_bootstrap_only_from_saved_payload(
+                run_name=run_name,
+                config_path=source_path,
+                config=cfg,
+            )
+        else:
+            logger.log(
+                f"COMPARE skip  | run={run_name} | reason=already_complete | run_dir={run_dir}"
+            )
+    else:
+        logger.log(f"COMPARE start | run={run_name} | pipeline={pipeline} | config={source_path}")
+        _dispatch_compare(
+            pipeline=pipeline,
+            run_name=run_name,
+            config_path_for_snapshot=source_path,
+            config=cfg,
+        )
+        compare_executed = True
+        logger.log(f"COMPARE done  | run={run_name} | elapsed={time.perf_counter() - t0:.2f}s")
 
     if pipeline == "result1b" and bool(plot_all_paths):
-        logger.log(f"PLOTS start   | run={run_name} | all_paths=True")
-        run_plot(
-            run_name=run_name,
-            config=cfg,
-            config_path=source_path,
-            n_plot_paths=int(cfg.get("eval_paths", 80)),
-            plot_all_paths=True,
-            eval_paths_override=None,
-        )
-        logger.log(f"PLOTS done    | run={run_name}")
+        if run_dir is None:
+            _, details = _result1b_compare_plan(config_path=source_path, config=cfg)
+            run_dir = str(details.get("run_dir"))
+        plots_required = [
+            os.path.join(run_dir, "plots", "sample_paths_levels.jpg"),
+            os.path.join(run_dir, "plots", "sample_paths_log_moneyness.jpg"),
+            os.path.join(run_dir, "plots", "sample_paths.csv"),
+        ]
+        missing_plots = [p for p in plots_required if not os.path.isfile(p)]
+        if bool(force_run) or len(missing_plots) > 0 or compare_executed:
+            from examples.thesis_result1b_plot_paths_console import run_plot
+
+            logger.log(f"PLOTS start   | run={run_name} | all_paths=True")
+            run_plot(
+                run_name=run_name,
+                config=cfg,
+                config_path=source_path,
+                n_plot_paths=int(cfg.get("eval_paths", 80)),
+                plot_all_paths=True,
+                eval_paths_override=None,
+            )
+            logger.log(f"PLOTS done    | run={run_name}")
+        else:
+            logger.log(f"PLOTS skip    | run={run_name} | reason=already_complete")
 
     elapsed = time.perf_counter() - t0
     return True, elapsed
@@ -216,6 +283,11 @@ def main() -> None:
         "--continue-on-error",
         action="store_true",
         help="Continue with next scenario if one run fails.",
+    )
+    parser.add_argument(
+        "--force-run",
+        action="store_true",
+        help="Forzar ejecución completa (train y compare) ignorando artefactos existentes.",
     )
     args = parser.parse_args()
 
@@ -246,6 +318,7 @@ def main() -> None:
                 _run_train_config(
                     config_path=cfg_path,
                     checkpoint_every_epochs=int(args.checkpoint_every_epochs),
+                    force_run=bool(args.force_run),
                     logger=logger,
                 )
                 success_count += 1
@@ -263,6 +336,7 @@ def main() -> None:
                 _run_compare_config(
                     config_path=cfg_path,
                     plot_all_paths=not bool(args.skip_compare_path_plots),
+                    force_run=bool(args.force_run),
                     logger=logger,
                 )
                 success_count += 1

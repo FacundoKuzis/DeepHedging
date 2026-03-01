@@ -1,10 +1,11 @@
 {
-  "extends": "../compare/vs_bs_and_lrm_mc.json",
+  "extends": "../compare/vs_bs.json",
   "run_name": "tf_w1_gbm_fixed_1a_2_cmp_band_0025",
   "description": "template banda NI",
-  "benchmark_actions_reuse_from_run": "THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/compare/vs_bs_and_lrm_mc",
+  "benchmark_actions_reuse_from_run": "THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/compare/vs_bs",
   "benchmark_actions_reuse_agent_name": "DeltaHedgingAgent",
   "benchmark_actions_reuse_apply_no_intervention": true,
   "benchmark_no_intervention_mode": "percentage",
   "benchmark_no_intervention_bound": 0.025
 }
+
