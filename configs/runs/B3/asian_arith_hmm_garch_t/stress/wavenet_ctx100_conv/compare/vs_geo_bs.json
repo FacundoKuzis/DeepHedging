@@ -1,0 +1,14 @@
+{
+  "extends": "../../../../../B2/asian_arith_hmm_garch_t/stress/wavenet_ctx50_conv/compare/vs_geo_bs.json",
+  "run_name": "b3_asian_arith_hmm_garch_t_wavenet_ctx100_conv_deeper_mse_vs_geo_bs_cmp",
+  "description": "B3 compare: B3 WaveNet (ctx=100) vs geometric Asian BS benchmark under same HMM+GARCH+t world.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "b3_asian_arith_hmm_garch_t_wavenet_ctx100_conv_deeper_mse"
+    }
+  ],
+  "context_length": 100,
+  "benchmark_delta_sigma_context_days": 100,
+  "eval_agent_batch_size": 2000
+}

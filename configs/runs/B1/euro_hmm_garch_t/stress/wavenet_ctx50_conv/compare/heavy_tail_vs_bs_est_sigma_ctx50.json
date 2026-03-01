@@ -1,0 +1,30 @@
+{
+  "extends": "./vs_bs_est_sigma_ctx50.json",
+  "run_name": "b1_euro_hmm_garch_t_wavenet_ctx50_conv_heavy_tail_vs_bs_est_sigma_ctx50_cmp",
+  "description": "B1 heavy-tail compare: WaveNet heavy-tail model vs fair BS-delta estimator benchmark.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "b1_euro_hmm_garch_t_wavenet_ctx50_conv_heavy_tail"
+    }
+  ],
+  "gbm_sigma_uniform_low": 0.05,
+  "gbm_sigma_uniform_high": 0.95,
+  "garch_alpha_uniform_low": 0.05,
+  "garch_alpha_uniform_high": 0.14,
+  "garch_beta_uniform_low": 0.45,
+  "garch_beta_uniform_high": 0.62,
+  "garch_leverage_uniform_low": 0.03,
+  "garch_leverage_uniform_high": 0.08,
+  "garch_student_t_df_uniform_low": 2.2,
+  "garch_student_t_df_uniform_high": 8.0,
+  "hmm_params_per_path_mode": "uniform_random",
+  "hmm_num_states": 3,
+  "hmm_transition_uniform_low": 0.01,
+  "hmm_transition_uniform_high": 1.0,
+  "hmm_initial_uniform_low": 0.01,
+  "hmm_initial_uniform_high": 1.0,
+  "hmm_vol_multipliers_uniform_low": 0.20,
+  "hmm_vol_multipliers_uniform_high": 3.50,
+  "hmm_vol_multipliers_sort": true
+}

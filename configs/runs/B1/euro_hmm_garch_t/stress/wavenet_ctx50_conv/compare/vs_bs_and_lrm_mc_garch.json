@@ -1,0 +1,6 @@
+{
+  "extends": "./vs_bs_and_lrm_mc.json",
+  "run_name": "b1_euro_hmm_garch_t_wavenet_ctx50_conv_vs_bs_and_lrm_mc_garch_cmp",
+  "description": "B1 baseline compare: common first-agent price, BS and LRM MC using context-estimated GARCH stepwise sigma."
+}
+

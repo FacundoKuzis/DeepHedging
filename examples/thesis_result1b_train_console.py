@@ -10,6 +10,7 @@ Bloque 1b:
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
 from typing import Any
@@ -142,6 +143,10 @@ def optional_keys() -> set[str]:
         "include_log_strike_feature",
         "wavenet_num_filters",
         "wavenet_num_residual_blocks",
+        "wavenet_block_configs",
+        "wavenet_activation",
+        "wavenet_use_skip_connections",
+        "wavenet_output_hidden_filters",
         "sequence_output_mode",
         "position_activation",
         "gbm_sigma_per_path_mode",
@@ -180,6 +185,18 @@ def optional_keys() -> set[str]:
         "garch_student_t_df_uniform_high",
         "garch_student_t_df_discrete_values",
         "garch_student_t_df_discrete_probs",
+        "hmm_transition_matrix",
+        "hmm_initial_distribution",
+        "hmm_vol_multipliers",
+        "hmm_params_per_path_mode",
+        "hmm_num_states",
+        "hmm_transition_uniform_low",
+        "hmm_transition_uniform_high",
+        "hmm_initial_uniform_low",
+        "hmm_initial_uniform_high",
+        "hmm_vol_multipliers_uniform_low",
+        "hmm_vol_multipliers_uniform_high",
+        "hmm_vol_multipliers_sort",
         "student_t_df",
         "student_t_df_per_path_mode",
         "student_t_df_uniform_low",
@@ -194,6 +211,12 @@ def optional_keys() -> set[str]:
         "early_stopping_enabled",
         "early_stopping_patience",
         "early_stopping_min_delta",
+        "checkpoint_enabled",
+        "checkpoint_every_epochs",
+        "checkpoint_save_best",
+        "checkpoint_metric",
+        "checkpoint_save_optimizer",
+        "checkpoint_resume_if_available",
     }
 
 
@@ -271,6 +294,23 @@ def validate_config(config: dict[str, Any]) -> None:
         if es_min_delta < 0.0:
             raise ValueError("early_stopping_min_delta must be >= 0.")
 
+    if "checkpoint_enabled" in config and not isinstance(config["checkpoint_enabled"], bool):
+        raise ValueError("checkpoint_enabled must be bool when provided.")
+    if bool(config.get("checkpoint_enabled", False)):
+        if int(config.get("checkpoint_every_epochs", 1)) <= 0:
+            raise ValueError("checkpoint_every_epochs must be > 0 when checkpoint_enabled=true.")
+        if "checkpoint_save_best" in config and not isinstance(config["checkpoint_save_best"], bool):
+            raise ValueError("checkpoint_save_best must be bool when provided.")
+        metric_name = str(config.get("checkpoint_metric", "auto")).strip().lower()
+        if metric_name not in {"auto", "val_loss", "train_loss"}:
+            raise ValueError("checkpoint_metric must be one of {'auto','val_loss','train_loss'}.")
+        if "checkpoint_save_optimizer" in config and not isinstance(config["checkpoint_save_optimizer"], bool):
+            raise ValueError("checkpoint_save_optimizer must be bool when provided.")
+        if "checkpoint_resume_if_available" in config and not isinstance(
+            config["checkpoint_resume_if_available"], bool
+        ):
+            raise ValueError("checkpoint_resume_if_available must be bool when provided.")
+
     use_context = bool(config.get("use_price_history_context", False))
     if "context_for_path_generation_only" in config and not isinstance(config["context_for_path_generation_only"], bool):
         raise ValueError("context_for_path_generation_only must be bool when provided.")
@@ -345,6 +385,40 @@ def validate_config(config: dict[str, Any]) -> None:
     if "wavenet_num_residual_blocks" in config:
         if int(config["wavenet_num_residual_blocks"]) <= 0:
             raise ValueError("wavenet_num_residual_blocks must be > 0.")
+    if "wavenet_activation" in config and not str(config["wavenet_activation"]).strip():
+        raise ValueError("wavenet_activation cannot be empty when provided.")
+    if "wavenet_use_skip_connections" in config and not isinstance(config["wavenet_use_skip_connections"], bool):
+        raise ValueError("wavenet_use_skip_connections must be bool when provided.")
+    if "wavenet_output_hidden_filters" in config:
+        if int(config["wavenet_output_hidden_filters"]) < 0:
+            raise ValueError("wavenet_output_hidden_filters must be >= 0.")
+    if "wavenet_block_configs" in config:
+        blocks = config["wavenet_block_configs"]
+        if not isinstance(blocks, list) or len(blocks) == 0:
+            raise ValueError("wavenet_block_configs must be a non-empty list when provided.")
+        for i, block in enumerate(blocks):
+            if not isinstance(block, dict):
+                raise ValueError(f"wavenet_block_configs[{i}] must be an object.")
+            if "filters" not in block or "kernel_size" not in block:
+                raise ValueError(
+                    f"wavenet_block_configs[{i}] must include 'filters' and 'kernel_size'."
+                )
+            if int(block["filters"]) <= 0:
+                raise ValueError(f"wavenet_block_configs[{i}].filters must be > 0.")
+            if int(block["kernel_size"]) <= 0:
+                raise ValueError(f"wavenet_block_configs[{i}].kernel_size must be > 0.")
+            if "dilation_rate" in block and int(block["dilation_rate"]) <= 0:
+                raise ValueError(f"wavenet_block_configs[{i}].dilation_rate must be > 0.")
+            if "dropout" in block:
+                d = float(block["dropout"])
+                if d < 0.0 or d >= 1.0:
+                    raise ValueError(
+                        f"wavenet_block_configs[{i}].dropout must satisfy 0 <= dropout < 1."
+                    )
+            if "activation" in block and not str(block["activation"]).strip():
+                raise ValueError(
+                    f"wavenet_block_configs[{i}].activation cannot be empty when provided."
+                )
 
     if "include_log_strike_feature" in config and not isinstance(config["include_log_strike_feature"], bool):
         raise ValueError("include_log_strike_feature must be bool when provided.")
@@ -352,8 +426,8 @@ def validate_config(config: dict[str, Any]) -> None:
     if path_t not in {"none", "log", "log_moneyness"}:
         raise ValueError("path_transformation_type must be one of {'none','log','log_moneyness'}.")
     instrument_model = str(config.get("instrument_model", "gbm")).strip().lower()
-    if instrument_model not in {"gbm", "garch", "student_t"}:
-        raise ValueError("instrument_model must be one of {'gbm','garch','student_t'}.")
+    if instrument_model not in {"gbm", "garch", "hmm_garch", "student_t"}:
+        raise ValueError("instrument_model must be one of {'gbm','garch','hmm_garch','student_t'}.")
 
     sigma_path_mode = str(config.get("gbm_sigma_per_path_mode", "fixed")).strip().lower()
     if sigma_path_mode not in {"fixed", "uniform", "discrete"}:
@@ -440,7 +514,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 raise ValueError(f"{param_name} values must be > {float(min_exclusive)}.")
         return mode, values
 
-    if instrument_model == "garch":
+    if instrument_model in {"garch", "hmm_garch"}:
         _, alpha_vals = _validate_mode_for_param("garch_alpha", 0.05, min_inclusive=0.0)
         _, beta_vals = _validate_mode_for_param("garch_beta", 0.9, min_inclusive=0.0)
         _, lev_vals = _validate_mode_for_param("garch_leverage", 0.0, min_inclusive=0.0)
@@ -460,9 +534,81 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("garch_use_student_t must be bool when provided.")
         if bool(config.get("garch_use_student_t", False)):
             _validate_mode_for_param("garch_student_t_df", 8.0, min_exclusive=2.0)
-        # r per path supports negative rates, but keep them finite.
         if any(not np.isfinite(float(v)) for v in r_vals):
             raise ValueError("r values must be finite.")
+
+        if instrument_model == "hmm_garch":
+            legacy_hmm_keys = [
+                k
+                for k in config.keys()
+                if k.startswith("hmm_p_") or k.startswith("hmm_vol_multiplier_")
+            ]
+            if legacy_hmm_keys:
+                raise ValueError(
+                    "Legacy HMM scalar keys are no longer supported. "
+                    f"Remove: {sorted(legacy_hmm_keys)}"
+                )
+            hmm_mode = str(config.get("hmm_params_per_path_mode", "fixed")).strip().lower()
+            if hmm_mode not in {"fixed", "uniform_random"}:
+                raise ValueError("hmm_params_per_path_mode must be one of {'fixed','uniform_random'}.")
+
+            if hmm_mode == "fixed":
+                tm = config.get("hmm_transition_matrix")
+                pi = config.get("hmm_initial_distribution")
+                mult = config.get("hmm_vol_multipliers")
+                if tm is None or pi is None or mult is None:
+                    raise ValueError(
+                        "instrument_model='hmm_garch' with hmm_params_per_path_mode='fixed' "
+                        "requires: hmm_transition_matrix, hmm_initial_distribution, hmm_vol_multipliers."
+                    )
+                tm_arr = np.asarray(tm, dtype=np.float64)
+                pi_arr = np.asarray(pi, dtype=np.float64).reshape(-1)
+                mult_arr = np.asarray(mult, dtype=np.float64).reshape(-1)
+                if tm_arr.ndim != 2 or tm_arr.shape[0] != tm_arr.shape[1]:
+                    raise ValueError("hmm_transition_matrix must be a square matrix (KxK).")
+                k = int(tm_arr.shape[0])
+                if k < 2:
+                    raise ValueError("hmm_transition_matrix must have K >= 2.")
+                if pi_arr.shape[0] != k:
+                    raise ValueError("hmm_initial_distribution length must match hmm_transition_matrix size.")
+                if mult_arr.shape[0] != k:
+                    raise ValueError("hmm_vol_multipliers length must match hmm_transition_matrix size.")
+                if np.any(~np.isfinite(tm_arr)) or np.any(tm_arr < 0.0):
+                    raise ValueError("hmm_transition_matrix must contain finite entries >= 0.")
+                row_sums = np.sum(tm_arr, axis=1)
+                if np.any(row_sums <= 0.0):
+                    raise ValueError("Each row of hmm_transition_matrix must sum to > 0.")
+                if np.any(~np.isfinite(pi_arr)) or np.any(pi_arr < 0.0):
+                    raise ValueError("hmm_initial_distribution must contain finite entries >= 0.")
+                pi_sum = float(np.sum(pi_arr))
+                if pi_sum <= 0.0:
+                    raise ValueError("hmm_initial_distribution must sum to > 0.")
+                if np.any(~np.isfinite(mult_arr)) or np.any(mult_arr <= 0.0):
+                    raise ValueError("hmm_vol_multipliers must contain finite entries > 0.")
+            else:
+                if "hmm_num_states" not in config:
+                    raise ValueError("hmm_num_states is required when hmm_params_per_path_mode='uniform_random'.")
+                k = int(config["hmm_num_states"])
+                if k < 2:
+                    raise ValueError("hmm_num_states must be >= 2.")
+                t_lo = float(config.get("hmm_transition_uniform_low", 0.0))
+                t_hi = float(config.get("hmm_transition_uniform_high", 1.0))
+                if t_lo < 0.0 or t_hi <= t_lo:
+                    raise ValueError("Require 0 <= hmm_transition_uniform_low < hmm_transition_uniform_high.")
+                i_lo = float(config.get("hmm_initial_uniform_low", 0.0))
+                i_hi = float(config.get("hmm_initial_uniform_high", 1.0))
+                if i_lo < 0.0 or i_hi <= i_lo:
+                    raise ValueError("Require 0 <= hmm_initial_uniform_low < hmm_initial_uniform_high.")
+                m_lo = float(config.get("hmm_vol_multipliers_uniform_low", 0.5))
+                m_hi = float(config.get("hmm_vol_multipliers_uniform_high", 2.0))
+                if m_lo <= 0.0 or m_hi <= m_lo:
+                    raise ValueError(
+                        "Require 0 < hmm_vol_multipliers_uniform_low < hmm_vol_multipliers_uniform_high."
+                    )
+                if "hmm_vol_multipliers_sort" in config and not isinstance(
+                    config["hmm_vol_multipliers_sort"], bool
+                ):
+                    raise ValueError("hmm_vol_multipliers_sort must be bool when provided.")
 
     if instrument_model == "student_t":
         df_mode = str(config.get("student_t_df_per_path_mode", "fixed")).strip().lower()
@@ -720,6 +866,105 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
         dirs=dirs,
     )
 
+    checkpoint_enabled = bool(config.get("checkpoint_enabled", False))
+    checkpoint_every_epochs = int(config.get("checkpoint_every_epochs", 1))
+    checkpoint_save_best = bool(config.get("checkpoint_save_best", True))
+    checkpoint_metric = str(config.get("checkpoint_metric", "auto")).strip().lower()
+    checkpoint_save_optimizer = bool(config.get("checkpoint_save_optimizer", True))
+    checkpoint_resume_if_available = bool(config.get("checkpoint_resume_if_available", True))
+    checkpoint_state: dict[str, Any] = {
+        "best_metric": None,
+        "best_epoch": None,
+    }
+    planned_total_epochs = int(config["n_epochs"])
+    resume_start_epoch = 0
+    skip_training = False
+    _warned_missing_val_once = False
+
+    checkpoints_root = os.path.join(dirs["run_dir"], "checkpoints")
+    latest_ckpt_model_path = os.path.join(checkpoints_root, "latest", os.path.basename(model_path))
+    latest_ckpt_optimizer_path = os.path.join(checkpoints_root, "latest", "optimizer")
+    latest_ckpt_meta_path = os.path.join(checkpoints_root, "latest", "metadata.json")
+    best_ckpt_model_path = os.path.join(checkpoints_root, "best", os.path.basename(model_path))
+    best_ckpt_optimizer_path = os.path.join(checkpoints_root, "best", "optimizer")
+    best_ckpt_meta_path = os.path.join(checkpoints_root, "best", "metadata.json")
+
+    def _safe_remove_path(path: str) -> None:
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        elif os.path.exists(path):
+            os.remove(path)
+
+    def _atomic_replace_path(src_path: str, dst_path: str) -> None:
+        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+        _safe_remove_path(dst_path)
+        os.replace(src_path, dst_path)
+
+    def _load_checkpoint_metadata(meta_path: str) -> dict[str, Any] | None:
+        if not os.path.isfile(meta_path):
+            return None
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            return None
+        return None
+
+    def _save_checkpoint(
+        target_model_path: str,
+        target_optimizer_path: str,
+        target_meta_path: str,
+        *,
+        kind: str,
+        epoch_abs: int,
+        metric_name: str,
+        metric_value: float,
+    ) -> None:
+        model_root, model_ext = os.path.splitext(target_model_path)
+        if not model_ext:
+            model_ext = ".keras"
+        tmp_model_path = f"{model_root}.tmp_epoch{int(epoch_abs):04d}{model_ext}"
+        tmp_optimizer_path = f"{target_optimizer_path}.tmp_epoch{int(epoch_abs):04d}"
+        tmp_meta_path = f"{target_meta_path}.tmp_epoch{int(epoch_abs):04d}"
+
+        _safe_remove_path(tmp_model_path)
+        _safe_remove_path(f"{tmp_model_path}.history_conv.pkl")
+        _safe_remove_path(tmp_optimizer_path)
+        _safe_remove_path(tmp_meta_path)
+
+        agent.save_model(tmp_model_path)
+        if checkpoint_save_optimizer:
+            env.save_optimizer(tmp_optimizer_path)
+
+        tmp_sidecar_path = f"{tmp_model_path}.history_conv.pkl"
+        target_sidecar_path = f"{target_model_path}.history_conv.pkl"
+        _atomic_replace_path(tmp_model_path, target_model_path)
+        if os.path.exists(tmp_sidecar_path):
+            _atomic_replace_path(tmp_sidecar_path, target_sidecar_path)
+        elif os.path.exists(target_sidecar_path):
+            # If no sidecar was produced for this checkpoint, remove stale one.
+            _safe_remove_path(target_sidecar_path)
+
+        if checkpoint_save_optimizer:
+            _atomic_replace_path(tmp_optimizer_path, target_optimizer_path)
+
+        meta_payload = {
+            "kind": str(kind),
+            "run_name": str(run_name),
+            "epoch": int(epoch_abs),
+            "metric_name": str(metric_name),
+            "metric_value": float(metric_value),
+            "model_path": str(target_model_path),
+            "optimizer_path": str(target_optimizer_path) if checkpoint_save_optimizer else None,
+            "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        os.makedirs(os.path.dirname(tmp_meta_path), exist_ok=True)
+        with open(tmp_meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta_payload, f, indent=2)
+        _atomic_replace_path(tmp_meta_path, target_meta_path)
+
     if bool(config["load_if_exists"]):
         if os.path.isfile(model_path):
             agent.load_model(model_path)
@@ -727,6 +972,122 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
         if os.path.isdir(optimizer_path):
             env.load_optimizer(optimizer_path, only_weights=True)
             print(f"[run:{run_name}] Loaded existing optimizer: {optimizer_path}")
+        if (
+            checkpoint_enabled
+            and checkpoint_resume_if_available
+            and (not os.path.isfile(model_path))
+            and os.path.isfile(latest_ckpt_model_path)
+        ):
+            agent.load_model(latest_ckpt_model_path)
+            if checkpoint_save_optimizer and os.path.isdir(latest_ckpt_optimizer_path):
+                env.load_optimizer(latest_ckpt_optimizer_path, only_weights=True)
+            latest_meta = _load_checkpoint_metadata(latest_ckpt_meta_path)
+            if latest_meta is not None:
+                resume_start_epoch = max(0, int(latest_meta.get("epoch", 0)))
+            if checkpoint_save_best:
+                best_meta = _load_checkpoint_metadata(best_ckpt_meta_path)
+                if best_meta is not None:
+                    checkpoint_state["best_metric"] = float(best_meta.get("metric_value"))
+                    checkpoint_state["best_epoch"] = int(best_meta.get("epoch"))
+            remaining_epochs = max(0, planned_total_epochs - resume_start_epoch)
+            if remaining_epochs <= 0:
+                skip_training = True
+                print(
+                    f"[run:{run_name}] Resume checkpoint already reached epoch {resume_start_epoch}/{planned_total_epochs}. "
+                    "Skipping training."
+                )
+            else:
+                env.n_epochs = int(remaining_epochs)
+                print(
+                    f"[run:{run_name}] Resuming from latest checkpoint: epoch={resume_start_epoch}, "
+                    f"remaining_epochs={remaining_epochs}."
+                )
+    elif checkpoint_enabled and checkpoint_resume_if_available and os.path.isfile(latest_ckpt_model_path):
+        agent.load_model(latest_ckpt_model_path)
+        if checkpoint_save_optimizer and os.path.isdir(latest_ckpt_optimizer_path):
+            env.load_optimizer(latest_ckpt_optimizer_path, only_weights=True)
+        latest_meta = _load_checkpoint_metadata(latest_ckpt_meta_path)
+        if latest_meta is not None:
+            resume_start_epoch = max(0, int(latest_meta.get("epoch", 0)))
+        if checkpoint_save_best:
+            best_meta = _load_checkpoint_metadata(best_ckpt_meta_path)
+            if best_meta is not None:
+                checkpoint_state["best_metric"] = float(best_meta.get("metric_value"))
+                checkpoint_state["best_epoch"] = int(best_meta.get("epoch"))
+        remaining_epochs = max(0, planned_total_epochs - resume_start_epoch)
+        if remaining_epochs <= 0:
+            skip_training = True
+            print(
+                f"[run:{run_name}] Resume checkpoint already reached epoch {resume_start_epoch}/{planned_total_epochs}. "
+                "Skipping training."
+            )
+        else:
+            env.n_epochs = int(remaining_epochs)
+            print(
+                f"[run:{run_name}] Resuming from latest checkpoint: epoch={resume_start_epoch}, "
+                f"remaining_epochs={remaining_epochs}."
+            )
+
+    def _checkpointed_epoch_callback(epoch_info: dict[str, Any]) -> dict[str, Any]:
+        nonlocal _warned_missing_val_once
+        callback_out = _combined_epoch_callback(epoch_info)
+        if not checkpoint_enabled:
+            return callback_out
+
+        local_epoch = int(epoch_info.get("epoch", 0))
+        abs_epoch = int(resume_start_epoch + local_epoch)
+        metric_key = checkpoint_metric
+        if metric_key == "auto":
+            metric_key = "val_loss" if epoch_info.get("val_loss") is not None else "train_loss"
+        if metric_key == "val_loss" and epoch_info.get("val_loss") is None:
+            if not _warned_missing_val_once:
+                print(
+                    f"[run:{run_name}] checkpoint_metric='val_loss' but val_loss is unavailable; "
+                    "falling back to train_loss."
+                )
+                _warned_missing_val_once = True
+            metric_key = "train_loss"
+        metric_value = float(epoch_info.get(metric_key, epoch_info["train_loss"]))
+
+        should_save_latest = (abs_epoch % max(1, checkpoint_every_epochs) == 0) or bool(
+            callback_out.get("stop_training", False)
+        )
+        if should_save_latest:
+            _save_checkpoint(
+                latest_ckpt_model_path,
+                latest_ckpt_optimizer_path,
+                latest_ckpt_meta_path,
+                kind="latest",
+                epoch_abs=abs_epoch,
+                metric_name=metric_key,
+                metric_value=metric_value,
+            )
+            print(
+                f"[run:{run_name}] Checkpoint saved (latest): epoch={abs_epoch}, "
+                f"{metric_key}={metric_value:.6f}"
+            )
+
+        if checkpoint_save_best:
+            best_metric = checkpoint_state["best_metric"]
+            improved = (best_metric is None) or (metric_value < float(best_metric))
+            if improved:
+                checkpoint_state["best_metric"] = float(metric_value)
+                checkpoint_state["best_epoch"] = int(abs_epoch)
+                _save_checkpoint(
+                    best_ckpt_model_path,
+                    best_ckpt_optimizer_path,
+                    best_ckpt_meta_path,
+                    kind="best",
+                    epoch_abs=abs_epoch,
+                    metric_name=metric_key,
+                    metric_value=metric_value,
+                )
+                print(
+                    f"[run:{run_name}] Checkpoint saved (best): epoch={abs_epoch}, "
+                    f"{metric_key}={metric_value:.6f}"
+                )
+
+        return callback_out
 
     def _sampling_desc(
         name: str,
@@ -761,7 +1122,7 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
             default_fixed=config.get("sigma", calib.sigma_train),
         )
     ]
-    if instrument_model == "garch":
+    if instrument_model in {"garch", "hmm_garch"}:
         sampling_bits.append(
             _sampling_desc(
                 name="r",
@@ -818,6 +1179,33 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
                     default_fixed=config.get("garch_student_t_df", 8.0),
                 )
             )
+        if instrument_model == "hmm_garch":
+            hmm_mode = str(config.get("hmm_params_per_path_mode", "fixed")).strip().lower()
+            sampling_bits.append(f"hmm_params_mode={hmm_mode}")
+            if hmm_mode == "uniform_random":
+                sampling_bits.append(f"hmm_states={int(config.get('hmm_num_states', 0))}")
+                sampling_bits.append(
+                    f"hmm_transition_u=[{float(config.get('hmm_transition_uniform_low', 0.0)):.4g},"
+                    f"{float(config.get('hmm_transition_uniform_high', 1.0)):.4g}]"
+                )
+                sampling_bits.append(
+                    f"hmm_initial_u=[{float(config.get('hmm_initial_uniform_low', 0.0)):.4g},"
+                    f"{float(config.get('hmm_initial_uniform_high', 1.0)):.4g}]"
+                )
+                sampling_bits.append(
+                    f"hmm_mult_u=[{float(config.get('hmm_vol_multipliers_uniform_low', 0.5)):.4g},"
+                    f"{float(config.get('hmm_vol_multipliers_uniform_high', 2.0)):.4g}]"
+                )
+                sampling_bits.append(
+                    f"hmm_mult_sort={bool(config.get('hmm_vol_multipliers_sort', True))}"
+                )
+            else:
+                tm = np.asarray(config.get("hmm_transition_matrix"), dtype=np.float64)
+                mult = np.asarray(config.get("hmm_vol_multipliers"), dtype=np.float64).reshape(-1)
+                sampling_bits.append(f"hmm_matrix_states={int(tm.shape[0])}")
+                sampling_bits.append(
+                    f"hmm_mult_range=[{float(np.min(mult)):.4g},{float(np.max(mult)):.4g}]"
+                )
 
     print(
         f"[run:{run_name}] Training agent={config['agent_name']} claim={config['contingent_claim']} "
@@ -825,12 +1213,15 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
         f"Pathwise sampling: {'; '.join(sampling_bits)}"
     )
     t0 = time.perf_counter()
-    out = env.train(
-        train_paths=int(config["train_paths"]),
-        val_paths=int(config["val_paths"]),
-        random_seed=seed,
-        epoch_end_callback=_combined_epoch_callback,
-    )
+    if skip_training:
+        out = ([], []) if int(config["val_paths"]) > 0 else []
+    else:
+        out = env.train(
+            train_paths=int(config["train_paths"]),
+            val_paths=int(config["val_paths"]),
+            random_seed=seed,
+            epoch_end_callback=_checkpointed_epoch_callback,
+        )
     elapsed = time.perf_counter() - t0
     print(f"[run:{run_name}] Training finished in {elapsed:.2f}s")
 
@@ -911,6 +1302,18 @@ def run_training(run_name: str, config_path: str, config: dict[str, Any]) -> Non
                 "garch_student_t_df_uniform_high": config.get("garch_student_t_df_uniform_high"),
                 "garch_student_t_df_discrete_values": json.dumps(config.get("garch_student_t_df_discrete_values")),
                 "garch_student_t_df_discrete_probs": json.dumps(config.get("garch_student_t_df_discrete_probs")),
+                "hmm_transition_matrix": json.dumps(config.get("hmm_transition_matrix")),
+                "hmm_initial_distribution": json.dumps(config.get("hmm_initial_distribution")),
+                "hmm_vol_multipliers": json.dumps(config.get("hmm_vol_multipliers")),
+                "hmm_params_per_path_mode": str(config.get("hmm_params_per_path_mode", "fixed")),
+                "hmm_num_states": config.get("hmm_num_states"),
+                "hmm_transition_uniform_low": config.get("hmm_transition_uniform_low"),
+                "hmm_transition_uniform_high": config.get("hmm_transition_uniform_high"),
+                "hmm_initial_uniform_low": config.get("hmm_initial_uniform_low"),
+                "hmm_initial_uniform_high": config.get("hmm_initial_uniform_high"),
+                "hmm_vol_multipliers_uniform_low": config.get("hmm_vol_multipliers_uniform_low"),
+                "hmm_vol_multipliers_uniform_high": config.get("hmm_vol_multipliers_uniform_high"),
+                "hmm_vol_multipliers_sort": config.get("hmm_vol_multipliers_sort"),
                 "student_t_df": config.get("student_t_df"),
                 "student_t_df_per_path_mode": str(config.get("student_t_df_per_path_mode", "fixed")),
                 "student_t_df_uniform_low": config.get("student_t_df_uniform_low"),

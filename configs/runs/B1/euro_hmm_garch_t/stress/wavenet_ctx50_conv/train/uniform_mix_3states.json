@@ -1,0 +1,6 @@
+{
+  "extends": "./uniform_mix_matrix3.json",
+  "run_name": "b1_euro_hmm3_garch_t_wavenet_ctx50_conv_train",
+  "description": "B1 3-state matrix-HMM+GARCH+t train (legacy name kept for compatibility).",
+  "model_name": "b1_euro_hmm3_garch_t_wavenet_ctx50_conv"
+}

@@ -64,6 +64,9 @@ from DeepHedging.utils.garch_context_sigma import (  # noqa: E402
     fit_pathwise_garch_params_from_context,
     fit_student_t_df_from_garch_context,
 )
+from DeepHedging.utils.hmm_garch_context_sigma import (  # noqa: E402
+    estimate_pathwise_hmm_garch_student_sigma_from_context,
+)
 
 
 RESULT1B_ROOT = THESIS_MODELS_ROOT
@@ -161,6 +164,12 @@ def optional_keys() -> set[str]:
         "price_computation_mode",
         "path_transformation_type",
         "include_log_strike_feature",
+        "wavenet_num_filters",
+        "wavenet_num_residual_blocks",
+        "wavenet_block_configs",
+        "wavenet_activation",
+        "wavenet_use_skip_connections",
+        "wavenet_output_hidden_filters",
         "sequence_output_mode",
         "position_activation",
         "garch_alpha",
@@ -194,6 +203,18 @@ def optional_keys() -> set[str]:
         "garch_student_t_df_uniform_high",
         "garch_student_t_df_discrete_values",
         "garch_student_t_df_discrete_probs",
+        "hmm_transition_matrix",
+        "hmm_initial_distribution",
+        "hmm_vol_multipliers",
+        "hmm_params_per_path_mode",
+        "hmm_num_states",
+        "hmm_transition_uniform_low",
+        "hmm_transition_uniform_high",
+        "hmm_initial_uniform_low",
+        "hmm_initial_uniform_high",
+        "hmm_vol_multipliers_uniform_low",
+        "hmm_vol_multipliers_uniform_high",
+        "hmm_vol_multipliers_sort",
         "student_t_df",
         "student_t_df_per_path_mode",
         "student_t_df_uniform_low",
@@ -281,6 +302,12 @@ def optional_keys() -> set[str]:
         "benchmark_delta_student_t_df_default",
         "benchmark_delta_student_t_df_floor",
         "benchmark_delta_student_t_df_cap",
+        "benchmark_hmm_num_states",
+        "benchmark_hmm_transition_smoothing",
+        "benchmark_hmm_state_multiplier_floor",
+        "benchmark_hmm_state_multiplier_cap",
+        "benchmark_hmm_tail_adjustment_enabled",
+        "benchmark_hmm_tail_multiplier_cap",
         "benchmark_agents_to_compare",
     }
 
@@ -312,8 +339,8 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("strike must be > 0")
 
     instrument_model = str(config.get("instrument_model", "gbm")).strip().lower()
-    if instrument_model not in {"gbm", "garch", "student_t"}:
-        raise ValueError("instrument_model must be one of {'gbm','garch','student_t'}.")
+    if instrument_model not in {"gbm", "garch", "hmm_garch", "student_t"}:
+        raise ValueError("instrument_model must be one of {'gbm','garch','hmm_garch','student_t'}.")
 
     if int(config["eval_paths"]) <= 0:
         raise ValueError("eval_paths must be > 0")
@@ -343,6 +370,46 @@ def validate_config(config: dict[str, Any]) -> None:
         seq_out = str(config["sequence_output_mode"]).strip().lower()
         if seq_out not in {"trade", "position"}:
             raise ValueError("sequence_output_mode must be 'trade' or 'position'.")
+    if "wavenet_num_filters" in config:
+        if int(config["wavenet_num_filters"]) <= 0:
+            raise ValueError("wavenet_num_filters must be > 0.")
+    if "wavenet_num_residual_blocks" in config:
+        if int(config["wavenet_num_residual_blocks"]) <= 0:
+            raise ValueError("wavenet_num_residual_blocks must be > 0.")
+    if "wavenet_activation" in config and not str(config["wavenet_activation"]).strip():
+        raise ValueError("wavenet_activation cannot be empty when provided.")
+    if "wavenet_use_skip_connections" in config and not isinstance(config["wavenet_use_skip_connections"], bool):
+        raise ValueError("wavenet_use_skip_connections must be bool when provided.")
+    if "wavenet_output_hidden_filters" in config:
+        if int(config["wavenet_output_hidden_filters"]) < 0:
+            raise ValueError("wavenet_output_hidden_filters must be >= 0.")
+    if "wavenet_block_configs" in config:
+        blocks = config["wavenet_block_configs"]
+        if not isinstance(blocks, list) or len(blocks) == 0:
+            raise ValueError("wavenet_block_configs must be a non-empty list when provided.")
+        for i, block in enumerate(blocks):
+            if not isinstance(block, dict):
+                raise ValueError(f"wavenet_block_configs[{i}] must be an object.")
+            if "filters" not in block or "kernel_size" not in block:
+                raise ValueError(
+                    f"wavenet_block_configs[{i}] must include 'filters' and 'kernel_size'."
+                )
+            if int(block["filters"]) <= 0:
+                raise ValueError(f"wavenet_block_configs[{i}].filters must be > 0.")
+            if int(block["kernel_size"]) <= 0:
+                raise ValueError(f"wavenet_block_configs[{i}].kernel_size must be > 0.")
+            if "dilation_rate" in block and int(block["dilation_rate"]) <= 0:
+                raise ValueError(f"wavenet_block_configs[{i}].dilation_rate must be > 0.")
+            if "dropout" in block:
+                d = float(block["dropout"])
+                if d < 0.0 or d >= 1.0:
+                    raise ValueError(
+                        f"wavenet_block_configs[{i}].dropout must satisfy 0 <= dropout < 1."
+                    )
+            if "activation" in block and not str(block["activation"]).strip():
+                raise ValueError(
+                    f"wavenet_block_configs[{i}].activation cannot be empty when provided."
+                )
     if "position_activation" in config:
         pos_act = str(config["position_activation"]).strip().lower()
         if pos_act not in {"linear", "sigmoid", "tanh"}:
@@ -423,14 +490,32 @@ def validate_config(config: dict[str, Any]) -> None:
                 )
 
     delta_sigma_mode = str(config.get("benchmark_delta_sigma_mode", "none")).strip().lower()
-    if delta_sigma_mode not in {"none", "garch_context_static", "garch_context_stepwise"}:
+    if delta_sigma_mode not in {
+        "none",
+        "garch_context_static",
+        "garch_context_stepwise",
+        "hmm_garch_student_context_stepwise",
+    }:
         raise ValueError(
-            "benchmark_delta_sigma_mode must be one of {'none','garch_context_static','garch_context_stepwise'}."
+            "benchmark_delta_sigma_mode must be one of "
+            "{'none','garch_context_static','garch_context_stepwise','hmm_garch_student_context_stepwise'}."
         )
     if delta_sigma_mode != "none":
-        if str(config["benchmark_agent_name"]).strip() != "DeltaHedgingAgent":
+        benchmark_name = str(config["benchmark_agent_name"]).strip()
+        allowed_sigma_benchmarks = {
+            "DeltaHedgingAgent",
+            "LocalRiskMinimizationAgent",
+            "GeometricAsianDeltaHedgingAgent",
+            "GeometricAsianDeltaHedgingAgent2",
+            "GeometricAsianNumericalDeltaHedgingAgent",
+            "QuantlibAsianGeometricAgent",
+            "ArithmeticAsianMonteCarloAgent",
+            "ArithmeticAsianControlVariateAgent",
+        }
+        if benchmark_name not in allowed_sigma_benchmarks:
             raise ValueError(
-                "benchmark_delta_sigma_mode != 'none' requires benchmark_agent_name='DeltaHedgingAgent'."
+                "benchmark_delta_sigma_mode != 'none' requires "
+                "a sigma-aware benchmark agent."
             )
         if "benchmark_delta_sigma_garch_fit_from_context" in config and not isinstance(
             config["benchmark_delta_sigma_garch_fit_from_context"], bool
@@ -469,6 +554,22 @@ def validate_config(config: dict[str, Any]) -> None:
         if "benchmark_delta_sigma_default" in config and config["benchmark_delta_sigma_default"] is not None:
             if float(config["benchmark_delta_sigma_default"]) <= 0.0:
                 raise ValueError("benchmark_delta_sigma_default must be > 0 when provided.")
+        if delta_sigma_mode == "hmm_garch_student_context_stepwise":
+            hmm_states = int(config.get("benchmark_hmm_num_states", 3))
+            if hmm_states < 2:
+                raise ValueError("benchmark_hmm_num_states must be >= 2.")
+            hmm_smoothing = float(config.get("benchmark_hmm_transition_smoothing", 1.0))
+            if hmm_smoothing < 0.0:
+                raise ValueError("benchmark_hmm_transition_smoothing must be >= 0.")
+            mult_floor = float(config.get("benchmark_hmm_state_multiplier_floor", 0.35))
+            mult_cap = float(config.get("benchmark_hmm_state_multiplier_cap", 3.5))
+            if mult_floor <= 0.0 or mult_cap <= mult_floor:
+                raise ValueError(
+                    "Require 0 < benchmark_hmm_state_multiplier_floor < benchmark_hmm_state_multiplier_cap."
+                )
+            tail_cap = float(config.get("benchmark_hmm_tail_multiplier_cap", 1.6))
+            if tail_cap < 1.0:
+                raise ValueError("benchmark_hmm_tail_multiplier_cap must be >= 1.")
 
     if "benchmark_delta_student_t_fit_enabled" in config and not isinstance(
         config["benchmark_delta_student_t_fit_enabled"], bool
@@ -585,7 +686,7 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError(f"{param_name} values must be > {float(min_exclusive)}.")
         return mode, values
 
-    if instrument_model == "garch":
+    if instrument_model in {"garch", "hmm_garch"}:
         _, alpha_vals = _validate_mode_for_param("garch_alpha", 0.05, min_inclusive=0.0)
         _, beta_vals = _validate_mode_for_param("garch_beta", 0.9, min_inclusive=0.0)
         _, lev_vals = _validate_mode_for_param("garch_leverage", 0.0, min_inclusive=0.0)
@@ -604,6 +705,77 @@ def validate_config(config: dict[str, Any]) -> None:
             _validate_mode_for_param("garch_student_t_df", 8.0, min_exclusive=2.0)
         if any(not np.isfinite(float(v)) for v in r_vals):
             raise ValueError("r values must be finite.")
+        if instrument_model == "hmm_garch":
+            legacy_hmm_keys = [
+                k
+                for k in config.keys()
+                if k.startswith("hmm_p_") or k.startswith("hmm_vol_multiplier_")
+            ]
+            if legacy_hmm_keys:
+                raise ValueError(
+                    "Legacy HMM scalar keys are no longer supported. "
+                    f"Remove: {sorted(legacy_hmm_keys)}"
+                )
+            hmm_mode = str(config.get("hmm_params_per_path_mode", "fixed")).strip().lower()
+            if hmm_mode not in {"fixed", "uniform_random"}:
+                raise ValueError("hmm_params_per_path_mode must be one of {'fixed','uniform_random'}.")
+
+            if hmm_mode == "fixed":
+                tm = config.get("hmm_transition_matrix")
+                pi = config.get("hmm_initial_distribution")
+                mult = config.get("hmm_vol_multipliers")
+                if tm is None or pi is None or mult is None:
+                    raise ValueError(
+                        "instrument_model='hmm_garch' with hmm_params_per_path_mode='fixed' "
+                        "requires: hmm_transition_matrix, hmm_initial_distribution, hmm_vol_multipliers."
+                    )
+                tm_arr = np.asarray(tm, dtype=np.float64)
+                pi_arr = np.asarray(pi, dtype=np.float64).reshape(-1)
+                mult_arr = np.asarray(mult, dtype=np.float64).reshape(-1)
+                if tm_arr.ndim != 2 or tm_arr.shape[0] != tm_arr.shape[1]:
+                    raise ValueError("hmm_transition_matrix must be a square matrix (KxK).")
+                k = int(tm_arr.shape[0])
+                if k < 2:
+                    raise ValueError("hmm_transition_matrix must have K >= 2.")
+                if pi_arr.shape[0] != k:
+                    raise ValueError("hmm_initial_distribution length must match hmm_transition_matrix size.")
+                if mult_arr.shape[0] != k:
+                    raise ValueError("hmm_vol_multipliers length must match hmm_transition_matrix size.")
+                if np.any(~np.isfinite(tm_arr)) or np.any(tm_arr < 0.0):
+                    raise ValueError("hmm_transition_matrix must contain finite entries >= 0.")
+                row_sums = np.sum(tm_arr, axis=1)
+                if np.any(row_sums <= 0.0):
+                    raise ValueError("Each row of hmm_transition_matrix must sum to > 0.")
+                if np.any(~np.isfinite(pi_arr)) or np.any(pi_arr < 0.0):
+                    raise ValueError("hmm_initial_distribution must contain finite entries >= 0.")
+                if float(np.sum(pi_arr)) <= 0.0:
+                    raise ValueError("hmm_initial_distribution must sum to > 0.")
+                if np.any(~np.isfinite(mult_arr)) or np.any(mult_arr <= 0.0):
+                    raise ValueError("hmm_vol_multipliers must contain finite entries > 0.")
+            else:
+                if "hmm_num_states" not in config:
+                    raise ValueError("hmm_num_states is required when hmm_params_per_path_mode='uniform_random'.")
+                k = int(config["hmm_num_states"])
+                if k < 2:
+                    raise ValueError("hmm_num_states must be >= 2.")
+                t_lo = float(config.get("hmm_transition_uniform_low", 0.0))
+                t_hi = float(config.get("hmm_transition_uniform_high", 1.0))
+                if t_lo < 0.0 or t_hi <= t_lo:
+                    raise ValueError("Require 0 <= hmm_transition_uniform_low < hmm_transition_uniform_high.")
+                i_lo = float(config.get("hmm_initial_uniform_low", 0.0))
+                i_hi = float(config.get("hmm_initial_uniform_high", 1.0))
+                if i_lo < 0.0 or i_hi <= i_lo:
+                    raise ValueError("Require 0 <= hmm_initial_uniform_low < hmm_initial_uniform_high.")
+                m_lo = float(config.get("hmm_vol_multipliers_uniform_low", 0.5))
+                m_hi = float(config.get("hmm_vol_multipliers_uniform_high", 2.0))
+                if m_lo <= 0.0 or m_hi <= m_lo:
+                    raise ValueError(
+                        "Require 0 < hmm_vol_multipliers_uniform_low < hmm_vol_multipliers_uniform_high."
+                    )
+                if "hmm_vol_multipliers_sort" in config and not isinstance(
+                    config["hmm_vol_multipliers_sort"], bool
+                ):
+                    raise ValueError("hmm_vol_multipliers_sort must be bool when provided.")
 
     if instrument_model == "student_t":
         df_mode = str(config.get("student_t_df_per_path_mode", "fixed")).strip().lower()
@@ -1208,6 +1380,22 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     delta_sigma_default = _resolve_float_override(
         config, "benchmark_delta_sigma_default", float(calib.sigma_train)
     )
+    benchmark_hmm_num_states = int(config.get("benchmark_hmm_num_states", 3))
+    benchmark_hmm_transition_smoothing = float(
+        config.get("benchmark_hmm_transition_smoothing", 1.0)
+    )
+    benchmark_hmm_state_multiplier_floor = float(
+        config.get("benchmark_hmm_state_multiplier_floor", 0.35)
+    )
+    benchmark_hmm_state_multiplier_cap = float(
+        config.get("benchmark_hmm_state_multiplier_cap", 3.5)
+    )
+    benchmark_hmm_tail_adjustment_enabled = bool(
+        config.get("benchmark_hmm_tail_adjustment_enabled", True)
+    )
+    benchmark_hmm_tail_multiplier_cap = float(
+        config.get("benchmark_hmm_tail_multiplier_cap", 1.6)
+    )
     fit_delta_student_t = bool(config.get("benchmark_delta_student_t_fit_enabled", False))
     delta_student_t_mode = str(config.get("benchmark_delta_student_t_mode", "static")).strip().lower()
     delta_student_t_min_obs = int(config.get("benchmark_delta_student_t_min_obs", 10))
@@ -1436,21 +1624,52 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                     f"beta mean={float(np.mean(garch_beta_for_delta)):.6f}, "
                     f"leverage mean={float(np.mean(garch_leverage_for_delta)):.6f}"
                 )
-            per_path_sigma = estimate_pathwise_garch_sigma_from_context(
-                hedge_paths_2d=eval_paths_2d,
-                pre_history_prices_2d=pre_hist_for_sigma,
-                context_days=int(delta_sigma_context_days),
-                mode=garch_mode,
-                trading_days_per_year=int(config["trading_days_per_year"]),
-                garch_alpha=garch_alpha_for_delta,
-                garch_beta=garch_beta_for_delta,
-                garch_leverage=garch_leverage_for_delta,
-                garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
-                min_obs=int(delta_sigma_min_obs),
-                default_sigma=float(delta_sigma_default),
-                sigma_floor=float(delta_sigma_floor),
-                sigma_cap=None if delta_sigma_cap is None else float(delta_sigma_cap),
-            )
+            hmm_states_stepwise = None
+            if delta_sigma_mode == "hmm_garch_student_context_stepwise":
+                hmm_ctx = estimate_pathwise_hmm_garch_student_sigma_from_context(
+                    hedge_paths_2d=eval_paths_2d,
+                    pre_history_prices_2d=pre_hist_for_sigma,
+                    context_days=int(delta_sigma_context_days),
+                    trading_days_per_year=int(config["trading_days_per_year"]),
+                    garch_alpha=garch_alpha_for_delta,
+                    garch_beta=garch_beta_for_delta,
+                    garch_leverage=garch_leverage_for_delta,
+                    garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
+                    fit_garch_params_from_context=False,
+                    min_obs=int(delta_sigma_min_obs),
+                    default_sigma=float(delta_sigma_default),
+                    sigma_floor=float(delta_sigma_floor),
+                    sigma_cap=None if delta_sigma_cap is None else float(delta_sigma_cap),
+                    student_t_min_obs=int(delta_student_t_min_obs),
+                    student_t_df_default=float(delta_student_t_df_default),
+                    student_t_df_floor=float(delta_student_t_df_floor),
+                    student_t_df_cap=float(delta_student_t_df_cap),
+                    hmm_num_states=int(benchmark_hmm_num_states),
+                    hmm_transition_smoothing=float(benchmark_hmm_transition_smoothing),
+                    hmm_state_multiplier_floor=float(benchmark_hmm_state_multiplier_floor),
+                    hmm_state_multiplier_cap=float(benchmark_hmm_state_multiplier_cap),
+                    hmm_tail_adjustment_enabled=bool(benchmark_hmm_tail_adjustment_enabled),
+                    hmm_tail_multiplier_cap=float(benchmark_hmm_tail_multiplier_cap),
+                )
+                per_path_sigma = hmm_ctx["sigma_stepwise"]
+                per_path_student_t_df = hmm_ctx["student_t_df_stepwise"]
+                hmm_states_stepwise = hmm_ctx["hmm_states_stepwise"]
+            else:
+                per_path_sigma = estimate_pathwise_garch_sigma_from_context(
+                    hedge_paths_2d=eval_paths_2d,
+                    pre_history_prices_2d=pre_hist_for_sigma,
+                    context_days=int(delta_sigma_context_days),
+                    mode=garch_mode,
+                    trading_days_per_year=int(config["trading_days_per_year"]),
+                    garch_alpha=garch_alpha_for_delta,
+                    garch_beta=garch_beta_for_delta,
+                    garch_leverage=garch_leverage_for_delta,
+                    garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
+                    min_obs=int(delta_sigma_min_obs),
+                    default_sigma=float(delta_sigma_default),
+                    sigma_floor=float(delta_sigma_floor),
+                    sigma_cap=None if delta_sigma_cap is None else float(delta_sigma_cap),
+                )
             if np.ndim(per_path_sigma) == 1:
                 print(
                     f"[run:{run_name}] benchmark_delta_sigma_mode={delta_sigma_mode}: "
@@ -1463,7 +1682,14 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                     f"sigma_t0 mean={float(np.mean(sigma_t0)):.6f}, std={float(np.std(sigma_t0)):.6f}, "
                     f"steps={int(np.asarray(per_path_sigma).shape[1])}"
                 )
-            if fit_delta_student_t:
+            if delta_sigma_mode == "hmm_garch_student_context_stepwise" and per_path_student_t_df is not None:
+                df_t0 = np.asarray(per_path_student_t_df)[:, 0]
+                print(
+                    f"[run:{run_name}] benchmark_delta_student_t_fit enabled via hmm_garch_student mode: "
+                    f"df_t0 mean={float(np.mean(df_t0)):.6f}, std={float(np.std(df_t0)):.6f}, "
+                    f"steps={int(np.asarray(per_path_student_t_df).shape[1])}"
+                )
+            elif fit_delta_student_t:
                 per_path_student_t_df = fit_student_t_df_from_garch_context(
                     hedge_paths_2d=eval_paths_2d,
                     pre_history_prices_2d=pre_hist_for_sigma,
@@ -1493,6 +1719,21 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                         f"df_t0 mean={float(np.mean(df_t0)):.6f}, std={float(np.std(df_t0)):.6f}, "
                         f"steps={int(np.asarray(per_path_student_t_df).shape[1])}"
                     )
+            if hmm_states_stepwise is not None:
+                hmm_states_csv = os.path.join(dirs["tables_dir"], "hmm_states_window_stepwise.csv")
+                pd.DataFrame(np.asarray(hmm_states_stepwise, dtype=np.int32)).to_csv(
+                    hmm_states_csv, index=False
+                )
+                unique_states, counts_states = np.unique(
+                    np.asarray(hmm_states_stepwise)[:, 0], return_counts=True
+                )
+                state_summary = ", ".join(
+                    [f"state{int(s)}={int(c)}" for s, c in zip(unique_states, counts_states)]
+                )
+                print(
+                    f"[run:{run_name}] Saved HMM state path matrix: {hmm_states_csv}. "
+                    f"State mix at t0: {state_summary}"
+                )
 
         windows_meta["risk_free_window"] = per_path_r
         if np.ndim(per_path_sigma) == 1:
@@ -1583,21 +1824,54 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 f"beta mean={float(np.mean(garch_beta_for_delta)):.6f}, "
                 f"leverage mean={float(np.mean(garch_leverage_for_delta)):.6f}"
             )
-        per_path_sigma = estimate_pathwise_garch_sigma_from_context(
-            hedge_paths_2d=eval_paths_2d,
-            pre_history_prices_2d=None if pre_history_for_sigma is None else np.asarray(pre_history_for_sigma, dtype=np.float32),
-            context_days=int(delta_sigma_context_days),
-            mode=garch_mode,
-            trading_days_per_year=int(config["trading_days_per_year"]),
-            garch_alpha=garch_alpha_for_delta,
-            garch_beta=garch_beta_for_delta,
-            garch_leverage=garch_leverage_for_delta,
-            garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
-            min_obs=int(delta_sigma_min_obs),
-            default_sigma=float(delta_sigma_default),
-            sigma_floor=float(delta_sigma_floor),
-            sigma_cap=None if delta_sigma_cap is None else float(delta_sigma_cap),
-        )
+        hmm_states_stepwise = None
+        if delta_sigma_mode == "hmm_garch_student_context_stepwise":
+            hmm_ctx = estimate_pathwise_hmm_garch_student_sigma_from_context(
+                hedge_paths_2d=eval_paths_2d,
+                pre_history_prices_2d=None
+                if pre_history_for_sigma is None
+                else np.asarray(pre_history_for_sigma, dtype=np.float32),
+                context_days=int(delta_sigma_context_days),
+                trading_days_per_year=int(config["trading_days_per_year"]),
+                garch_alpha=garch_alpha_for_delta,
+                garch_beta=garch_beta_for_delta,
+                garch_leverage=garch_leverage_for_delta,
+                garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
+                fit_garch_params_from_context=False,
+                min_obs=int(delta_sigma_min_obs),
+                default_sigma=float(delta_sigma_default),
+                sigma_floor=float(delta_sigma_floor),
+                sigma_cap=None if delta_sigma_cap is None else float(delta_sigma_cap),
+                student_t_min_obs=int(delta_student_t_min_obs),
+                student_t_df_default=float(delta_student_t_df_default),
+                student_t_df_floor=float(delta_student_t_df_floor),
+                student_t_df_cap=float(delta_student_t_df_cap),
+                hmm_num_states=int(benchmark_hmm_num_states),
+                hmm_transition_smoothing=float(benchmark_hmm_transition_smoothing),
+                hmm_state_multiplier_floor=float(benchmark_hmm_state_multiplier_floor),
+                hmm_state_multiplier_cap=float(benchmark_hmm_state_multiplier_cap),
+                hmm_tail_adjustment_enabled=bool(benchmark_hmm_tail_adjustment_enabled),
+                hmm_tail_multiplier_cap=float(benchmark_hmm_tail_multiplier_cap),
+            )
+            per_path_sigma = hmm_ctx["sigma_stepwise"]
+            per_path_student_t_df = hmm_ctx["student_t_df_stepwise"]
+            hmm_states_stepwise = hmm_ctx["hmm_states_stepwise"]
+        else:
+            per_path_sigma = estimate_pathwise_garch_sigma_from_context(
+                hedge_paths_2d=eval_paths_2d,
+                pre_history_prices_2d=None if pre_history_for_sigma is None else np.asarray(pre_history_for_sigma, dtype=np.float32),
+                context_days=int(delta_sigma_context_days),
+                mode=garch_mode,
+                trading_days_per_year=int(config["trading_days_per_year"]),
+                garch_alpha=garch_alpha_for_delta,
+                garch_beta=garch_beta_for_delta,
+                garch_leverage=garch_leverage_for_delta,
+                garch_omega=None if delta_sigma_omega is None else float(delta_sigma_omega),
+                min_obs=int(delta_sigma_min_obs),
+                default_sigma=float(delta_sigma_default),
+                sigma_floor=float(delta_sigma_floor),
+                sigma_cap=None if delta_sigma_cap is None else float(delta_sigma_cap),
+            )
         if np.ndim(per_path_sigma) == 1:
             print(
                 f"[run:{run_name}] benchmark_delta_sigma_mode={delta_sigma_mode} (simulated): "
@@ -1610,7 +1884,14 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 f"sigma_t0 mean={float(np.mean(sigma_t0)):.6f}, std={float(np.std(sigma_t0)):.6f}, "
                 f"steps={int(np.asarray(per_path_sigma).shape[1])}"
             )
-        if fit_delta_student_t:
+        if delta_sigma_mode == "hmm_garch_student_context_stepwise" and per_path_student_t_df is not None:
+            df_t0 = np.asarray(per_path_student_t_df)[:, 0]
+            print(
+                f"[run:{run_name}] benchmark_delta_student_t_fit enabled via hmm_garch_student mode (simulated): "
+                f"df_t0 mean={float(np.mean(df_t0)):.6f}, std={float(np.std(df_t0)):.6f}, "
+                f"steps={int(np.asarray(per_path_student_t_df).shape[1])}"
+            )
+        elif fit_delta_student_t:
             per_path_student_t_df = fit_student_t_df_from_garch_context(
                 hedge_paths_2d=eval_paths_2d,
                 pre_history_prices_2d=None if pre_history_for_sigma is None else np.asarray(pre_history_for_sigma, dtype=np.float32),
@@ -1648,6 +1929,27 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 df_csv = os.path.join(dirs["tables_dir"], "student_t_df_simulated_stepwise.csv")
                 pd.DataFrame(np.asarray(per_path_student_t_df, dtype=np.float32)).to_csv(df_csv, index=False)
                 print(f"[run:{run_name}] Saved student-t df matrix: {df_csv}")
+        if hmm_states_stepwise is not None:
+            hmm_csv = os.path.join(dirs["tables_dir"], "hmm_states_simulated_stepwise.csv")
+            pd.DataFrame(np.asarray(hmm_states_stepwise, dtype=np.int32)).to_csv(hmm_csv, index=False)
+            unique_states, counts_states = np.unique(
+                np.asarray(hmm_states_stepwise)[:, 0], return_counts=True
+            )
+            state_summary = ", ".join(
+                [f"state{int(s)}={int(c)}" for s, c in zip(unique_states, counts_states)]
+            )
+            print(
+                f"[run:{run_name}] Saved HMM states (simulated): {hmm_csv}. "
+                f"State mix at t0: {state_summary}"
+            )
+
+    requested_pricing_method = str(config["pricing_method"]).strip().lower()
+    effective_pricing_method = "fixed"
+    if requested_pricing_method != "fixed":
+        print(
+            f"[run:{run_name}] [warning] pricing_method='{requested_pricing_method}' requested, "
+            "but forcing pricing_method='fixed' so all agents use the first-agent pathwise price."
+        )
 
     actions_cache_dir = None
     if bool(config.get("reuse_actions_between_steps", True)):
@@ -1659,7 +1961,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "benchmark_agent": str(config["benchmark_agent_name"]),
             "trained_agents": config["trained_agents"],
             "benchmark_agents_to_compare": config.get("benchmark_agents_to_compare", []),
-            "pricing_method": str(config["pricing_method"]),
+            "pricing_method": str(effective_pricing_method),
             "price_computation_mode": str(config.get("price_computation_mode", "pathwise_if_available")),
             "test_data_mode": str(config["test_data_mode"]),
             "risk_free_source": str(config["risk_free_source"]),
@@ -1677,6 +1979,12 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "benchmark_delta_sigma_garch_beta": config.get("benchmark_delta_sigma_garch_beta"),
             "benchmark_delta_sigma_garch_leverage": config.get("benchmark_delta_sigma_garch_leverage"),
             "benchmark_delta_sigma_garch_omega": config.get("benchmark_delta_sigma_garch_omega"),
+            "benchmark_hmm_num_states": config.get("benchmark_hmm_num_states"),
+            "benchmark_hmm_transition_smoothing": config.get("benchmark_hmm_transition_smoothing"),
+            "benchmark_hmm_state_multiplier_floor": config.get("benchmark_hmm_state_multiplier_floor"),
+            "benchmark_hmm_state_multiplier_cap": config.get("benchmark_hmm_state_multiplier_cap"),
+            "benchmark_hmm_tail_adjustment_enabled": config.get("benchmark_hmm_tail_adjustment_enabled"),
+            "benchmark_hmm_tail_multiplier_cap": config.get("benchmark_hmm_tail_multiplier_cap"),
             "instrument_model": str(config.get("instrument_model", "gbm")).strip().lower(),
             "r_per_path_mode": str(config.get("r_per_path_mode", "fixed")),
             "r_uniform_low": config.get("r_uniform_low"),
@@ -1714,6 +2022,18 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "garch_student_t_df_uniform_high": config.get("garch_student_t_df_uniform_high"),
             "garch_student_t_df_discrete_values": config.get("garch_student_t_df_discrete_values"),
             "garch_student_t_df_discrete_probs": config.get("garch_student_t_df_discrete_probs"),
+            "hmm_transition_matrix": config.get("hmm_transition_matrix"),
+            "hmm_initial_distribution": config.get("hmm_initial_distribution"),
+            "hmm_vol_multipliers": config.get("hmm_vol_multipliers"),
+            "hmm_params_per_path_mode": str(config.get("hmm_params_per_path_mode", "fixed")),
+            "hmm_num_states": config.get("hmm_num_states"),
+            "hmm_transition_uniform_low": config.get("hmm_transition_uniform_low"),
+            "hmm_transition_uniform_high": config.get("hmm_transition_uniform_high"),
+            "hmm_initial_uniform_low": config.get("hmm_initial_uniform_low"),
+            "hmm_initial_uniform_high": config.get("hmm_initial_uniform_high"),
+            "hmm_vol_multipliers_uniform_low": config.get("hmm_vol_multipliers_uniform_low"),
+            "hmm_vol_multipliers_uniform_high": config.get("hmm_vol_multipliers_uniform_high"),
+            "hmm_vol_multipliers_sort": config.get("hmm_vol_multipliers_sort"),
             "student_t_df": config.get("student_t_df"),
             "student_t_df_per_path_mode": str(config.get("student_t_df_per_path_mode", "fixed")),
             "student_t_df_uniform_low": config.get("student_t_df_uniform_low"),
@@ -1767,7 +2087,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             min_x=float(config["plot_min_x"]),
             max_x=float(config["plot_max_x"]),
             language="es",
-            pricing_method=str(config["pricing_method"]),
+            pricing_method=str(effective_pricing_method),
             price_computation_mode=str(config.get("price_computation_mode", "pathwise_if_available")),
             agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
             progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
@@ -1798,7 +2118,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         min_x=float(config["plot_min_x"]),
         max_x=float(config["plot_max_x"]),
         language="es",
-        pricing_method=str(config["pricing_method"]),
+        pricing_method=str(effective_pricing_method),
         price_computation_mode=str(config.get("price_computation_mode", "pathwise_if_available")),
         agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
         progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
@@ -1865,7 +2185,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             per_path_sigma=per_path_sigma,
             plot_histograms=False,
             language="es",
-            pricing_method=str(config["pricing_method"]),
+            pricing_method=str(effective_pricing_method),
             price_computation_mode=str(config.get("price_computation_mode", "pathwise_if_available")),
             batch_size=int(config["bootstrap_batch_size"]),
             bootstrap_method=str(config["bootstrap_method"]),
@@ -1892,6 +2212,23 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 "benchmark_delta_sigma_garch_fit_from_context": bool(
                     config.get("benchmark_delta_sigma_garch_fit_from_context", False)
                 ),
+                "benchmark_hmm_num_states": int(config.get("benchmark_hmm_num_states", 3)),
+                "benchmark_hmm_transition_smoothing": float(
+                    config.get("benchmark_hmm_transition_smoothing", 1.0)
+                ),
+                "benchmark_hmm_state_multiplier_floor": float(
+                    config.get("benchmark_hmm_state_multiplier_floor", 0.35)
+                ),
+                "benchmark_hmm_state_multiplier_cap": float(
+                    config.get("benchmark_hmm_state_multiplier_cap", 3.5)
+                ),
+                "benchmark_hmm_tail_adjustment_enabled": bool(
+                    config.get("benchmark_hmm_tail_adjustment_enabled", True)
+                ),
+                "benchmark_hmm_tail_multiplier_cap": float(
+                    config.get("benchmark_hmm_tail_multiplier_cap", 1.6)
+                ),
+                "pricing_method_effective": str(effective_pricing_method),
                 "historical_sigma_window_days": _historical_sigma_window_days(config),
                 "use_price_history_context": bool(config.get("use_price_history_context", False)),
                 "context_for_path_generation_only": bool(config.get("context_for_path_generation_only", False)),
@@ -1937,6 +2274,18 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 "garch_student_t_df_uniform_high": config.get("garch_student_t_df_uniform_high"),
                 "garch_student_t_df_discrete_values": json.dumps(config.get("garch_student_t_df_discrete_values")),
                 "garch_student_t_df_discrete_probs": json.dumps(config.get("garch_student_t_df_discrete_probs")),
+                "hmm_transition_matrix": json.dumps(config.get("hmm_transition_matrix")),
+                "hmm_initial_distribution": json.dumps(config.get("hmm_initial_distribution")),
+                "hmm_vol_multipliers": json.dumps(config.get("hmm_vol_multipliers")),
+                "hmm_params_per_path_mode": str(config.get("hmm_params_per_path_mode", "fixed")),
+                "hmm_num_states": config.get("hmm_num_states"),
+                "hmm_transition_uniform_low": config.get("hmm_transition_uniform_low"),
+                "hmm_transition_uniform_high": config.get("hmm_transition_uniform_high"),
+                "hmm_initial_uniform_low": config.get("hmm_initial_uniform_low"),
+                "hmm_initial_uniform_high": config.get("hmm_initial_uniform_high"),
+                "hmm_vol_multipliers_uniform_low": config.get("hmm_vol_multipliers_uniform_low"),
+                "hmm_vol_multipliers_uniform_high": config.get("hmm_vol_multipliers_uniform_high"),
+                "hmm_vol_multipliers_sort": config.get("hmm_vol_multipliers_sort"),
                 "student_t_df": config.get("student_t_df"),
                 "student_t_df_per_path_mode": str(config.get("student_t_df_per_path_mode", "fixed")),
                 "student_t_df_uniform_low": config.get("student_t_df_uniform_low"),
@@ -1980,6 +2329,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         "benchmark_agents_to_compare": config.get("benchmark_agents_to_compare", []),
         "eval_paths_requested": int(config["eval_paths"]),
         "test_data_mode": str(config["test_data_mode"]),
+        "pricing_method_effective": str(effective_pricing_method),
         "price_computation_mode": str(config.get("price_computation_mode", "pathwise_if_available")),
         "sigma_mode": _sigma_mode(config),
         "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
@@ -1987,6 +2337,8 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         "benchmark_delta_sigma_garch_fit_from_context": bool(
             config.get("benchmark_delta_sigma_garch_fit_from_context", False)
         ),
+        "benchmark_hmm_num_states": int(config.get("benchmark_hmm_num_states", 3)),
+        "benchmark_hmm_transition_smoothing": float(config.get("benchmark_hmm_transition_smoothing", 1.0)),
         "benchmark_delta_student_t_fit_enabled": bool(config.get("benchmark_delta_student_t_fit_enabled", False)),
         "benchmark_delta_student_t_mode": str(config.get("benchmark_delta_student_t_mode", "static")),
         "historical_sigma_window_days": _historical_sigma_window_days(config),

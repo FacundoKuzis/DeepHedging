@@ -47,7 +47,12 @@ from DeepHedging.ContingentClaims import (
 )
 from DeepHedging.CostFunctions import ProportionalCost
 from DeepHedging.Environments import Environment
-from DeepHedging.HedgingInstruments import GBMStock, StudentTStock, GARCHStock
+from DeepHedging.HedgingInstruments import (
+    GBMStock,
+    StudentTStock,
+    GARCHStock,
+    HMMMatrixGARCHStock,
+)
 from DeepHedging.RiskMeasures import CVaR, MAE, Mean, StdDev, WorstCase
 from DeepHedging.RiskMeasures import MSE
 
@@ -294,6 +299,33 @@ def _garch_param_kwargs_from_config(config: dict[str, Any]) -> dict[str, Any]:
     return kwargs
 
 
+def _hmm_matrix_kwargs_from_config(config: dict[str, Any]) -> dict[str, Any]:
+    mode = str(config.get("hmm_params_per_path_mode", "fixed")).strip().lower()
+    kwargs: dict[str, Any] = {
+        "hmm_params_per_path_mode": mode,
+    }
+    if mode == "fixed":
+        kwargs["hmm_transition_matrix"] = config.get("hmm_transition_matrix")
+        kwargs["hmm_initial_distribution"] = config.get("hmm_initial_distribution")
+        kwargs["hmm_vol_multipliers"] = config.get("hmm_vol_multipliers")
+    elif mode == "uniform_random":
+        kwargs["hmm_num_states"] = int(config["hmm_num_states"])
+        kwargs["hmm_transition_uniform_low"] = float(config.get("hmm_transition_uniform_low", 0.0))
+        kwargs["hmm_transition_uniform_high"] = float(config.get("hmm_transition_uniform_high", 1.0))
+        kwargs["hmm_initial_uniform_low"] = float(config.get("hmm_initial_uniform_low", 0.0))
+        kwargs["hmm_initial_uniform_high"] = float(config.get("hmm_initial_uniform_high", 1.0))
+        kwargs["hmm_vol_multipliers_uniform_low"] = float(
+            config.get("hmm_vol_multipliers_uniform_low", 0.5)
+        )
+        kwargs["hmm_vol_multipliers_uniform_high"] = float(
+            config.get("hmm_vol_multipliers_uniform_high", 2.0)
+        )
+        kwargs["hmm_vol_multipliers_sort"] = bool(config.get("hmm_vol_multipliers_sort", True))
+    else:
+        raise ValueError("hmm_params_per_path_mode must be one of {'fixed','uniform_random'}.")
+    return kwargs
+
+
 def build_instrument_from_config(config: dict[str, Any]):
     n = int(config["n"])
     trading_days = int(config["trading_days_per_year"])
@@ -321,6 +353,21 @@ def build_instrument_from_config(config: dict[str, Any]):
             **sigma_kwargs,
             **r_kwargs,
             **garch_kwargs,
+        )
+
+    if instrument_model == "hmm_garch":
+        garch_kwargs = _garch_param_kwargs_from_config(config)
+        r_kwargs = _path_r_kwargs_from_config(config=config, base_r=float(config["r"]))
+        hmm_kwargs = _hmm_matrix_kwargs_from_config(config)
+        return HMMMatrixGARCHStock(
+            S0=float(config["s0"]),
+            T=t,
+            N=n,
+            r=float(config["r"]),
+            **sigma_kwargs,
+            **r_kwargs,
+            **garch_kwargs,
+            **hmm_kwargs,
         )
 
     if instrument_model == "student_t":
@@ -359,7 +406,7 @@ def build_instrument_from_config(config: dict[str, Any]):
             **student_t_kwargs,
         )
 
-    raise ValueError("instrument_model must be one of {'gbm','garch','student_t'}.")
+    raise ValueError("instrument_model must be one of {'gbm','garch','hmm_garch','student_t'}.")
 
 
 def build_claim_from_config(config: dict[str, Any]):
@@ -449,6 +496,14 @@ def build_agent_from_config(
             kwargs["num_filters"] = int(config["wavenet_num_filters"])
         if "num_residual_blocks" in init_params and "wavenet_num_residual_blocks" in config:
             kwargs["num_residual_blocks"] = int(config["wavenet_num_residual_blocks"])
+        if "wavenet_block_configs" in init_params and "wavenet_block_configs" in config:
+            kwargs["wavenet_block_configs"] = config["wavenet_block_configs"]
+        if "wavenet_activation" in init_params and "wavenet_activation" in config:
+            kwargs["wavenet_activation"] = str(config["wavenet_activation"]).strip().lower()
+        if "wavenet_use_skip_connections" in init_params and "wavenet_use_skip_connections" in config:
+            kwargs["wavenet_use_skip_connections"] = bool(config["wavenet_use_skip_connections"])
+        if "wavenet_output_hidden_filters" in init_params and "wavenet_output_hidden_filters" in config:
+            kwargs["wavenet_output_hidden_filters"] = int(config["wavenet_output_hidden_filters"])
         if "sequence_output_mode" in init_params:
             kwargs["sequence_output_mode"] = str(
                 config.get("sequence_output_mode", "trade")

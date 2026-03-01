@@ -1,0 +1,9 @@
+{
+  "extends": "../../../../../B2/asian_arith_hmm_garch_t/stress/wavenet_ctx50_conv/train/deeper_mse.json",
+  "run_name": "b3_asian_arith_hmm_garch_t_wavenet_ctx100_conv_deeper_mse_train",
+  "description": "B3 train: same B2 WaveNet architecture but with 100-step seen context for Asian arithmetic under HMM+GARCH+t.",
+  "model_name": "b3_asian_arith_hmm_garch_t_wavenet_ctx100_conv_deeper_mse",
+  "context_length": 100,
+  "batch_size": 700,
+  "val_paths": 1000
+}

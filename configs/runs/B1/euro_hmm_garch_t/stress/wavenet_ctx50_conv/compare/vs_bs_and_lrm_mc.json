@@ -1,0 +1,25 @@
+{
+  "extends": "./vs_bs_est_sigma_ctx50.json",
+  "run_name": "b1_euro_hmm_garch_t_wavenet_ctx50_conv_vs_bs_and_lrm_mc_cmp",
+  "description": "B1 compare: add LRM MonteCarlo benchmark over the same HMM+GARCH+t paths.",
+  "pricing_method": "fixed",
+  "benchmark_agents_to_compare": [
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM MC",
+      "config_overrides": {
+        "benchmark_lrm_provider": "monte_carlo",
+        "benchmark_lrm_outer_paths": 96,
+        "benchmark_lrm_mc_inner_paths": 192,
+        "benchmark_lrm_mc_inner_chunk_size": 512,
+        "benchmark_lrm_mc_parallel_enabled": true,
+        "benchmark_lrm_mc_n_workers": 8,
+        "benchmark_lrm_mc_parallel_backend": "thread",
+        "benchmark_lrm_mc_parallel_chunk_size": 16384,
+        "benchmark_lrm_verbose": true,
+        "benchmark_lrm_log_every_t": 10,
+        "benchmark_lrm_mc_log_every_chunks": 150
+      }
+    }
+  ]
+}

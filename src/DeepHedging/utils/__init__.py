@@ -33,3 +33,6 @@ from DeepHedging.utils.lrm_providers import (
     MonteCarloContinuationProvider,
     LSMContinuationProvider,
 )
+from DeepHedging.utils.hmm_garch_context_sigma import (
+    estimate_pathwise_hmm_garch_student_sigma_from_context,
+)

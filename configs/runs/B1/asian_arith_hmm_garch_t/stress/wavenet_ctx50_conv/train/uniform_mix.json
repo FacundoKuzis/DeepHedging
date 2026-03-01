@@ -1,0 +1,8 @@
+{
+  "extends": "../../../../euro_hmm_garch_t/stress/wavenet_ctx50_conv/train/uniform_mix.json",
+  "run_name": "b1_asian_arith_hmm_garch_t_wavenet_ctx50_conv_train",
+  "description": "B1 train: WaveNet+ctx50 Conv for Asian arithmetic claim under HMM+GARCH+Student-t random pathwise params.",
+  "model_name": "b1_asian_arith_hmm_garch_t_wavenet_ctx50_conv",
+  "contingent_claim": "AsianArithmeticCall",
+  "fixing_indices": null
+}

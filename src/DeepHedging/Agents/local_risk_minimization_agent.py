@@ -151,18 +151,34 @@ class LocalRiskMinimizationAgent(DeltaHedgingAgent):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{ts}] [lrm][agent:{self.name}] {message}")
 
-    def _resolve_path_vector(self, values, batch_size: int, default: float) -> np.ndarray:
+    def _resolve_path_vector(
+        self,
+        values,
+        batch_size: int,
+        default: float,
+        allow_matrix: bool = False,
+    ) -> np.ndarray:
         if values is None:
             return np.full((batch_size,), float(default), dtype=np.float64)
         arr = np.asarray(values, dtype=np.float64)
         if arr.ndim == 0:
             return np.full((batch_size,), float(arr), dtype=np.float64)
-        arr = arr.reshape(-1)
-        if arr.shape[0] != int(batch_size):
-            raise ValueError(
-                f"Path-wise vector length mismatch: expected {batch_size}, got {arr.shape[0]}."
-            )
-        return arr
+        if arr.ndim == 1:
+            arr = arr.reshape(-1)
+            if arr.shape[0] != int(batch_size):
+                raise ValueError(
+                    f"Path-wise vector length mismatch: expected {batch_size}, got {arr.shape[0]}."
+                )
+            return arr
+        if allow_matrix and arr.ndim == 2:
+            if arr.shape[0] != int(batch_size):
+                raise ValueError(
+                    f"Path-wise matrix batch mismatch: expected {batch_size}, got {arr.shape[0]}."
+                )
+            return arr
+        raise ValueError(
+            f"Unsupported path-wise shape {arr.shape}. Expected scalar, (batch,) or (batch, n_steps)."
+        )
 
     def process_batch(
         self,
@@ -196,9 +212,18 @@ class LocalRiskMinimizationAgent(DeltaHedgingAgent):
 
         r_vec = self._resolve_path_vector(batch_path_r, batch_size=batch_size, default=float(self.r))
         sigma_vec = np.maximum(
-            self._resolve_path_vector(batch_path_sigma, batch_size=batch_size, default=float(self.sigma)),
+            self._resolve_path_vector(
+                batch_path_sigma,
+                batch_size=batch_size,
+                default=float(self.sigma),
+                allow_matrix=True,
+            ),
             1e-8,
         )
+        if sigma_vec.ndim == 2 and int(sigma_vec.shape[1]) < n_steps:
+            raise ValueError(
+                f"batch_path_sigma timestep mismatch for LRM: expected at least {n_steps}, got {sigma_vec.shape[1]}."
+            )
 
         self.reset_last_delta(batch_size)
         all_actions = []
@@ -214,6 +239,7 @@ class LocalRiskMinimizationAgent(DeltaHedgingAgent):
             step_start = time.perf_counter()
             spot_t = path_np[:, t]
             prefix_t = path_np[:, : t + 1]
+            sigma_t = sigma_vec[:, t] if sigma_vec.ndim == 2 else sigma_vec
 
             target_delta = compute_lrm_target_batch(
                 spot_t=spot_t,
@@ -221,7 +247,7 @@ class LocalRiskMinimizationAgent(DeltaHedgingAgent):
                 dt=float(self.dt),
                 provider=self.continuation_provider,
                 per_path_r=r_vec,
-                per_path_sigma=sigma_vec,
+                per_path_sigma=sigma_t,
                 path_prefix=prefix_t,
                 outer_paths=int(self.lrm_outer_paths),
                 var_epsilon=float(self.lrm_var_epsilon),
@@ -269,10 +295,19 @@ class LocalRiskMinimizationAgent(DeltaHedgingAgent):
         n = int(s0.shape[0])
 
         r = self._resolve_path_vector(path_r, batch_size=n, default=float(self.r))
-        sigma = np.maximum(
-            self._resolve_path_vector(path_sigma, batch_size=n, default=float(self.sigma)),
-            1e-8,
+        sigma_resolved = self._resolve_path_vector(
+            path_sigma,
+            batch_size=n,
+            default=float(self.sigma),
+            allow_matrix=True,
         )
+        # For pricing at t0, if caller provides stepwise sigma surface (batch, n_steps),
+        # use the first decision-time sigma per path.
+        if isinstance(sigma_resolved, np.ndarray) and sigma_resolved.ndim == 2:
+            if int(sigma_resolved.shape[1]) < 1:
+                raise ValueError("path_sigma matrix must have at least one column.")
+            sigma_resolved = sigma_resolved[:, 0]
+        sigma = np.maximum(np.asarray(sigma_resolved, dtype=np.float64), 1e-8)
 
         provider = self.continuation_provider
         if isinstance(provider, type(None)):

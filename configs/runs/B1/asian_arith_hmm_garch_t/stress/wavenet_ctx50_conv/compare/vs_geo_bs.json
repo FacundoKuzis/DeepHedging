@@ -1,0 +1,30 @@
+{
+  "extends": "../../../../euro_hmm_garch_t/stress/wavenet_ctx50_conv/compare/vs_bs_est_sigma_ctx50.json",
+  "run_name": "b1_asian_arith_hmm_garch_t_wavenet_ctx50_conv_vs_geo_bs_cmp",
+  "description": "B1 compare: trained WaveNet (Asian arithmetic) vs Geometric Asian delta benchmark under same HMM+GARCH+t world.",
+  "contingent_claim": "AsianArithmeticCall",
+  "benchmark_agent_name": "GeometricAsianDeltaHedgingAgent",
+  "benchmark_lrm_provider": "asian_monte_carlo",
+  "benchmark_bump_size": 0.001,
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "b1_asian_arith_hmm_garch_t_wavenet_ctx50_conv"
+    }
+  ],
+  "benchmark_delta_sigma_mode": "hmm_garch_student_context_stepwise",
+  "benchmark_delta_sigma_garch_fit_from_context": true,
+  "benchmark_delta_sigma_context_days": 50,
+  "benchmark_delta_student_t_fit_enabled": true,
+  "benchmark_delta_student_t_mode": "stepwise",
+  "benchmark_delta_student_t_min_obs": 10,
+  "benchmark_delta_student_t_df_default": 8.0,
+  "benchmark_delta_student_t_df_floor": 2.1,
+  "benchmark_delta_student_t_df_cap": 200.0,
+  "eval_paths": 10000,
+  "eval_agent_batch_size": 3334,
+  "bootstrap_enabled": false,
+  "benchmark_agents_to_compare": [],
+  "plot_min_x": -8.0,
+  "plot_max_x": 8.0
+}

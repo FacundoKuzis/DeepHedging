@@ -1,0 +1,19 @@
+{
+  "extends": "./vs_bs_and_lrm_mc_hmm_garch_t.json",
+  "run_name": "b1_euro_hmm_garch_t_wavenet_ctx50_conv_vs_lrm_mc_hmm_garch_t_cmp",
+  "description": "B1 compare: WaveNet vs LRM MC (both on same paths, same first-agent fixed price logic).",
+  "benchmark_agent_name": "LocalRiskMinimizationAgent",
+  "benchmark_lrm_provider": "monte_carlo",
+  "benchmark_lrm_outer_paths": 96,
+  "benchmark_lrm_mc_inner_paths": 192,
+  "benchmark_lrm_mc_inner_chunk_size": 512,
+  "benchmark_lrm_mc_parallel_enabled": true,
+  "benchmark_lrm_mc_n_workers": 8,
+  "benchmark_lrm_mc_parallel_backend": "thread",
+  "benchmark_lrm_mc_parallel_chunk_size": 512,
+  "eval_agent_batch_size": 10000,
+  "benchmark_lrm_verbose": true,
+  "benchmark_lrm_log_every_t": 10,
+  "benchmark_lrm_mc_log_every_chunks": 150,
+  "benchmark_agents_to_compare": []
+}

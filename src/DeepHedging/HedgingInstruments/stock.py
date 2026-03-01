@@ -813,6 +813,395 @@ class GARCHStock(Stock):
         return tf.convert_to_tensor(s, dtype=tf.float32)
 
 
+
+class HMMMatrixGARCHStock(GARCHStock):
+    """
+    Generic N-state HMM + GARCH simulator with optional Student-t innovations.
+
+    HMM parameter modes:
+    - fixed: uses provided matrix / initial distribution / multipliers.
+    - uniform_random: samples all HMM parameters independently per path from
+      uniform ranges and normalizes probabilities.
+    """
+
+    def __init__(
+        self,
+        S0,
+        T,
+        N,
+        r,
+        sigma,
+        hmm_transition_matrix=None,
+        hmm_initial_distribution=None,
+        hmm_vol_multipliers=None,
+        hmm_params_per_path_mode="fixed",
+        hmm_num_states=None,
+        hmm_transition_uniform_low=0.0,
+        hmm_transition_uniform_high=1.0,
+        hmm_initial_uniform_low=0.0,
+        hmm_initial_uniform_high=1.0,
+        hmm_vol_multipliers_uniform_low=0.5,
+        hmm_vol_multipliers_uniform_high=2.0,
+        hmm_vol_multipliers_sort=True,
+        garch_alpha=0.05,
+        garch_beta=0.9,
+        garch_omega=None,
+        garch_leverage=0.0,
+        garch_use_student_t=False,
+        garch_student_t_df=8.0,
+        r_per_path_mode="fixed",
+        r_uniform_low=None,
+        r_uniform_high=None,
+        r_discrete_values=None,
+        r_discrete_probs=None,
+        sigma_per_path_mode="fixed",
+        sigma_uniform_low=None,
+        sigma_uniform_high=None,
+        sigma_discrete_values=None,
+        sigma_discrete_probs=None,
+        garch_alpha_per_path_mode="fixed",
+        garch_alpha_uniform_low=None,
+        garch_alpha_uniform_high=None,
+        garch_alpha_discrete_values=None,
+        garch_alpha_discrete_probs=None,
+        garch_beta_per_path_mode="fixed",
+        garch_beta_uniform_low=None,
+        garch_beta_uniform_high=None,
+        garch_beta_discrete_values=None,
+        garch_beta_discrete_probs=None,
+        garch_leverage_per_path_mode="fixed",
+        garch_leverage_uniform_low=None,
+        garch_leverage_uniform_high=None,
+        garch_leverage_discrete_values=None,
+        garch_leverage_discrete_probs=None,
+        garch_student_t_df_per_path_mode="fixed",
+        garch_student_t_df_uniform_low=None,
+        garch_student_t_df_uniform_high=None,
+        garch_student_t_df_discrete_values=None,
+        garch_student_t_df_discrete_probs=None,
+    ):
+        super().__init__(
+            S0=S0,
+            T=T,
+            N=N,
+            r=r,
+            sigma=sigma,
+            garch_alpha=garch_alpha,
+            garch_beta=garch_beta,
+            garch_omega=garch_omega,
+            garch_leverage=garch_leverage,
+            garch_use_student_t=garch_use_student_t,
+            garch_student_t_df=garch_student_t_df,
+            r_per_path_mode=r_per_path_mode,
+            r_uniform_low=r_uniform_low,
+            r_uniform_high=r_uniform_high,
+            r_discrete_values=r_discrete_values,
+            r_discrete_probs=r_discrete_probs,
+            sigma_per_path_mode=sigma_per_path_mode,
+            sigma_uniform_low=sigma_uniform_low,
+            sigma_uniform_high=sigma_uniform_high,
+            sigma_discrete_values=sigma_discrete_values,
+            sigma_discrete_probs=sigma_discrete_probs,
+            garch_alpha_per_path_mode=garch_alpha_per_path_mode,
+            garch_alpha_uniform_low=garch_alpha_uniform_low,
+            garch_alpha_uniform_high=garch_alpha_uniform_high,
+            garch_alpha_discrete_values=garch_alpha_discrete_values,
+            garch_alpha_discrete_probs=garch_alpha_discrete_probs,
+            garch_beta_per_path_mode=garch_beta_per_path_mode,
+            garch_beta_uniform_low=garch_beta_uniform_low,
+            garch_beta_uniform_high=garch_beta_uniform_high,
+            garch_beta_discrete_values=garch_beta_discrete_values,
+            garch_beta_discrete_probs=garch_beta_discrete_probs,
+            garch_leverage_per_path_mode=garch_leverage_per_path_mode,
+            garch_leverage_uniform_low=garch_leverage_uniform_low,
+            garch_leverage_uniform_high=garch_leverage_uniform_high,
+            garch_leverage_discrete_values=garch_leverage_discrete_values,
+            garch_leverage_discrete_probs=garch_leverage_discrete_probs,
+            garch_student_t_df_per_path_mode=garch_student_t_df_per_path_mode,
+            garch_student_t_df_uniform_low=garch_student_t_df_uniform_low,
+            garch_student_t_df_uniform_high=garch_student_t_df_uniform_high,
+            garch_student_t_df_discrete_values=garch_student_t_df_discrete_values,
+            garch_student_t_df_discrete_probs=garch_student_t_df_discrete_probs,
+        )
+
+        mode = str(hmm_params_per_path_mode).strip().lower()
+        if mode not in {"fixed", "uniform_random"}:
+            raise ValueError("hmm_params_per_path_mode must be one of {'fixed','uniform_random'}.")
+        self.hmm_params_per_path_mode = mode
+
+        self.hmm_transition_uniform_low = float(hmm_transition_uniform_low)
+        self.hmm_transition_uniform_high = float(hmm_transition_uniform_high)
+        self.hmm_initial_uniform_low = float(hmm_initial_uniform_low)
+        self.hmm_initial_uniform_high = float(hmm_initial_uniform_high)
+        self.hmm_vol_multipliers_uniform_low = float(hmm_vol_multipliers_uniform_low)
+        self.hmm_vol_multipliers_uniform_high = float(hmm_vol_multipliers_uniform_high)
+        self.hmm_vol_multipliers_sort = bool(hmm_vol_multipliers_sort)
+
+        if mode == "fixed":
+            tm = np.asarray(hmm_transition_matrix, dtype=np.float64)
+            pi = np.asarray(hmm_initial_distribution, dtype=np.float64).reshape(-1)
+            mult = np.asarray(hmm_vol_multipliers, dtype=np.float64).reshape(-1)
+
+            if tm.ndim != 2 or tm.shape[0] != tm.shape[1]:
+                raise ValueError("hmm_transition_matrix must be a square matrix (KxK).")
+            k = int(tm.shape[0])
+            if k < 2:
+                raise ValueError("hmm_transition_matrix must have K >= 2 states.")
+            if pi.shape[0] != k:
+                raise ValueError("hmm_initial_distribution length must match transition matrix size.")
+            if mult.shape[0] != k:
+                raise ValueError("hmm_vol_multipliers length must match transition matrix size.")
+            if np.any(~np.isfinite(tm)) or np.any(tm < 0.0):
+                raise ValueError("hmm_transition_matrix entries must be finite and >= 0.")
+            row_sums = np.sum(tm, axis=1)
+            if np.any(row_sums <= 0.0):
+                raise ValueError("Each row of hmm_transition_matrix must sum to > 0.")
+            tm = tm / row_sums[:, None]
+            if np.any(~np.isfinite(pi)) or np.any(pi < 0.0):
+                raise ValueError("hmm_initial_distribution entries must be finite and >= 0.")
+            pi_sum = float(np.sum(pi))
+            if pi_sum <= 0.0:
+                raise ValueError("hmm_initial_distribution must sum to > 0.")
+            pi = pi / pi_sum
+            if np.any(~np.isfinite(mult)) or np.any(mult <= 0.0):
+                raise ValueError("hmm_vol_multipliers entries must be finite and > 0.")
+
+            self.hmm_transition_matrix = tm
+            self.hmm_initial_distribution = pi
+            self.hmm_vol_multipliers = mult
+            self.hmm_num_states = int(k)
+        else:
+            if hmm_num_states is None:
+                raise ValueError(
+                    "hmm_num_states is required when hmm_params_per_path_mode='uniform_random'."
+                )
+            k = int(hmm_num_states)
+            if k < 2:
+                raise ValueError("hmm_num_states must be >= 2.")
+            if not (
+                np.isfinite(self.hmm_transition_uniform_low)
+                and np.isfinite(self.hmm_transition_uniform_high)
+                and self.hmm_transition_uniform_low >= 0.0
+                and self.hmm_transition_uniform_high > self.hmm_transition_uniform_low
+            ):
+                raise ValueError(
+                    "Require 0 <= hmm_transition_uniform_low < hmm_transition_uniform_high."
+                )
+            if not (
+                np.isfinite(self.hmm_initial_uniform_low)
+                and np.isfinite(self.hmm_initial_uniform_high)
+                and self.hmm_initial_uniform_low >= 0.0
+                and self.hmm_initial_uniform_high > self.hmm_initial_uniform_low
+            ):
+                raise ValueError(
+                    "Require 0 <= hmm_initial_uniform_low < hmm_initial_uniform_high."
+                )
+            if not (
+                np.isfinite(self.hmm_vol_multipliers_uniform_low)
+                and np.isfinite(self.hmm_vol_multipliers_uniform_high)
+                and self.hmm_vol_multipliers_uniform_low > 0.0
+                and self.hmm_vol_multipliers_uniform_high > self.hmm_vol_multipliers_uniform_low
+            ):
+                raise ValueError(
+                    "Require 0 < hmm_vol_multipliers_uniform_low < "
+                    "hmm_vol_multipliers_uniform_high."
+                )
+
+            self.hmm_num_states = int(k)
+            # Placeholders; actual sampled per-path values are generated in _simulate_paths.
+            self.hmm_transition_matrix = None
+            self.hmm_initial_distribution = None
+            self.hmm_vol_multipliers = None
+
+        self._last_sampled_hmm_state_transition_matrix = None
+        self._last_sampled_hmm_state_initial_distribution = None
+        self._last_sampled_hmm_state_vol_multipliers = None
+
+    def get_last_sampled_hmm_params(self):
+        if self._last_sampled_hmm_state_transition_matrix is None:
+            return None
+        return {
+            "mode": str(self.hmm_params_per_path_mode),
+            "num_states": int(self.hmm_num_states),
+            "transition_matrix": self._last_sampled_hmm_state_transition_matrix.copy(),
+            "initial_distribution": self._last_sampled_hmm_state_initial_distribution.copy(),
+            "vol_multipliers": self._last_sampled_hmm_state_vol_multipliers.copy(),
+        }
+
+    def _simulate_paths(self, num_paths, n_steps, random_seed=None):
+        dt = float(self.dt)
+        s0 = float(self.S0)
+        n_paths = int(num_paths)
+        n_steps = int(n_steps)
+        if n_steps < 0:
+            raise ValueError("n_steps must be >= 0.")
+
+        rng = self._make_rng(random_seed)
+        r_vec = self._sample_mode_vector(
+            num_paths=n_paths,
+            rng=rng,
+            mode=self.r_per_path_mode,
+            fixed_value=float(self.r),
+            uniform_low=self.r_uniform_low,
+            uniform_high=self.r_uniform_high,
+            discrete_values=self.r_discrete_values,
+            discrete_probs=self.r_discrete_probs,
+            name="r",
+        )
+        sigma_long_run = self._sample_sigma_vector(num_paths=n_paths, rng=rng)
+        alpha = self._sample_mode_vector(
+            num_paths=n_paths,
+            rng=rng,
+            mode=self.garch_alpha_per_path_mode,
+            fixed_value=float(self.garch_alpha),
+            uniform_low=self.garch_alpha_uniform_low,
+            uniform_high=self.garch_alpha_uniform_high,
+            discrete_values=self.garch_alpha_discrete_values,
+            discrete_probs=self.garch_alpha_discrete_probs,
+            name="garch_alpha",
+            min_inclusive=0.0,
+        )
+        beta = self._sample_mode_vector(
+            num_paths=n_paths,
+            rng=rng,
+            mode=self.garch_beta_per_path_mode,
+            fixed_value=float(self.garch_beta),
+            uniform_low=self.garch_beta_uniform_low,
+            uniform_high=self.garch_beta_uniform_high,
+            discrete_values=self.garch_beta_discrete_values,
+            discrete_probs=self.garch_beta_discrete_probs,
+            name="garch_beta",
+            min_inclusive=0.0,
+        )
+        leverage = self._sample_mode_vector(
+            num_paths=n_paths,
+            rng=rng,
+            mode=self.garch_leverage_per_path_mode,
+            fixed_value=float(self.garch_leverage),
+            uniform_low=self.garch_leverage_uniform_low,
+            uniform_high=self.garch_leverage_uniform_high,
+            discrete_values=self.garch_leverage_discrete_values,
+            discrete_probs=self.garch_leverage_discrete_probs,
+            name="garch_leverage",
+            min_inclusive=0.0,
+        )
+
+        if np.any(alpha + beta >= 1.0):
+            raise ValueError("Sampled GARCH parameters violate alpha + beta < 1 for at least one path.")
+        stability = alpha + beta + 2.0 * leverage
+        if np.any(stability >= 1.0):
+            raise ValueError(
+                "Sampled GARCH parameters violate alpha + beta + 2*leverage < 1 for at least one path."
+            )
+
+        df_vec = None
+        if self.garch_use_student_t:
+            df_vec = self._sample_mode_vector(
+                num_paths=n_paths,
+                rng=rng,
+                mode=self.garch_student_t_df_per_path_mode,
+                fixed_value=float(self.garch_student_t_df),
+                uniform_low=self.garch_student_t_df_uniform_low,
+                uniform_high=self.garch_student_t_df_uniform_high,
+                discrete_values=self.garch_student_t_df_discrete_values,
+                discrete_probs=self.garch_student_t_df_discrete_probs,
+                name="garch_student_t_df",
+                min_exclusive=2.0,
+            )
+
+        k = self.hmm_num_states
+        if self.hmm_params_per_path_mode == "uniform_random":
+            trans_mats = rng.uniform(
+                self.hmm_transition_uniform_low,
+                self.hmm_transition_uniform_high,
+                size=(n_paths, k, k),
+            ).astype(np.float64)
+            trans_row_sums = np.sum(trans_mats, axis=2, keepdims=True)
+            trans_mats = trans_mats / np.maximum(trans_row_sums, 1e-12)
+
+            init_probs = rng.uniform(
+                self.hmm_initial_uniform_low,
+                self.hmm_initial_uniform_high,
+                size=(n_paths, k),
+            ).astype(np.float64)
+            init_sums = np.sum(init_probs, axis=1, keepdims=True)
+            init_probs = init_probs / np.maximum(init_sums, 1e-12)
+
+            vol_multipliers = rng.uniform(
+                self.hmm_vol_multipliers_uniform_low,
+                self.hmm_vol_multipliers_uniform_high,
+                size=(n_paths, k),
+            ).astype(np.float64)
+            if self.hmm_vol_multipliers_sort:
+                vol_multipliers = np.sort(vol_multipliers, axis=1)
+        else:
+            trans_mats = np.broadcast_to(
+                self.hmm_transition_matrix[None, :, :], (n_paths, k, k)
+            ).astype(np.float64)
+            init_probs = np.broadcast_to(
+                self.hmm_initial_distribution[None, :], (n_paths, k)
+            ).astype(np.float64)
+            vol_multipliers = np.broadcast_to(
+                self.hmm_vol_multipliers[None, :], (n_paths, k)
+            ).astype(np.float64)
+
+        state_vars = np.square(sigma_long_run[:, None] * vol_multipliers)
+        state_vars = np.maximum(state_vars, 1e-12)
+        if self.garch_omega is None:
+            state_omega = np.maximum((1.0 - alpha - beta)[:, None] * state_vars, 1e-14)
+        else:
+            state_omega = np.full((n_paths, k), float(self.garch_omega), dtype=np.float64)
+            state_omega = np.maximum(state_omega, 1e-14)
+
+        z = self._draw_innovations(rng=rng, num_paths=n_paths, n_steps=n_steps, df_vec=df_vec)
+        log_paths = np.zeros((n_paths, n_steps + 1), dtype=np.float64)
+
+        init_u = rng.random(n_paths)
+        init_cdf = np.cumsum(init_probs, axis=1)
+        state = np.sum(init_u[:, None] > init_cdf, axis=1).astype(np.int32)
+        state = np.clip(state, 0, k - 1)
+        var_t = state_vars[np.arange(n_paths), state]
+
+        var_accum = np.zeros((n_paths,), dtype=np.float64)
+        for t in range(n_steps):
+            var_t = np.maximum(var_t, 1e-12)
+            var_accum += var_t
+
+            shock = np.sqrt(var_t * dt) * z[:, t]
+            drift = (r_vec - 0.5 * var_t) * dt
+            log_paths[:, t + 1] = log_paths[:, t] + drift + shock
+
+            eps = np.sqrt(var_t) * z[:, t]
+            e2 = np.square(eps)
+            neg = (eps < 0.0).astype(np.float64)
+            omega_t = state_omega[np.arange(n_paths), state]
+            var_t = omega_t + alpha * e2 + leverage * neg * e2 + beta * var_t
+
+            trans_rows = trans_mats[np.arange(n_paths), state, :]
+            trans_cdf = np.cumsum(trans_rows, axis=1)
+            u = rng.random(n_paths)
+            state = np.sum(u[:, None] > trans_cdf, axis=1).astype(np.int32)
+            state = np.clip(state, 0, k - 1)
+
+        if n_steps > 0:
+            sigma_effective = np.sqrt(np.maximum(var_accum / float(n_steps), 1e-12))
+        else:
+            sigma_effective = sigma_long_run.copy()
+
+        self._last_sampled_sigmas = sigma_long_run.astype(np.float32)
+        self._last_realized_sigmas = sigma_effective.astype(np.float32)
+        self._last_sampled_rates = r_vec.astype(np.float32)
+        self._last_sampled_garch_alpha = alpha.astype(np.float32)
+        self._last_sampled_garch_beta = beta.astype(np.float32)
+        self._last_sampled_garch_leverage = leverage.astype(np.float32)
+        self._last_sampled_garch_student_t_df = (
+            None if df_vec is None else df_vec.astype(np.float32)
+        )
+        self._last_sampled_hmm_state_transition_matrix = trans_mats.astype(np.float32)
+        self._last_sampled_hmm_state_initial_distribution = init_probs.astype(np.float32)
+        self._last_sampled_hmm_state_vol_multipliers = vol_multipliers.astype(np.float32)
+        return s0 * np.exp(log_paths)
+
 class HestonStock(Stock):
     """
     A subclass of Stock that models stock prices using the Heston stochastic volatility model.

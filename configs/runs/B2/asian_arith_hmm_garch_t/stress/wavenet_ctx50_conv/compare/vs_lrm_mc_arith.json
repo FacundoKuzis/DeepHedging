@@ -1,0 +1,93 @@
+{
+  "extends": "../../../../../B1/asian_arith_hmm_garch_t/stress/wavenet_ctx50_conv/compare/vs_lrm_mc_arith.json",
+  "run_name": "b2_asian_arith_hmm_garch_t_wavenet_ctx50_conv_deeper_mse_vs_lrm_mc_arith_cmp",
+  "description": "B2 compare: deeper/gated WaveNet vs arithmetic LRM-MC benchmark under same HMM+GARCH+t world.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "b2_asian_arith_hmm_garch_t_wavenet_ctx50_conv_deeper_mse"
+    }
+  ],
+  "wavenet_activation": "swish",
+  "wavenet_use_skip_connections": true,
+  "wavenet_output_hidden_filters": 16,
+  "wavenet_block_configs": [
+    {
+      "filters": 32,
+      "kernel_size": 3,
+      "dilation_rate": 1,
+      "activation": "swish",
+      "dropout": 0.03,
+      "use_batch_norm": false,
+      "use_residual": true,
+      "use_skip": true,
+      "gated": true
+    },
+    {
+      "filters": 32,
+      "kernel_size": 3,
+      "dilation_rate": 2,
+      "activation": "swish",
+      "dropout": 0.04,
+      "use_batch_norm": false,
+      "use_residual": true,
+      "use_skip": true,
+      "gated": true
+    },
+    {
+      "filters": 32,
+      "kernel_size": 3,
+      "dilation_rate": 4,
+      "activation": "swish",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true,
+      "use_skip": true,
+      "gated": true
+    },
+    {
+      "filters": 32,
+      "kernel_size": 3,
+      "dilation_rate": 8,
+      "activation": "swish",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true,
+      "use_skip": true,
+      "gated": true
+    },
+    {
+      "filters": 32,
+      "kernel_size": 3,
+      "dilation_rate": 16,
+      "activation": "swish",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true,
+      "use_skip": true,
+      "gated": true
+    },
+    {
+      "filters": 32,
+      "kernel_size": 3,
+      "dilation_rate": 8,
+      "activation": "swish",
+      "dropout": 0.04,
+      "use_batch_norm": false,
+      "use_residual": true,
+      "use_skip": true,
+      "gated": true
+    },
+    {
+      "filters": 32,
+      "kernel_size": 3,
+      "dilation_rate": 4,
+      "activation": "swish",
+      "dropout": 0.03,
+      "use_batch_norm": false,
+      "use_residual": true,
+      "use_skip": true,
+      "gated": true
+    }
+  ]
+}

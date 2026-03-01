@@ -1,0 +1,13 @@
+{
+  "extends": "./vs_bs_and_lrm_mc.json",
+  "run_name": "b1_euro_hmm_garch_t_wavenet_ctx50_conv_vs_bs_and_lrm_mc_hmm_garch_t_cmp",
+  "description": "B1 compare: common first-agent price, BS and LRM MC using context-estimated HMM+GARCH+Student-t stepwise sigma.",
+  "benchmark_delta_sigma_mode": "hmm_garch_student_context_stepwise",
+  "benchmark_hmm_num_states": 3,
+  "benchmark_hmm_transition_smoothing": 1.0,
+  "benchmark_hmm_state_multiplier_floor": 0.35,
+  "benchmark_hmm_state_multiplier_cap": 3.5,
+  "benchmark_hmm_tail_adjustment_enabled": true,
+  "benchmark_hmm_tail_multiplier_cap": 1.6
+}
+

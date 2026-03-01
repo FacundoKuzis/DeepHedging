@@ -105,6 +105,12 @@ def _apply_relaxed_defaults_compare(config: dict[str, Any], pipeline: str) -> di
             "benchmark_delta_student_t_df_default": 8.0,
             "benchmark_delta_student_t_df_floor": 2.1,
             "benchmark_delta_student_t_df_cap": 200.0,
+            "benchmark_hmm_num_states": 3,
+            "benchmark_hmm_transition_smoothing": 1.0,
+            "benchmark_hmm_state_multiplier_floor": 0.35,
+            "benchmark_hmm_state_multiplier_cap": 3.5,
+            "benchmark_hmm_tail_adjustment_enabled": True,
+            "benchmark_hmm_tail_multiplier_cap": 1.6,
             "benchmark_agents_to_compare": [],
         }
         for k, v in defaults.items():

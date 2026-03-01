@@ -87,16 +87,23 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
             rate = tf.reshape(rate, (-1,))
         return rate
 
-    def _normalize_sigma_vector(self, path_sigma, n_paths):
+    def _normalize_sigma_vector(self, path_sigma, n_paths, n_steps=None):
         sigma = self._normalize_sigma_input(
             self.sigma if path_sigma is None else path_sigma,
             n_paths,
+            n_steps=n_steps,
         )
         sigma = tf.convert_to_tensor(sigma, dtype=tf.float32)
         if sigma.shape.rank == 0:
             sigma = tf.fill((n_paths,), sigma)
-        else:
+        elif sigma.shape.rank == 1:
             sigma = tf.reshape(sigma, (-1,))
+        elif sigma.shape.rank == 2:
+            sigma = tf.reshape(sigma, (n_paths, -1))
+        else:
+            raise ValueError(
+                f"sigma must be scalar, rank-1 or rank-2. Got rank={sigma.shape.rank}."
+            )
         return sigma
 
     def _conditional_price_batch(
@@ -198,7 +205,12 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
         self.reset_last_delta(batch_size)
         self.reset_running_state(batch_size)
         rate_vec = self._normalize_rate_vector(batch_path_r, batch_size)
-        sigma_vec = self._normalize_sigma_vector(batch_path_sigma, batch_size)
+        n_steps = int(batch_paths.shape[1]) - 1
+        sigma_vec = self._normalize_sigma_vector(
+            batch_path_sigma,
+            batch_size,
+            n_steps=n_steps,
+        )
 
         all_actions = []
         for t in range(batch_paths.shape[1] - 1):  # Hedge up to T-1
@@ -210,6 +222,9 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
                 self._running_log_sum += tf.math.log(current_spot)
 
             future_fixings = self._future_fixing_steps(t)
+            sigma_t = sigma_vec
+            if sigma_vec.shape.rank == 2:
+                sigma_t = sigma_vec[:, t]
             epsilon = tf.maximum(
                 tf.abs(current_spot) * float(self.bump_size),
                 tf.constant(1e-6, dtype=tf.float32),
@@ -219,14 +234,14 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
                 past_log_sum=self._running_log_sum,
                 future_fixing_steps=future_fixings,
                 rate_vec=rate_vec,
-                sigma_vec=sigma_vec,
+                sigma_vec=sigma_t,
             )
             price_down = self._conditional_price_batch(
                 spot=tf.maximum(current_spot - epsilon, 1e-8),
                 past_log_sum=self._running_log_sum,
                 future_fixing_steps=future_fixings,
                 rate_vec=rate_vec,
-                sigma_vec=sigma_vec,
+                sigma_vec=sigma_t,
             )
             target_delta = (price_up - price_down) / (2.0 * epsilon)
 
@@ -255,7 +270,9 @@ class GeometricAsianDeltaHedgingAgent(DeltaHedgingAgent):
             n_paths = int(spot.shape[0])
 
         rate_vec = self._normalize_rate_vector(path_r, n_paths)
-        sigma_vec = self._normalize_sigma_vector(path_sigma, n_paths)
+        sigma_vec = self._normalize_sigma_vector(path_sigma, n_paths, n_steps=int(self.N))
+        if sigma_vec.shape.rank == 2:
+            sigma_vec = sigma_vec[:, 0]
 
         past_log_sum = tf.zeros((n_paths,), dtype=tf.float32)
         if self._is_fixing_step(0):

@@ -550,21 +550,40 @@ class Environment:
                     val_pre_history is not None
                     and self._agent_uses_temporal_context_prefix(self.agent)
                 )
-                val_history_features = None
-                if context_visible and not use_temporal_prefix:
-                    val_history_features = self._build_batch_history_features(
-                        val_data,
-                        simulate_pre_history=(val_pre_history is None),
-                        pre_history_prices=val_pre_history,
+                # IMPORTANT: run validation in mini-batches to avoid OOM when
+                # context encoders (e.g., Conv1D history encoders) expand
+                # (batch, time, context) features for the full val set.
+                val_batch_size = max(1, int(self.batch_size))
+                val_action_chunks = []
+                for j in range(0, int(val_paths), val_batch_size):
+                    batch_paths_val = val_data[j:j+val_batch_size]
+                    batch_ttm_val = self.get_T_minus_t(batch_paths_val.shape[0])
+                    batch_path_r_val = None
+                    if val_path_r is not None:
+                        batch_path_r_val = val_path_r[j:j+val_batch_size]
+                    batch_pre_history_val = None
+                    if val_pre_history is not None:
+                        batch_pre_history_val = val_pre_history[j:j+val_batch_size]
+
+                    batch_history_features_val = None
+                    if context_visible and not use_temporal_prefix:
+                        batch_history_features_val = self._build_batch_history_features(
+                            batch_paths_val,
+                            simulate_pre_history=(val_pre_history is None),
+                            pre_history_prices=batch_pre_history_val,
+                        )
+
+                    batch_actions_val = self._process_agent_batch_actions(
+                        self.agent,
+                        batch_paths_val,
+                        batch_ttm_val,
+                        batch_path_r=batch_path_r_val,
+                        batch_history_features=batch_history_features_val,
+                        batch_pre_history_prices=batch_pre_history_val if use_temporal_prefix else None,
                     )
-                val_actions = self._process_agent_batch_actions(
-                    self.agent,
-                    val_data,
-                    T_minus_t_val,
-                    batch_path_r=val_path_r,
-                    batch_history_features=val_history_features,
-                    batch_pre_history_prices=val_pre_history if use_temporal_prefix else None,
-                )
+                    val_action_chunks.append(batch_actions_val)
+
+                val_actions = tf.concat(val_action_chunks, axis=0)
                 val_loss = self.loss_function(val_data, val_actions, path_r=val_path_r)
                 self.val_losses.append(val_loss.numpy())
                 print(

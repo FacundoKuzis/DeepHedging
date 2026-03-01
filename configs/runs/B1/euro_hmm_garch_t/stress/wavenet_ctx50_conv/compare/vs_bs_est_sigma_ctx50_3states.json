@@ -1,0 +1,20 @@
+{
+  "extends": "./vs_bs_est_sigma_ctx50.json",
+  "run_name": "b1_euro_hmm3_garch_t_wavenet_ctx50_conv_vs_bs_est_sigma_ctx50_cmp",
+  "description": "B1 3-state matrix-HMM compare: WaveNet vs fair BS Delta with stepwise context-estimated GARCH+Student-t sigma/df.",
+  "trained_agents": [
+    {
+      "agent_name": "WaveNetAgent",
+      "model_name": "b1_euro_hmm3_garch_t_wavenet_ctx50_conv"
+    }
+  ],
+  "instrument_model": "hmm_garch",
+  "hmm_params_per_path_mode": "fixed",
+  "hmm_transition_matrix": [
+    [0.96, 0.04, 0.00],
+    [0.08, 0.84, 0.08],
+    [0.00, 0.05, 0.95]
+  ],
+  "hmm_initial_distribution": [0.65, 0.25, 0.10],
+  "hmm_vol_multipliers": [0.55, 1.00, 2.10]
+}
