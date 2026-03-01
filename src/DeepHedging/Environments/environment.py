@@ -128,7 +128,10 @@ class Environment:
         if batch_path_r is None:
             r_vec = np.full((n_batch,), float(self.r), dtype=np.float64)
         else:
-            r_vec = np.asarray(batch_path_r, dtype=np.float64).reshape(-1)
+            r_arr = np.asarray(batch_path_r, dtype=np.float64)
+            if r_arr.ndim == 2:
+                r_arr = r_arr[:, 0]
+            r_vec = r_arr.reshape(-1)
             if r_vec.shape[0] != n_batch:
                 raise ValueError(
                     f"batch_path_r length mismatch for prehistory generation: expected {n_batch}, got {r_vec.shape[0]}."
@@ -334,12 +337,13 @@ class Environment:
 
         return self.generate_data(n_paths, random_seed=random_seed), None
 
-    def _resolve_path_rate_growth(self, path_r, batch_size):
+    def _resolve_path_rate_growth(self, path_r, batch_size, n_steps=None):
         """
         Resolve per-path risk-free rates into growth factors per hedging step.
 
         Returns:
-            tf.Tensor with shape (batch_size, 1), representing (1+r)^dt.
+            tf.Tensor with shape (batch_size, 1) for scalar/vector rates, or
+            (batch_size, n_steps) for stepwise rates.
         """
         if path_r is None:
             growth = tf.constant((1.0 + float(self.r)) ** float(self.dt), dtype=tf.float32)
@@ -350,14 +354,30 @@ class Environment:
             growth = tf.pow(1.0 + r_tensor, tf.constant(float(self.dt), dtype=tf.float32))
             return tf.reshape(growth, (1, 1)) * tf.ones((batch_size, 1), dtype=tf.float32)
 
-        if len(r_tensor.shape) != 1:
-            raise ValueError("path_r must be scalar or rank-1 tensor/array.")
-        if int(r_tensor.shape[0]) != int(batch_size):
-            raise ValueError(
-                f"path_r length mismatch: expected {batch_size}, got {int(r_tensor.shape[0])}."
-            )
-        growth = tf.pow(1.0 + r_tensor, tf.constant(float(self.dt), dtype=tf.float32))
-        return tf.reshape(growth, (-1, 1))
+        if len(r_tensor.shape) == 1:
+            if int(r_tensor.shape[0]) != int(batch_size):
+                raise ValueError(
+                    f"path_r length mismatch: expected {batch_size}, got {int(r_tensor.shape[0])}."
+                )
+            growth = tf.pow(1.0 + r_tensor, tf.constant(float(self.dt), dtype=tf.float32))
+            return tf.reshape(growth, (-1, 1))
+
+        if len(r_tensor.shape) == 2:
+            if int(r_tensor.shape[0]) != int(batch_size):
+                raise ValueError(
+                    f"path_r batch mismatch: expected {batch_size}, got {int(r_tensor.shape[0])}."
+                )
+            if n_steps is not None:
+                observed_steps = int(r_tensor.shape[1])
+                if observed_steps < int(n_steps):
+                    raise ValueError(
+                        f"path_r timestep mismatch: expected at least {int(n_steps)}, got {observed_steps}."
+                    )
+                r_tensor = r_tensor[:, : int(n_steps)]
+            growth = tf.pow(1.0 + r_tensor, tf.constant(float(self.dt), dtype=tf.float32))
+            return growth
+
+        raise ValueError("path_r must be scalar, rank-1 or rank-2 tensor/array.")
 
     def calculate_pnl(self, paths, actions, include_decomposition = False, path_r=None):
         # Calculate the portfolio value at each time step
@@ -373,7 +393,11 @@ class Environment:
         purchases_cashflows = tf.reduce_sum(purchases_cashflows, axis = 2)
 
         # Calculate per-path compounding factor for cash positions.
-        growth = self._resolve_path_rate_growth(path_r=path_r, batch_size=int(paths.shape[0]))
+        growth = self._resolve_path_rate_growth(
+            path_r=path_r,
+            batch_size=int(paths.shape[0]),
+            n_steps=int(purchases_cashflows.shape[1] - 1),
+        )
         factor = growth - 1.0
 
         # Initialize the cash tensor with the first cash flow
@@ -381,7 +405,11 @@ class Environment:
 
         # Iterate over the remaining time steps to accumulate cash values
         for t in range(1, purchases_cashflows.shape[1]):
-            current_cash = cash[:, -1:] * (1.0 + factor) + purchases_cashflows[:, t:t+1]
+            if len(factor.shape) == 2 and int(factor.shape[1]) > 1:
+                step_factor = factor[:, t - 1:t]
+            else:
+                step_factor = factor
+            current_cash = cash[:, -1:] * (1.0 + step_factor) + purchases_cashflows[:, t:t+1]
             cash = tf.concat([cash, current_cash], axis=1)
 
         final_cash_positions = cash[:, -1] # (batch_size)
@@ -932,10 +960,28 @@ class Environment:
             f"n_paths={n_paths}, n_agents={len(agents)}"
         )
         if per_path_r is not None:
-            per_path_r = np.asarray(per_path_r, dtype=np.float32).reshape(-1)
-            if per_path_r.shape[0] != int(n_paths):
+            per_path_r = np.asarray(per_path_r, dtype=np.float32)
+            if per_path_r.ndim == 1:
+                if per_path_r.shape[0] != int(n_paths):
+                    raise ValueError(
+                        f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
+                    )
+            elif per_path_r.ndim == 2:
+                if per_path_r.shape[0] != int(n_paths):
+                    raise ValueError(
+                        "per_path_r batch mismatch: "
+                        f"expected {n_paths}, got {per_path_r.shape[0]}."
+                    )
+                n_required_steps = int(paths.shape[1]) - 1
+                if per_path_r.shape[1] < n_required_steps:
+                    raise ValueError(
+                        "per_path_r timestep mismatch: "
+                        f"expected at least {n_required_steps}, got {per_path_r.shape[1]}."
+                    )
+            else:
                 raise ValueError(
-                    f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
+                    "per_path_r must be rank 1 or 2. "
+                    f"Got shape={per_path_r.shape}."
                 )
         elif generated_internally:
             inferred_r = self._infer_per_path_r_if_available(
@@ -1195,9 +1241,13 @@ class Environment:
             if per_path_r is None:
                 discount = tf.constant(np.exp(-self.r * self.T), dtype=tf.float32)
             else:
-                discount = tf.exp(
-                    -tf.convert_to_tensor(per_path_r, dtype=tf.float32) * float(self.T)
-                )
+                r_t = tf.convert_to_tensor(per_path_r, dtype=tf.float32)
+                if len(r_t.shape) == 1:
+                    discount = tf.exp(-r_t * float(self.T))
+                else:
+                    n_required_steps = int(paths.shape[1]) - 1
+                    integrated_r = tf.reduce_sum(r_t[:, :n_required_steps], axis=1) * float(self.dt)
+                    discount = tf.exp(-integrated_r)
             error = tf.cast(price, tf.float32) + pnl * discount
 
             errors.append(error)
@@ -1712,10 +1762,28 @@ class Environment:
         self._history_context_counter = 0
 
         if per_path_r is not None:
-            per_path_r = np.asarray(per_path_r, dtype=np.float32).reshape(-1)
-            if per_path_r.shape[0] != int(n_paths):
+            per_path_r = np.asarray(per_path_r, dtype=np.float32)
+            if per_path_r.ndim == 1:
+                if per_path_r.shape[0] != int(n_paths):
+                    raise ValueError(
+                        f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
+                    )
+            elif per_path_r.ndim == 2:
+                if per_path_r.shape[0] != int(n_paths):
+                    raise ValueError(
+                        "per_path_r batch mismatch: "
+                        f"expected {n_paths}, got {per_path_r.shape[0]}."
+                    )
+                n_required_steps = int(paths.shape[1]) - 1
+                if per_path_r.shape[1] < n_required_steps:
+                    raise ValueError(
+                        "per_path_r timestep mismatch: "
+                        f"expected at least {n_required_steps}, got {per_path_r.shape[1]}."
+                    )
+            else:
                 raise ValueError(
-                    f"per_path_r length mismatch: expected {n_paths}, got {per_path_r.shape[0]}."
+                    "per_path_r must be rank 1 or 2. "
+                    f"Got shape={per_path_r.shape}."
                 )
         elif generated_internally:
             inferred_r = self._infer_per_path_r_if_available(
@@ -1923,9 +1991,13 @@ class Environment:
             if per_path_r is None:
                 discount = tf.constant(np.exp(-self.r * self.T), dtype=tf.float32)
             else:
-                discount = tf.exp(
-                    -tf.convert_to_tensor(per_path_r, dtype=tf.float32) * float(self.T)
-                )
+                r_t = tf.convert_to_tensor(per_path_r, dtype=tf.float32)
+                if len(r_t.shape) == 1:
+                    discount = tf.exp(-r_t * float(self.T))
+                else:
+                    n_required_steps = int(paths.shape[1]) - 1
+                    integrated_r = tf.reduce_sum(r_t[:, :n_required_steps], axis=1) * float(self.dt)
+                    discount = tf.exp(-integrated_r)
             error = tf.cast(price, tf.float32) + pnl * discount
             error_np = error.numpy().astype(np.float32)  # Use float32 to save memory
             tqdm.write(

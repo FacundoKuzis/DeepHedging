@@ -210,7 +210,12 @@ class LocalRiskMinimizationAgent(DeltaHedgingAgent):
                 f"Path timestep mismatch for LRM: expected N={self.N}, got {n_steps}."
             )
 
-        r_vec = self._resolve_path_vector(batch_path_r, batch_size=batch_size, default=float(self.r))
+        r_vec = self._resolve_path_vector(
+            batch_path_r,
+            batch_size=batch_size,
+            default=float(self.r),
+            allow_matrix=True,
+        )
         sigma_vec = np.maximum(
             self._resolve_path_vector(
                 batch_path_sigma,
@@ -239,6 +244,7 @@ class LocalRiskMinimizationAgent(DeltaHedgingAgent):
             step_start = time.perf_counter()
             spot_t = path_np[:, t]
             prefix_t = path_np[:, : t + 1]
+            r_t = r_vec[:, t] if isinstance(r_vec, np.ndarray) and r_vec.ndim == 2 else r_vec
             sigma_t = sigma_vec[:, t] if sigma_vec.ndim == 2 else sigma_vec
 
             target_delta = compute_lrm_target_batch(
@@ -246,7 +252,7 @@ class LocalRiskMinimizationAgent(DeltaHedgingAgent):
                 t_index=t,
                 dt=float(self.dt),
                 provider=self.continuation_provider,
-                per_path_r=r_vec,
+                per_path_r=r_t,
                 per_path_sigma=sigma_t,
                 path_prefix=prefix_t,
                 outer_paths=int(self.lrm_outer_paths),
@@ -294,7 +300,16 @@ class LocalRiskMinimizationAgent(DeltaHedgingAgent):
             s0 = np.asarray(path_s0, dtype=np.float32).reshape(-1)
         n = int(s0.shape[0])
 
-        r = self._resolve_path_vector(path_r, batch_size=n, default=float(self.r))
+        r = self._resolve_path_vector(
+            path_r,
+            batch_size=n,
+            default=float(self.r),
+            allow_matrix=True,
+        )
+        if isinstance(r, np.ndarray) and r.ndim == 2:
+            if int(r.shape[1]) < 1:
+                raise ValueError("path_r matrix must have at least one column.")
+            r = r[:, 0]
         sigma_resolved = self._resolve_path_vector(
             path_sigma,
             batch_size=n,

@@ -1,0 +1,21 @@
+{
+  "description": "THESIS_FINAL W2 compare: causal sigma/r from context.",
+  "instrument_model": "gbm",
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.08,
+  "gbm_sigma_uniform_high": 0.6,
+  "r_per_path_mode": "uniform",
+  "r_uniform_low": 0.0,
+  "r_uniform_high": 0.08,
+  "use_price_history_context": true,
+  "context_for_path_generation_only": false,
+  "context_length": 50,
+  "benchmark_delta_sigma_mode": "garch_context_stepwise",
+  "benchmark_delta_sigma_garch_fit_from_context": true,
+  "benchmark_delta_sigma_context_days": 50,
+  "benchmark_delta_r_mode": "context_stepwise",
+  "benchmark_delta_r_context_days": 50,
+  "plot_min_x": -8.0,
+  "plot_max_x": 8.0,
+  "extends": "common.json"
+}

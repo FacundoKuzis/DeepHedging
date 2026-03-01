@@ -448,6 +448,11 @@ class GARCHStock(Stock):
         garch_student_t_df_uniform_high=None,
         garch_student_t_df_discrete_values=None,
         garch_student_t_df_discrete_probs=None,
+        tail_shock_enabled=False,
+        tail_shock_magnitude_low=0.02,
+        tail_shock_magnitude_high=0.10,
+        tail_shock_gap_low=10,
+        tail_shock_gap_high=30,
     ):
         super().__init__(S0, T, N, r)
         self.sigma = float(sigma)
@@ -497,6 +502,11 @@ class GARCHStock(Stock):
         self.garch_student_t_df_uniform_high = garch_student_t_df_uniform_high
         self.garch_student_t_df_discrete_values = garch_student_t_df_discrete_values
         self.garch_student_t_df_discrete_probs = garch_student_t_df_discrete_probs
+        self.tail_shock_enabled = bool(tail_shock_enabled)
+        self.tail_shock_magnitude_low = float(tail_shock_magnitude_low)
+        self.tail_shock_magnitude_high = float(tail_shock_magnitude_high)
+        self.tail_shock_gap_low = int(tail_shock_gap_low)
+        self.tail_shock_gap_high = int(tail_shock_gap_high)
 
         for mname, mval in [
             ("r_per_path_mode", self.r_per_path_mode),
@@ -524,6 +534,17 @@ class GARCHStock(Stock):
             raise ValueError("garch_omega must be > 0 when provided.")
         if self.garch_use_student_t and self.garch_student_t_df <= 2.0:
             raise ValueError("garch_student_t_df must be > 2 when garch_use_student_t=true.")
+        if self.tail_shock_enabled:
+            if not (
+                0.0 < self.tail_shock_magnitude_low < self.tail_shock_magnitude_high < 1.0
+            ):
+                raise ValueError(
+                    "Require 0 < tail_shock_magnitude_low < tail_shock_magnitude_high < 1."
+                )
+            if self.tail_shock_gap_low <= 0 or self.tail_shock_gap_high < self.tail_shock_gap_low:
+                raise ValueError(
+                    "Require 0 < tail_shock_gap_low <= tail_shock_gap_high."
+                )
 
         self._last_sampled_sigmas = None
         self._last_realized_sigmas = None
@@ -532,6 +553,7 @@ class GARCHStock(Stock):
         self._last_sampled_garch_beta = None
         self._last_sampled_garch_leverage = None
         self._last_sampled_garch_student_t_df = None
+        self._last_sampled_tail_shocks = None
 
     def _sample_sigma_vector(self, num_paths, rng):
         n = int(num_paths)
@@ -668,6 +690,22 @@ class GARCHStock(Stock):
         t_raw = normals / np.sqrt(np.maximum(chi2 / df_vec[:, None], 1e-12))
         return t_raw * np.sqrt((df_vec[:, None] - 2.0) / df_vec[:, None])
 
+    def _sample_tail_shocks(self, rng, num_paths, n_steps):
+        shocks = np.zeros((int(num_paths), int(n_steps)), dtype=np.float64)
+        if not self.tail_shock_enabled or int(n_steps) <= 0:
+            return shocks
+        low_gap = int(self.tail_shock_gap_low)
+        high_gap = int(self.tail_shock_gap_high)
+        low_mag = float(self.tail_shock_magnitude_low)
+        high_mag = float(self.tail_shock_magnitude_high)
+        for i in range(int(num_paths)):
+            t = int(rng.integers(low_gap, high_gap + 1))
+            while t < int(n_steps):
+                mag = float(rng.uniform(low_mag, high_mag))
+                shocks[i, t] = -mag
+                t += int(rng.integers(low_gap, high_gap + 1))
+        return shocks
+
     def _simulate_paths(self, num_paths, n_steps, random_seed=None):
         dt = float(self.dt)
         s0 = float(self.S0)
@@ -764,6 +802,11 @@ class GARCHStock(Stock):
             n_steps=n_steps,
             df_vec=df_vec,
         )
+        tail_shocks = self._sample_tail_shocks(
+            rng=rng,
+            num_paths=n_paths,
+            n_steps=n_steps,
+        )
         log_paths = np.zeros((n_paths, n_steps + 1), dtype=np.float64)
 
         var_t = var_long_run.copy()
@@ -774,7 +817,7 @@ class GARCHStock(Stock):
 
             shock = np.sqrt(var_t * dt) * z[:, t]
             drift = (r_vec - 0.5 * var_t) * dt
-            log_paths[:, t + 1] = log_paths[:, t] + drift + shock
+            log_paths[:, t + 1] = log_paths[:, t] + drift + shock + tail_shocks[:, t]
 
             eps = np.sqrt(var_t) * z[:, t]
             neg = (eps < 0.0).astype(np.float64)
@@ -796,6 +839,7 @@ class GARCHStock(Stock):
         self._last_sampled_garch_student_t_df = (
             None if df_vec is None else df_vec.astype(np.float32)
         )
+        self._last_sampled_tail_shocks = tail_shocks.astype(np.float32)
 
         paths = s0 * np.exp(log_paths)
         return paths
@@ -843,6 +887,9 @@ class HMMMatrixGARCHStock(GARCHStock):
         hmm_vol_multipliers_uniform_low=0.5,
         hmm_vol_multipliers_uniform_high=2.0,
         hmm_vol_multipliers_sort=True,
+        hmm_r_multipliers=None,
+        hmm_r_multipliers_uniform_low=0.5,
+        hmm_r_multipliers_uniform_high=1.5,
         garch_alpha=0.05,
         garch_beta=0.9,
         garch_omega=None,
@@ -879,6 +926,11 @@ class HMMMatrixGARCHStock(GARCHStock):
         garch_student_t_df_uniform_high=None,
         garch_student_t_df_discrete_values=None,
         garch_student_t_df_discrete_probs=None,
+        tail_shock_enabled=False,
+        tail_shock_magnitude_low=0.02,
+        tail_shock_magnitude_high=0.10,
+        tail_shock_gap_low=10,
+        tail_shock_gap_high=30,
     ):
         super().__init__(
             S0=S0,
@@ -922,6 +974,11 @@ class HMMMatrixGARCHStock(GARCHStock):
             garch_student_t_df_uniform_high=garch_student_t_df_uniform_high,
             garch_student_t_df_discrete_values=garch_student_t_df_discrete_values,
             garch_student_t_df_discrete_probs=garch_student_t_df_discrete_probs,
+            tail_shock_enabled=tail_shock_enabled,
+            tail_shock_magnitude_low=tail_shock_magnitude_low,
+            tail_shock_magnitude_high=tail_shock_magnitude_high,
+            tail_shock_gap_low=tail_shock_gap_low,
+            tail_shock_gap_high=tail_shock_gap_high,
         )
 
         mode = str(hmm_params_per_path_mode).strip().lower()
@@ -936,11 +993,23 @@ class HMMMatrixGARCHStock(GARCHStock):
         self.hmm_vol_multipliers_uniform_low = float(hmm_vol_multipliers_uniform_low)
         self.hmm_vol_multipliers_uniform_high = float(hmm_vol_multipliers_uniform_high)
         self.hmm_vol_multipliers_sort = bool(hmm_vol_multipliers_sort)
+        self.hmm_r_multipliers_uniform_low = float(hmm_r_multipliers_uniform_low)
+        self.hmm_r_multipliers_uniform_high = float(hmm_r_multipliers_uniform_high)
 
         if mode == "fixed":
+            if hmm_transition_matrix is None or hmm_initial_distribution is None or hmm_vol_multipliers is None:
+                raise ValueError(
+                    "hmm_transition_matrix, hmm_initial_distribution and hmm_vol_multipliers "
+                    "are required when hmm_params_per_path_mode='fixed'."
+                )
+            if hmm_r_multipliers is None:
+                raise ValueError(
+                    "hmm_r_multipliers is required when hmm_params_per_path_mode='fixed'."
+                )
             tm = np.asarray(hmm_transition_matrix, dtype=np.float64)
             pi = np.asarray(hmm_initial_distribution, dtype=np.float64).reshape(-1)
             mult = np.asarray(hmm_vol_multipliers, dtype=np.float64).reshape(-1)
+            r_mult = np.asarray(hmm_r_multipliers, dtype=np.float64).reshape(-1)
 
             if tm.ndim != 2 or tm.shape[0] != tm.shape[1]:
                 raise ValueError("hmm_transition_matrix must be a square matrix (KxK).")
@@ -951,6 +1020,8 @@ class HMMMatrixGARCHStock(GARCHStock):
                 raise ValueError("hmm_initial_distribution length must match transition matrix size.")
             if mult.shape[0] != k:
                 raise ValueError("hmm_vol_multipliers length must match transition matrix size.")
+            if r_mult.shape[0] != k:
+                raise ValueError("hmm_r_multipliers length must match transition matrix size.")
             if np.any(~np.isfinite(tm)) or np.any(tm < 0.0):
                 raise ValueError("hmm_transition_matrix entries must be finite and >= 0.")
             row_sums = np.sum(tm, axis=1)
@@ -965,10 +1036,13 @@ class HMMMatrixGARCHStock(GARCHStock):
             pi = pi / pi_sum
             if np.any(~np.isfinite(mult)) or np.any(mult <= 0.0):
                 raise ValueError("hmm_vol_multipliers entries must be finite and > 0.")
+            if np.any(~np.isfinite(r_mult)) or np.any(r_mult <= 0.0):
+                raise ValueError("hmm_r_multipliers entries must be finite and > 0.")
 
             self.hmm_transition_matrix = tm
             self.hmm_initial_distribution = pi
             self.hmm_vol_multipliers = mult
+            self.hmm_r_multipliers = r_mult
             self.hmm_num_states = int(k)
         else:
             if hmm_num_states is None:
@@ -1006,16 +1080,28 @@ class HMMMatrixGARCHStock(GARCHStock):
                     "Require 0 < hmm_vol_multipliers_uniform_low < "
                     "hmm_vol_multipliers_uniform_high."
                 )
+            if not (
+                np.isfinite(self.hmm_r_multipliers_uniform_low)
+                and np.isfinite(self.hmm_r_multipliers_uniform_high)
+                and self.hmm_r_multipliers_uniform_low > 0.0
+                and self.hmm_r_multipliers_uniform_high > self.hmm_r_multipliers_uniform_low
+            ):
+                raise ValueError(
+                    "Require 0 < hmm_r_multipliers_uniform_low < "
+                    "hmm_r_multipliers_uniform_high."
+                )
 
             self.hmm_num_states = int(k)
             # Placeholders; actual sampled per-path values are generated in _simulate_paths.
             self.hmm_transition_matrix = None
             self.hmm_initial_distribution = None
             self.hmm_vol_multipliers = None
+            self.hmm_r_multipliers = None
 
         self._last_sampled_hmm_state_transition_matrix = None
         self._last_sampled_hmm_state_initial_distribution = None
         self._last_sampled_hmm_state_vol_multipliers = None
+        self._last_sampled_hmm_state_r_multipliers = None
 
     def get_last_sampled_hmm_params(self):
         if self._last_sampled_hmm_state_transition_matrix is None:
@@ -1026,6 +1112,7 @@ class HMMMatrixGARCHStock(GARCHStock):
             "transition_matrix": self._last_sampled_hmm_state_transition_matrix.copy(),
             "initial_distribution": self._last_sampled_hmm_state_initial_distribution.copy(),
             "vol_multipliers": self._last_sampled_hmm_state_vol_multipliers.copy(),
+            "r_multipliers": self._last_sampled_hmm_state_r_multipliers.copy(),
         }
 
     def _simulate_paths(self, num_paths, n_steps, random_seed=None):
@@ -1134,6 +1221,11 @@ class HMMMatrixGARCHStock(GARCHStock):
             ).astype(np.float64)
             if self.hmm_vol_multipliers_sort:
                 vol_multipliers = np.sort(vol_multipliers, axis=1)
+            r_multipliers = rng.uniform(
+                self.hmm_r_multipliers_uniform_low,
+                self.hmm_r_multipliers_uniform_high,
+                size=(n_paths, k),
+            ).astype(np.float64)
         else:
             trans_mats = np.broadcast_to(
                 self.hmm_transition_matrix[None, :, :], (n_paths, k, k)
@@ -1143,6 +1235,9 @@ class HMMMatrixGARCHStock(GARCHStock):
             ).astype(np.float64)
             vol_multipliers = np.broadcast_to(
                 self.hmm_vol_multipliers[None, :], (n_paths, k)
+            ).astype(np.float64)
+            r_multipliers = np.broadcast_to(
+                self.hmm_r_multipliers[None, :], (n_paths, k)
             ).astype(np.float64)
 
         state_vars = np.square(sigma_long_run[:, None] * vol_multipliers)
@@ -1154,6 +1249,11 @@ class HMMMatrixGARCHStock(GARCHStock):
             state_omega = np.maximum(state_omega, 1e-14)
 
         z = self._draw_innovations(rng=rng, num_paths=n_paths, n_steps=n_steps, df_vec=df_vec)
+        tail_shocks = self._sample_tail_shocks(
+            rng=rng,
+            num_paths=n_paths,
+            n_steps=n_steps,
+        )
         log_paths = np.zeros((n_paths, n_steps + 1), dtype=np.float64)
 
         init_u = rng.random(n_paths)
@@ -1168,8 +1268,9 @@ class HMMMatrixGARCHStock(GARCHStock):
             var_accum += var_t
 
             shock = np.sqrt(var_t * dt) * z[:, t]
-            drift = (r_vec - 0.5 * var_t) * dt
-            log_paths[:, t + 1] = log_paths[:, t] + drift + shock
+            r_state = r_vec * r_multipliers[np.arange(n_paths), state]
+            drift = (r_state - 0.5 * var_t) * dt
+            log_paths[:, t + 1] = log_paths[:, t] + drift + shock + tail_shocks[:, t]
 
             eps = np.sqrt(var_t) * z[:, t]
             e2 = np.square(eps)
@@ -1200,6 +1301,8 @@ class HMMMatrixGARCHStock(GARCHStock):
         self._last_sampled_hmm_state_transition_matrix = trans_mats.astype(np.float32)
         self._last_sampled_hmm_state_initial_distribution = init_probs.astype(np.float32)
         self._last_sampled_hmm_state_vol_multipliers = vol_multipliers.astype(np.float32)
+        self._last_sampled_hmm_state_r_multipliers = r_multipliers.astype(np.float32)
+        self._last_sampled_tail_shocks = tail_shocks.astype(np.float32)
         return s0 * np.exp(log_paths)
 
 class HestonStock(Stock):

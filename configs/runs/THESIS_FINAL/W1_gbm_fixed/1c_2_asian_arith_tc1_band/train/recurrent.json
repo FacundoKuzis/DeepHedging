@@ -1,0 +1,11 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/train/W1_gbm_fixed.json",
+  "run_name": "tf_w1_1c_2_asian_arith_tc1_band_recurrent_train",
+  "description": "W1 1c_2_asian_arith_tc1_band recurrent",
+  "model_name": "tf_w1_gbm_fixed_1c_2_asian_arith_tc1_band_recurrent",
+  "agent_name": "RecurrentAgent",
+  "contingent_claim": "AsianArithmeticCall",
+  "proportional_cost": 0.01,
+  "risk_measure_name": "CVaR50",
+  "cvar_alpha": 0.5
+}

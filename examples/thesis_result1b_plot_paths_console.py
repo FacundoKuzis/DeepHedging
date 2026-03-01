@@ -4,6 +4,7 @@ Console script to visualize path samples from unified compare configs.
 It saves:
 1) Paths in price levels S
 2) Paths in log-moneyness ln(S/K)
+All labels are in Spanish and plots are generated without titles.
 """
 
 from __future__ import annotations
@@ -183,8 +184,7 @@ def _plot_levels(paths_2d: np.ndarray, out_path: str, context_length: int) -> No
     for row in paths_2d:
         ax.plot(t, row, alpha=0.35, linewidth=1.0)
     if context_length > 0:
-        ax.axvline(context_length, color="black", linestyle="--", linewidth=1.5, label="Inicio hedge")
-    ax.set_title("Paths simulados en niveles S")
+        ax.axvline(context_length, color="black", linestyle="--", linewidth=1.5, label="Inicio de cobertura")
     ax.set_xlabel("Paso temporal")
     ax.set_ylabel("Precio")
     if context_length > 0:
@@ -205,9 +205,8 @@ def _plot_log_moneyness(paths_2d: np.ndarray, strike: float, out_path: str, cont
     for row in log_m:
         ax.plot(t, row, alpha=0.35, linewidth=1.0)
     if context_length > 0:
-        ax.axvline(context_length, color="black", linestyle="--", linewidth=1.5, label="Inicio hedge")
+        ax.axvline(context_length, color="black", linestyle="--", linewidth=1.5, label="Inicio de cobertura")
     ax.axhline(0.0, color="gray", linestyle=":", linewidth=1.0)
-    ax.set_title("Paths simulados en log-moneyness: ln(S/K)")
     ax.set_xlabel("Paso temporal")
     ax.set_ylabel("ln(S/K)")
     if context_length > 0:
@@ -224,8 +223,7 @@ def _plot_sigma_histogram(sigmas: np.ndarray, out_path: str) -> None:
         raise ValueError("No finite sigma values available for histogram.")
     fig, ax = plt.subplots(figsize=(11, 6))
     ax.hist(vals, bins=60, alpha=0.8, edgecolor="black")
-    ax.set_title("Histograma de sigma por path")
-    ax.set_xlabel("sigma")
+    ax.set_xlabel("Volatilidad (sigma)")
     ax.set_ylabel("Frecuencia")
     ax.grid(alpha=0.2)
     fig.tight_layout()
@@ -238,16 +236,20 @@ def run_plot(
     config: dict,
     config_path: str,
     n_plot_paths: int,
+    plot_all_paths: bool = False,
     eval_paths_override: int | None = None,
 ) -> None:
     paths_2d, context_length, sigma_vec = _build_paths_from_config(
         config, eval_paths_override=eval_paths_override
     )
-    sample = _select_plot_paths(
-        paths_2d=paths_2d,
-        n_plot_paths=n_plot_paths,
-        seed=int(config["eval_seed"]),
-    )
+    if bool(plot_all_paths):
+        sample = np.asarray(paths_2d, dtype=np.float32)
+    else:
+        sample = _select_plot_paths(
+            paths_2d=paths_2d,
+            n_plot_paths=n_plot_paths,
+            seed=int(config["eval_seed"]),
+        )
 
     out_dir = _run_plot_dir(config_path=config_path)
     levels_path = os.path.join(out_dir, "sample_paths_levels.jpg")
@@ -275,6 +277,8 @@ def run_plot(
         print(f"[run:{run_name}] eval_paths override used: {int(eval_paths_override)}")
     if context_length > 0:
         print(f"[run:{run_name}] Context length detected: {context_length} timesteps.")
+    if bool(plot_all_paths):
+        print(f"[run:{run_name}] Se graficaron todos los paths: n={int(sample.shape[0])}.")
 
 
 def main() -> None:
@@ -291,6 +295,11 @@ def main() -> None:
         type=int,
         default=80,
         help="Number of sampled paths to draw (default: 80).",
+    )
+    parser.add_argument(
+        "--plot-all-paths",
+        action="store_true",
+        help="Si se activa, grafica todos los paths (ignora --n-plot-paths).",
     )
     parser.add_argument(
         "--eval-paths",
@@ -326,6 +335,7 @@ def main() -> None:
         config=cfg,
         config_path=source_path,
         n_plot_paths=int(args.n_plot_paths),
+        plot_all_paths=bool(args.plot_all_paths),
         eval_paths_override=args.eval_paths,
     )
 

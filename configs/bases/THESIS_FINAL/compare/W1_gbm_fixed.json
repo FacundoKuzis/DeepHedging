@@ -1,0 +1,16 @@
+{
+  "description": "THESIS_FINAL W1 compare: GBM fixed parameters.",
+  "instrument_model": "gbm",
+  "fixed_implied_vol": 0.2,
+  "fixed_risk_free": 0.03,
+  "gbm_sigma_per_path_mode": "fixed",
+  "r_per_path_mode": "fixed",
+  "use_price_history_context": false,
+  "context_length": 0,
+  "history_conv1d_enabled": false,
+  "benchmark_delta_sigma_mode": "none",
+  "benchmark_delta_r_mode": "none",
+  "plot_min_x": -4.0,
+  "plot_max_x": 4.0,
+  "extends": "common.json"
+}

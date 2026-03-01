@@ -33,6 +33,7 @@ def _apply_relaxed_defaults_compare(config: dict[str, Any], pipeline: str) -> di
             "output_root": "assets/thesis_result1b",
             "models_dir": "models",
             "optimizers_dir": "optimizers",
+            "compare_mode": "benchmark_vs_targets",
             "price_computation_mode": "pathwise_if_available",
             "sigma_mode": "train_average",
             "historical_sigma_window_days": 252,
@@ -99,6 +100,12 @@ def _apply_relaxed_defaults_compare(config: dict[str, Any], pipeline: str) -> di
             "benchmark_delta_sigma_floor": 1e-6,
             "benchmark_delta_sigma_cap": None,
             "benchmark_delta_sigma_default": None,
+            "benchmark_delta_r_mode": "none",
+            "benchmark_delta_r_context_days": 50,
+            "benchmark_delta_r_min_obs": 10,
+            "benchmark_delta_r_default": None,
+            "benchmark_delta_r_floor": None,
+            "benchmark_delta_r_cap": None,
             "benchmark_delta_student_t_fit_enabled": False,
             "benchmark_delta_student_t_mode": "static",
             "benchmark_delta_student_t_min_obs": 10,
@@ -112,6 +119,9 @@ def _apply_relaxed_defaults_compare(config: dict[str, Any], pipeline: str) -> di
             "benchmark_hmm_tail_adjustment_enabled": True,
             "benchmark_hmm_tail_multiplier_cap": 1.6,
             "benchmark_agents_to_compare": [],
+            "benchmark_actions_reuse_from_run": None,
+            "benchmark_actions_reuse_agent_name": None,
+            "benchmark_actions_reuse_apply_no_intervention": False,
         }
         for k, v in defaults.items():
             cfg.setdefault(k, v)

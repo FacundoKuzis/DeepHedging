@@ -188,6 +188,7 @@ def optional_keys() -> set[str]:
         "hmm_transition_matrix",
         "hmm_initial_distribution",
         "hmm_vol_multipliers",
+        "hmm_r_multipliers",
         "hmm_params_per_path_mode",
         "hmm_num_states",
         "hmm_transition_uniform_low",
@@ -197,12 +198,19 @@ def optional_keys() -> set[str]:
         "hmm_vol_multipliers_uniform_low",
         "hmm_vol_multipliers_uniform_high",
         "hmm_vol_multipliers_sort",
+        "hmm_r_multipliers_uniform_low",
+        "hmm_r_multipliers_uniform_high",
         "student_t_df",
         "student_t_df_per_path_mode",
         "student_t_df_uniform_low",
         "student_t_df_uniform_high",
         "student_t_df_discrete_values",
         "student_t_df_discrete_probs",
+        "tail_shock_enabled",
+        "tail_shock_magnitude_low",
+        "tail_shock_magnitude_high",
+        "tail_shock_gap_low",
+        "tail_shock_gap_high",
         "reduce_on_plateau_factor",
         "reduce_on_plateau_patience",
         "reduce_on_plateau_min_delta",
@@ -534,6 +542,19 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("garch_use_student_t must be bool when provided.")
         if bool(config.get("garch_use_student_t", False)):
             _validate_mode_for_param("garch_student_t_df", 8.0, min_exclusive=2.0)
+        if "tail_shock_enabled" in config and not isinstance(config["tail_shock_enabled"], bool):
+            raise ValueError("tail_shock_enabled must be bool when provided.")
+        if bool(config.get("tail_shock_enabled", False)):
+            ts_lo = float(config.get("tail_shock_magnitude_low", 0.02))
+            ts_hi = float(config.get("tail_shock_magnitude_high", 0.10))
+            if not (0.0 < ts_lo < ts_hi < 1.0):
+                raise ValueError(
+                    "Require 0 < tail_shock_magnitude_low < tail_shock_magnitude_high < 1."
+                )
+            gap_lo = int(config.get("tail_shock_gap_low", 10))
+            gap_hi = int(config.get("tail_shock_gap_high", 30))
+            if gap_lo <= 0 or gap_hi < gap_lo:
+                raise ValueError("Require 0 < tail_shock_gap_low <= tail_shock_gap_high.")
         if any(not np.isfinite(float(v)) for v in r_vals):
             raise ValueError("r values must be finite.")
 
@@ -556,14 +577,17 @@ def validate_config(config: dict[str, Any]) -> None:
                 tm = config.get("hmm_transition_matrix")
                 pi = config.get("hmm_initial_distribution")
                 mult = config.get("hmm_vol_multipliers")
-                if tm is None or pi is None or mult is None:
+                r_mult = config.get("hmm_r_multipliers")
+                if tm is None or pi is None or mult is None or r_mult is None:
                     raise ValueError(
                         "instrument_model='hmm_garch' with hmm_params_per_path_mode='fixed' "
-                        "requires: hmm_transition_matrix, hmm_initial_distribution, hmm_vol_multipliers."
+                        "requires: hmm_transition_matrix, hmm_initial_distribution, "
+                        "hmm_vol_multipliers, hmm_r_multipliers."
                     )
                 tm_arr = np.asarray(tm, dtype=np.float64)
                 pi_arr = np.asarray(pi, dtype=np.float64).reshape(-1)
                 mult_arr = np.asarray(mult, dtype=np.float64).reshape(-1)
+                r_mult_arr = np.asarray(r_mult, dtype=np.float64).reshape(-1)
                 if tm_arr.ndim != 2 or tm_arr.shape[0] != tm_arr.shape[1]:
                     raise ValueError("hmm_transition_matrix must be a square matrix (KxK).")
                 k = int(tm_arr.shape[0])
@@ -573,6 +597,8 @@ def validate_config(config: dict[str, Any]) -> None:
                     raise ValueError("hmm_initial_distribution length must match hmm_transition_matrix size.")
                 if mult_arr.shape[0] != k:
                     raise ValueError("hmm_vol_multipliers length must match hmm_transition_matrix size.")
+                if r_mult_arr.shape[0] != k:
+                    raise ValueError("hmm_r_multipliers length must match hmm_transition_matrix size.")
                 if np.any(~np.isfinite(tm_arr)) or np.any(tm_arr < 0.0):
                     raise ValueError("hmm_transition_matrix must contain finite entries >= 0.")
                 row_sums = np.sum(tm_arr, axis=1)
@@ -585,6 +611,8 @@ def validate_config(config: dict[str, Any]) -> None:
                     raise ValueError("hmm_initial_distribution must sum to > 0.")
                 if np.any(~np.isfinite(mult_arr)) or np.any(mult_arr <= 0.0):
                     raise ValueError("hmm_vol_multipliers must contain finite entries > 0.")
+                if np.any(~np.isfinite(r_mult_arr)) or np.any(r_mult_arr <= 0.0):
+                    raise ValueError("hmm_r_multipliers must contain finite entries > 0.")
             else:
                 if "hmm_num_states" not in config:
                     raise ValueError("hmm_num_states is required when hmm_params_per_path_mode='uniform_random'.")
@@ -604,6 +632,12 @@ def validate_config(config: dict[str, Any]) -> None:
                 if m_lo <= 0.0 or m_hi <= m_lo:
                     raise ValueError(
                         "Require 0 < hmm_vol_multipliers_uniform_low < hmm_vol_multipliers_uniform_high."
+                    )
+                r_lo = float(config.get("hmm_r_multipliers_uniform_low", 0.5))
+                r_hi = float(config.get("hmm_r_multipliers_uniform_high", 1.5))
+                if r_lo <= 0.0 or r_hi <= r_lo:
+                    raise ValueError(
+                        "Require 0 < hmm_r_multipliers_uniform_low < hmm_r_multipliers_uniform_high."
                     )
                 if "hmm_vol_multipliers_sort" in config and not isinstance(
                     config["hmm_vol_multipliers_sort"], bool

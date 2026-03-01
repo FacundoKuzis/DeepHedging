@@ -26,6 +26,8 @@ class GRUAgent(LSTMAgent):
         history_feature_dim=0,
         context_as_timesteps=True,
         context_pre_ttm_mode="calculated",
+        sequence_output_mode="trade",
+        position_activation="linear",
     ):
         
         super().__init__(
@@ -35,6 +37,8 @@ class GRUAgent(LSTMAgent):
             history_feature_dim=history_feature_dim,
             context_as_timesteps=context_as_timesteps,
             context_pre_ttm_mode=context_pre_ttm_mode,
+            sequence_output_mode=sequence_output_mode,
+            position_activation=position_activation,
         )
 
     def build_model(self, input_shape, output_shape):

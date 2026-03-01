@@ -1,0 +1,37 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/compare/W1_gbm_fixed.json",
+  "run_name": "tf_w1_gbm_fixed_1a_1_cmp",
+  "description": "W1 1a.1 compare",
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "tf_w1_gbm_fixed_1a_1_euro_tc0_cvar50_recurrent"
+    },
+    {
+      "agent_name": "LSTMAgent",
+      "model_name": "tf_w1_gbm_fixed_1a_1_euro_tc0_cvar50_lstm"
+    }
+  ],
+  "contingent_claim": "EuropeanCall",
+  "proportional_cost": 0.0,
+  "benchmark_agent_name": "DeltaHedgingAgent",
+  "benchmark_agents_to_compare": [
+    {
+      "agent_name": "LocalRiskMinimizationAgent",
+      "label": "LRM MC",
+      "config_overrides": {
+        "benchmark_lrm_provider": "monte_carlo",
+        "benchmark_lrm_outer_paths": 96,
+        "benchmark_lrm_mc_inner_paths": 192,
+        "benchmark_lrm_mc_inner_chunk_size": 256,
+        "benchmark_lrm_mc_parallel_enabled": true,
+        "benchmark_lrm_mc_n_workers": 8,
+        "benchmark_lrm_mc_parallel_backend": "thread",
+        "benchmark_lrm_mc_parallel_chunk_size": 512,
+        "benchmark_lrm_verbose": true,
+        "benchmark_lrm_log_every_t": 10,
+        "benchmark_lrm_mc_log_every_chunks": 150
+      }
+    }
+  ]
+}

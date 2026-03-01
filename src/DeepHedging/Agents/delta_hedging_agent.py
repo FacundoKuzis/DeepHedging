@@ -66,8 +66,39 @@ class DeltaHedgingAgent(BaseAgent):
         eps = 1e-4
         return self._d1_with_rate(S=S, T_minus_t=T_minus_t, rate=self.r, sigma=self.sigma)
 
-    def _normalize_rate_input(self, rate, batch_size):
-        return self._normalize_vector_input(rate, batch_size, field_name="rate")
+    def _normalize_rate_input(self, rate, batch_size, n_steps=None):
+        rate_tensor = tf.convert_to_tensor(rate, dtype=tf.float32)
+        if rate_tensor.shape.rank == 0:
+            return rate_tensor
+
+        if rate_tensor.shape.rank == 1:
+            rate_tensor = tf.reshape(rate_tensor, (-1,))
+            expected = None if batch_size is None else int(batch_size)
+            observed = None if rate_tensor.shape[0] is None else int(rate_tensor.shape[0])
+            if expected is not None and observed is not None and observed != expected:
+                raise ValueError(
+                    f"rate length mismatch: expected {expected}, got {observed}."
+                )
+            return rate_tensor
+
+        if rate_tensor.shape.rank == 2:
+            expected = None if batch_size is None else int(batch_size)
+            observed = None if rate_tensor.shape[0] is None else int(rate_tensor.shape[0])
+            if expected is not None and observed is not None and observed != expected:
+                raise ValueError(
+                    f"rate batch mismatch: expected {expected}, got {observed}."
+                )
+            if n_steps is not None:
+                observed_steps = None if rate_tensor.shape[1] is None else int(rate_tensor.shape[1])
+                if observed_steps is not None and observed_steps < int(n_steps):
+                    raise ValueError(
+                        f"rate timestep mismatch: expected at least {int(n_steps)}, got {observed_steps}."
+                    )
+            return rate_tensor
+
+        raise ValueError(
+            f"rate must be scalar, rank-1 or rank-2 tensor. Got rank={rate_tensor.shape.rank}."
+        )
 
     def _normalize_sigma_input(self, sigma, batch_size, n_steps=None):
         sigma_tensor = tf.convert_to_tensor(sigma, dtype=tf.float32)
@@ -205,11 +236,15 @@ class DeltaHedgingAgent(BaseAgent):
         self.last_delta = tf.zeros((batch_size,), dtype=tf.float32)
 
     def process_batch(self, batch_paths, batch_T_minus_t, batch_path_r=None, batch_path_sigma=None):
+        n_steps = int(batch_paths.shape[1]) - 1
         if batch_path_r is not None:
-            rate_vector = self._normalize_rate_input(batch_path_r, batch_paths.shape[0])
+            rate_vector = self._normalize_rate_input(
+                batch_path_r,
+                batch_paths.shape[0],
+                n_steps=n_steps,
+            )
         else:
             rate_vector = None
-        n_steps = int(batch_paths.shape[1]) - 1
         if batch_path_sigma is not None:
             sigma_vector = self._normalize_sigma_input(
                 batch_path_sigma,
@@ -224,13 +259,16 @@ class DeltaHedgingAgent(BaseAgent):
             logger.debug("Processing delta hedging timestep %s", t)
             current_paths = batch_paths[:, t, :] # (n_simulations, n_timesteps, n_instruments)
             current_T_minus_t = batch_T_minus_t[:, t] # (n_simulations, n_timesteps)
+            rate_t = rate_vector
+            if rate_vector is not None and rate_vector.shape.rank == 2:
+                rate_t = rate_vector[:, t]
             sigma_t = sigma_vector
             if sigma_vector is not None and sigma_vector.shape.rank == 2:
                 sigma_t = sigma_vector[:, t]
             action = self.act(
                 current_paths,
                 current_T_minus_t,
-                rate=rate_vector,
+                rate=rate_t,
                 sigma=sigma_t,
             )
             all_actions.append(action)
@@ -273,7 +311,20 @@ class DeltaHedgingAgent(BaseAgent):
             S = tf.reshape(tf.convert_to_tensor(path_s0, dtype=tf.float32), (-1,))
 
         n_paths = int(S.shape[0])
-        r_eff = self._normalize_rate_input(self.r if path_r is None else path_r, n_paths)
+        r_eff = tf.convert_to_tensor(
+            self.r if path_r is None else path_r,
+            dtype=tf.float32,
+        )
+        if r_eff.shape.rank == 0:
+            r_eff = tf.fill((n_paths,), r_eff)
+        else:
+            if r_eff.shape.rank == 2:
+                r_eff = r_eff[:, 0]
+            r_eff = tf.reshape(r_eff, (-1,))
+            if r_eff.shape[0] is not None and int(r_eff.shape[0]) != n_paths:
+                raise ValueError(
+                    f"rate length mismatch: expected {n_paths}, got {int(r_eff.shape[0])}."
+                )
         sigma_eff = tf.convert_to_tensor(
             float(self.sigma) if path_sigma is None else path_sigma,
             dtype=tf.float32,

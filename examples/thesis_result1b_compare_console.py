@@ -24,6 +24,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import matplotlib.pyplot as plt
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
@@ -117,10 +118,6 @@ def required_keys() -> set[str]:
         "proportional_cost",
         "risk_measure_name",
         "cvar_alpha",
-        "benchmark_agent_name",
-        "benchmark_bump_size",
-        "benchmark_num_simulations",
-        "benchmark_seed",
         "trained_agents",
         "models_dir",
         "optimizers_dir",
@@ -160,6 +157,11 @@ def required_keys() -> set[str]:
 
 def optional_keys() -> set[str]:
     return {
+        "compare_mode",
+        "benchmark_agent_name",
+        "benchmark_bump_size",
+        "benchmark_num_simulations",
+        "benchmark_seed",
         "instrument_model",
         "price_computation_mode",
         "path_transformation_type",
@@ -203,9 +205,15 @@ def optional_keys() -> set[str]:
         "garch_student_t_df_uniform_high",
         "garch_student_t_df_discrete_values",
         "garch_student_t_df_discrete_probs",
+        "tail_shock_enabled",
+        "tail_shock_magnitude_low",
+        "tail_shock_magnitude_high",
+        "tail_shock_gap_low",
+        "tail_shock_gap_high",
         "hmm_transition_matrix",
         "hmm_initial_distribution",
         "hmm_vol_multipliers",
+        "hmm_r_multipliers",
         "hmm_params_per_path_mode",
         "hmm_num_states",
         "hmm_transition_uniform_low",
@@ -215,6 +223,8 @@ def optional_keys() -> set[str]:
         "hmm_vol_multipliers_uniform_low",
         "hmm_vol_multipliers_uniform_high",
         "hmm_vol_multipliers_sort",
+        "hmm_r_multipliers_uniform_low",
+        "hmm_r_multipliers_uniform_high",
         "student_t_df",
         "student_t_df_per_path_mode",
         "student_t_df_uniform_low",
@@ -309,6 +319,15 @@ def optional_keys() -> set[str]:
         "benchmark_hmm_tail_adjustment_enabled",
         "benchmark_hmm_tail_multiplier_cap",
         "benchmark_agents_to_compare",
+        "benchmark_actions_reuse_from_run",
+        "benchmark_actions_reuse_agent_name",
+        "benchmark_actions_reuse_apply_no_intervention",
+        "benchmark_delta_r_mode",
+        "benchmark_delta_r_context_days",
+        "benchmark_delta_r_min_obs",
+        "benchmark_delta_r_default",
+        "benchmark_delta_r_floor",
+        "benchmark_delta_r_cap",
     }
 
 
@@ -321,9 +340,21 @@ def validate_config(config: dict[str, Any]) -> None:
     if str(config["model_family"]).strip().lower() != "deep_hedging_result_1b":
         raise ValueError("model_family must be 'deep_hedging_result_1b'.")
 
-    validate_agent_name(str(config["benchmark_agent_name"]))
-    if str(config["benchmark_agent_name"]) in TRAINABLE_AGENT_NAMES:
-        raise ValueError("benchmark_agent_name must be non-trainable benchmark.")
+    compare_mode = str(config.get("compare_mode", "benchmark_vs_targets")).strip().lower()
+    if compare_mode not in {"benchmark_vs_targets", "trained_only"}:
+        raise ValueError("compare_mode must be one of {'benchmark_vs_targets','trained_only'}.")
+
+    benchmark_name = config.get("benchmark_agent_name", None)
+    if compare_mode == "benchmark_vs_targets":
+        if benchmark_name is None or not str(benchmark_name).strip():
+            raise ValueError("benchmark_agent_name is required when compare_mode='benchmark_vs_targets'.")
+        validate_agent_name(str(benchmark_name))
+        if str(benchmark_name) in TRAINABLE_AGENT_NAMES:
+            raise ValueError("benchmark_agent_name must be non-trainable benchmark.")
+    elif benchmark_name is not None and str(benchmark_name).strip():
+        # In trained_only mode we accept benchmark_agent_name for backward compatibility
+        # but still validate if provided.
+        validate_agent_name(str(benchmark_name))
 
     for key in ["run_name", "description", "ticker", "train_start_date", "train_end_date", "test_start_date", "test_end_date", "interval", "price_col", "models_dir", "optimizers_dir"]:
         if not isinstance(config[key], str) or not config[key].strip():
@@ -490,6 +521,7 @@ def validate_config(config: dict[str, Any]) -> None:
                 )
 
     delta_sigma_mode = str(config.get("benchmark_delta_sigma_mode", "none")).strip().lower()
+    compare_mode = str(config.get("compare_mode", "benchmark_vs_targets")).strip().lower()
     if delta_sigma_mode not in {
         "none",
         "garch_context_static",
@@ -501,7 +533,11 @@ def validate_config(config: dict[str, Any]) -> None:
             "{'none','garch_context_static','garch_context_stepwise','hmm_garch_student_context_stepwise'}."
         )
     if delta_sigma_mode != "none":
-        benchmark_name = str(config["benchmark_agent_name"]).strip()
+        if compare_mode != "benchmark_vs_targets":
+            raise ValueError(
+                "benchmark_delta_sigma_mode != 'none' requires compare_mode='benchmark_vs_targets'."
+            )
+        benchmark_name = str(config.get("benchmark_agent_name", "")).strip()
         allowed_sigma_benchmarks = {
             "DeltaHedgingAgent",
             "LocalRiskMinimizationAgent",
@@ -995,8 +1031,38 @@ def validate_config(config: dict[str, Any]) -> None:
         if "config_overrides" in item and not isinstance(item["config_overrides"], dict):
             raise ValueError(f"benchmark_agents_to_compare[{i}].config_overrides must be an object when provided.")
 
-    if len(config["trained_agents"]) == 0 and len(benchmark_agents_to_compare) == 0:
-        raise ValueError("Provide at least one comparison target: trained_agents and/or benchmark_agents_to_compare.")
+    if compare_mode == "trained_only":
+        if len(config["trained_agents"]) < 2:
+            raise ValueError("compare_mode='trained_only' requires at least 2 trained_agents.")
+        if len(benchmark_agents_to_compare) > 0:
+            raise ValueError("benchmark_agents_to_compare is not allowed when compare_mode='trained_only'.")
+    else:
+        if len(config["trained_agents"]) == 0 and len(benchmark_agents_to_compare) == 0:
+            raise ValueError("Provide at least one comparison target: trained_agents and/or benchmark_agents_to_compare.")
+
+    if "benchmark_actions_reuse_from_run" in config:
+        raw = config["benchmark_actions_reuse_from_run"]
+        if raw is not None and (not isinstance(raw, str) or not str(raw).strip()):
+            raise ValueError("benchmark_actions_reuse_from_run must be null or non-empty string.")
+    if "benchmark_actions_reuse_agent_name" in config:
+        raw = config["benchmark_actions_reuse_agent_name"]
+        if raw is not None and (not isinstance(raw, str) or not str(raw).strip()):
+            raise ValueError("benchmark_actions_reuse_agent_name must be null or non-empty string.")
+    if "benchmark_actions_reuse_apply_no_intervention" in config and not isinstance(
+        config["benchmark_actions_reuse_apply_no_intervention"], bool
+    ):
+        raise ValueError("benchmark_actions_reuse_apply_no_intervention must be bool when provided.")
+
+    if "benchmark_delta_r_mode" in config:
+        mode = str(config["benchmark_delta_r_mode"]).strip().lower()
+        if mode not in {"none", "context_stepwise", "context_static"}:
+            raise ValueError(
+                "benchmark_delta_r_mode must be one of {'none','context_stepwise','context_static'}."
+            )
+    if "benchmark_delta_r_context_days" in config and int(config["benchmark_delta_r_context_days"]) <= 0:
+        raise ValueError("benchmark_delta_r_context_days must be > 0.")
+    if "benchmark_delta_r_min_obs" in config and int(config["benchmark_delta_r_min_obs"]) <= 0:
+        raise ValueError("benchmark_delta_r_min_obs must be > 0.")
 
 
 
@@ -1061,6 +1127,81 @@ def _compute_empirical_error_metrics(errors: np.ndarray) -> dict[str, float]:
     out["es_95"] = float(np.mean(tail95)) if tail95.size > 0 else out["var_95"]
     out["es_99"] = float(np.mean(tail99)) if tail99.size > 0 else out["var_99"]
     return out
+
+
+def _agent_identifier(agent, idx: int) -> str:
+    if hasattr(agent, "agent_id"):
+        return str(agent.agent_id)
+    return f"{int(idx):02d}_{getattr(agent, 'name', 'unknown_agent')}"
+
+
+def _save_actions_scatter_plot(
+    benchmark_agent,
+    compare_agent,
+    actions_cache_dir: str | None,
+    plots_dir: str,
+    pair_name: str,
+    run_name: str,
+    max_points: int = 200_000,
+) -> str | None:
+    if not actions_cache_dir:
+        print(
+            f"[run:{run_name}] [warning] No se pudo generar scatter de acciones para '{pair_name}': "
+            "actions_cache deshabilitado."
+        )
+        return None
+
+    bench_id = _agent_identifier(benchmark_agent, 0)
+    agent_id = _agent_identifier(compare_agent, 1)
+    bench_path = os.path.join(actions_cache_dir, f"{bench_id}_actions.npy")
+    agent_path = os.path.join(actions_cache_dir, f"{agent_id}_actions.npy")
+    if not (os.path.isfile(bench_path) and os.path.isfile(agent_path)):
+        print(
+            f"[run:{run_name}] [warning] No se pudo generar scatter de acciones para '{pair_name}': "
+            f"faltan archivos ({bench_path}, {agent_path})."
+        )
+        return None
+
+    bench_actions = np.asarray(np.load(bench_path), dtype=np.float64).reshape(-1)
+    agent_actions = np.asarray(np.load(agent_path), dtype=np.float64).reshape(-1)
+    n = int(min(bench_actions.size, agent_actions.size))
+    if n <= 0:
+        print(f"[run:{run_name}] [warning] Scatter omitido para '{pair_name}': sin acciones disponibles.")
+        return None
+
+    x = bench_actions[:n]
+    y = agent_actions[:n]
+    finite = np.isfinite(x) & np.isfinite(y)
+    x = x[finite]
+    y = y[finite]
+    if x.size == 0:
+        print(f"[run:{run_name}] [warning] Scatter omitido para '{pair_name}': acciones no finitas.")
+        return None
+
+    if int(x.size) > int(max_points):
+        rng = np.random.default_rng(12345)
+        idx = rng.choice(x.size, size=int(max_points), replace=False)
+        x = x[idx]
+        y = y[idx]
+
+    lo = float(min(np.min(x), np.min(y)))
+    hi = float(max(np.max(x), np.max(y)))
+    if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
+        lo = lo - 1.0
+        hi = hi + 1.0
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.scatter(x, y, s=2, alpha=0.18, linewidths=0.0, color="#1f77b4")
+    ax.plot([lo, hi], [lo, hi], linestyle="--", linewidth=1.0, color="black")
+    ax.set_xlabel("Acción benchmark")
+    ax.set_ylabel("Acción agente")
+    ax.grid(alpha=0.2)
+    fig.tight_layout()
+
+    scatter_path = os.path.join(plots_dir, f"{pair_name}_acciones_scatter.jpg")
+    fig.savefig(scatter_path, dpi=180)
+    plt.close(fig)
+    return scatter_path
 
 
 def _paths_signature(paths_3d: np.ndarray) -> dict[str, Any]:
@@ -1141,6 +1282,148 @@ def _ensure_actions_cache_consistency(
 
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(cache_manifest, f, indent=2)
+
+
+def _resolve_existing_run_dir(run_ref: str) -> str:
+    ref = str(run_ref).strip().replace("\\", "/")
+    if not ref:
+        raise ValueError("run_ref cannot be empty.")
+    if ref.endswith(".json"):
+        ref = ref[: -len(".json")]
+    if os.path.isabs(ref) and os.path.isdir(ref):
+        return ref
+    candidate = os.path.normpath(os.path.join(RESULT1B_ROOT, ref))
+    if os.path.isdir(candidate):
+        return candidate
+    raise FileNotFoundError(
+        f"Cannot resolve benchmark_actions_reuse_from_run='{run_ref}' under storage root '{RESULT1B_ROOT}'."
+    )
+
+
+def _find_actions_file(actions_cache_dir: str, agent_name_or_id: str) -> str:
+    key = str(agent_name_or_id).strip()
+    if not key:
+        raise ValueError("agent_name_or_id cannot be empty when resolving actions file.")
+    direct = os.path.join(actions_cache_dir, f"{key}_actions.npy")
+    if os.path.isfile(direct):
+        return direct
+
+    suffix = f"_{key}_actions.npy"
+    candidates = [
+        os.path.join(actions_cache_dir, fname)
+        for fname in os.listdir(actions_cache_dir)
+        if fname.endswith(suffix)
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise FileNotFoundError(
+            f"Multiple actions files match '{key}' in '{actions_cache_dir}': {candidates}"
+        )
+    raise FileNotFoundError(
+        f"No actions file found for key '{key}' in '{actions_cache_dir}'."
+    )
+
+
+def _apply_no_intervention_band_to_actions(
+    actions_3d: np.ndarray,
+    bound: float,
+    mode: str,
+    eps: float = 1e-8,
+) -> np.ndarray:
+    arr = np.asarray(actions_3d, dtype=np.float32)
+    if arr.ndim != 3:
+        raise ValueError(f"actions_3d must be rank 3. Got shape={arr.shape}.")
+    if arr.shape[2] < 1:
+        return arr.copy()
+    eta = float(bound)
+    if eta <= 0.0:
+        return arr.copy()
+    mode = str(mode).strip().lower()
+    if mode not in {"absolute", "percentage"}:
+        raise ValueError("no-intervention mode must be 'absolute' or 'percentage'.")
+
+    out = arr.copy()
+    target_trades = out[:, :, 0]
+    target_pos = np.cumsum(target_trades, axis=1)
+    exec_pos = np.zeros_like(target_pos, dtype=np.float32)
+    exec_pos[:, 0] = target_pos[:, 0]
+
+    for t in range(1, target_pos.shape[1]):
+        desired = target_pos[:, t]
+        prev_exec = exec_pos[:, t - 1]
+        diff = np.abs(desired - prev_exec)
+        if mode == "percentage":
+            scale = np.maximum(np.maximum(np.abs(desired), np.abs(prev_exec)), float(eps))
+            hold = (diff / scale) < eta
+        else:
+            hold = diff < eta
+        exec_pos[:, t] = np.where(hold, prev_exec, desired)
+
+    first_trade = exec_pos[:, :1]
+    rest_trades = exec_pos[:, 1:] - exec_pos[:, :-1]
+    exec_trades = np.concatenate([first_trade, rest_trades], axis=1)
+    out[:, :, 0] = exec_trades.astype(np.float32)
+    return out
+
+
+def _estimate_pathwise_r_from_context(
+    hedge_paths_2d: np.ndarray,
+    pre_history_prices_2d: np.ndarray | None,
+    context_days: int,
+    trading_days_per_year: int,
+    min_obs: int,
+    default_r: float,
+    r_floor: float | None,
+    r_cap: float | None,
+    stepwise: bool,
+) -> np.ndarray:
+    hedge = np.asarray(hedge_paths_2d, dtype=np.float64)
+    if hedge.ndim != 2:
+        raise ValueError(f"hedge_paths_2d must be rank 2. Got shape={hedge.shape}.")
+    n_paths, n_steps_plus_one = int(hedge.shape[0]), int(hedge.shape[1])
+    if n_steps_plus_one < 2:
+        raise ValueError("hedge_paths_2d must include at least two time points.")
+    n_steps = n_steps_plus_one - 1
+
+    if pre_history_prices_2d is None:
+        pre = np.zeros((n_paths, 0), dtype=np.float64)
+    else:
+        pre = np.asarray(pre_history_prices_2d, dtype=np.float64)
+        if pre.ndim != 2 or int(pre.shape[0]) != n_paths:
+            raise ValueError(
+                "pre_history_prices_2d must be rank 2 with same n_paths as hedge paths."
+            )
+
+    full_prices = np.concatenate([pre, hedge], axis=1)
+    safe_prices = np.maximum(full_prices, 1e-12)
+    log_returns = np.diff(np.log(safe_prices), axis=1)
+
+    pre_len = int(pre.shape[1])
+    ctx = max(1, int(context_days))
+    min_obs = max(1, int(min_obs))
+    annualizer = float(trading_days_per_year)
+    default_r = float(default_r)
+
+    out = np.full((n_paths, n_steps), default_r, dtype=np.float64)
+    for t in range(n_steps):
+        # Causal window up to time t (excluded future hedge returns).
+        end_idx = pre_len + t
+        start_idx = max(0, end_idx - ctx)
+        window = log_returns[:, start_idx:end_idx]
+        if window.shape[1] >= min_obs:
+            r_hat = np.mean(window, axis=1) * annualizer
+        else:
+            r_hat = np.full((n_paths,), default_r, dtype=np.float64)
+        if r_floor is not None:
+            r_hat = np.maximum(r_hat, float(r_floor))
+        if r_cap is not None:
+            r_hat = np.minimum(r_hat, float(r_cap))
+        out[:, t] = r_hat
+
+    if stepwise:
+        return out.astype(np.float32)
+    return out[:, 0].astype(np.float32)
 
 
 def _load_external_series_candidates(
@@ -1286,12 +1569,16 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     claim = build_claim_from_config(cfg_for_builders)
     risk_measure = build_risk_measure_from_config(cfg_for_builders)
 
-    benchmark_agent = build_agent_from_config(
-        agent_name=str(config["benchmark_agent_name"]),
-        instrument=instrument,
-        claim=claim,
-        config=cfg_for_builders,
-    )
+    compare_mode = str(config.get("compare_mode", "benchmark_vs_targets")).strip().lower()
+    benchmark_agent_name = config.get("benchmark_agent_name", None)
+    benchmark_agent = None
+    if compare_mode == "benchmark_vs_targets":
+        benchmark_agent = build_agent_from_config(
+            agent_name=str(benchmark_agent_name),
+            instrument=instrument,
+            claim=claim,
+            config=cfg_for_builders,
+        )
 
     trained_agents = []
     for item in config["trained_agents"]:
@@ -1309,33 +1596,41 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         trained_agents.append(agent)
 
     benchmark_compare_agents = []
-    used_names = {str(getattr(benchmark_agent, "name", "benchmark"))}
-    for i, item in enumerate(config.get("benchmark_agents_to_compare", [])):
-        per_agent_cfg = dict(cfg_for_builders)
-        per_agent_cfg.update(dict(item.get("config_overrides", {})))
-        agent = build_agent_from_config(
-            agent_name=str(item["agent_name"]),
-            instrument=instrument,
-            claim=claim,
-            config=per_agent_cfg,
-        )
-        label = str(item.get("label") or _display_name(agent, str(config["language"]))).strip()
-        slug = _slugify_label(label)
-        base_name = f"bm_{i+1:02d}_{slug}"
-        unique_name = base_name
-        suffix = 2
-        while unique_name in used_names:
-            unique_name = f"{base_name}_{suffix}"
-            suffix += 1
-        used_names.add(unique_name)
-        agent.name = unique_name
-        agent.agent_id = unique_name
-        agent.plot_name = {"es": label, "en": label}
-        benchmark_compare_agents.append(agent)
-        print(f"[run:{run_name}] Added benchmark comparison agent: {label} ({unique_name})")
+    if compare_mode == "benchmark_vs_targets":
+        used_names = {str(getattr(benchmark_agent, "name", "benchmark"))}
+        for i, item in enumerate(config.get("benchmark_agents_to_compare", [])):
+            per_agent_cfg = dict(cfg_for_builders)
+            per_agent_cfg.update(dict(item.get("config_overrides", {})))
+            agent = build_agent_from_config(
+                agent_name=str(item["agent_name"]),
+                instrument=instrument,
+                claim=claim,
+                config=per_agent_cfg,
+            )
+            label = str(item.get("label") or _display_name(agent, str(config["language"]))).strip()
+            slug = _slugify_label(label)
+            base_name = f"bm_{i+1:02d}_{slug}"
+            unique_name = base_name
+            suffix = 2
+            while unique_name in used_names:
+                unique_name = f"{base_name}_{suffix}"
+                suffix += 1
+            used_names.add(unique_name)
+            agent.name = unique_name
+            agent.agent_id = unique_name
+            agent.plot_name = {"es": label, "en": label}
+            benchmark_compare_agents.append(agent)
+            print(f"[run:{run_name}] Added benchmark comparison agent: {label} ({unique_name})")
 
-    compare_targets = benchmark_compare_agents + trained_agents
-    all_agents = [benchmark_agent] + compare_targets
+    if compare_mode == "trained_only":
+        benchmark_agent = trained_agents[0]
+        compare_targets = trained_agents[1:]
+        all_agents = trained_agents
+    else:
+        compare_targets = benchmark_compare_agents + trained_agents
+        all_agents = [benchmark_agent] + compare_targets
+
+    benchmark_effective_name = str(getattr(benchmark_agent, "name", "none")) if benchmark_agent is not None else "none"
     env = build_environment(
         agent=benchmark_agent,
         instrument=instrument,
@@ -1402,6 +1697,12 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     delta_student_t_df_default = float(config.get("benchmark_delta_student_t_df_default", 8.0))
     delta_student_t_df_floor = float(config.get("benchmark_delta_student_t_df_floor", 2.1))
     delta_student_t_df_cap = float(config.get("benchmark_delta_student_t_df_cap", 200.0))
+    delta_r_mode = str(config.get("benchmark_delta_r_mode", "none")).strip().lower()
+    delta_r_context_days = int(config.get("benchmark_delta_r_context_days", 50))
+    delta_r_min_obs = int(config.get("benchmark_delta_r_min_obs", 10))
+    delta_r_default = float(config.get("benchmark_delta_r_default", float(calib.r_train)))
+    delta_r_floor = config.get("benchmark_delta_r_floor", None)
+    delta_r_cap = config.get("benchmark_delta_r_cap", None)
     per_path_student_t_df = None
 
     if test_data_mode == "historical_windows":
@@ -1943,6 +2244,41 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 f"State mix at t0: {state_summary}"
             )
 
+    if delta_r_mode != "none":
+        if eval_paths_tensor is None:
+            raise ValueError("Cannot estimate benchmark_delta_r_mode without evaluation paths.")
+        eval_paths_2d_for_r = np.asarray(eval_paths_tensor, dtype=np.float32)[:, :, 0]
+        pre_hist_for_r = None
+        if eval_pre_history_tensor is not None:
+            pre_hist_for_r = np.asarray(eval_pre_history_tensor, dtype=np.float32)
+        stepwise_r = delta_r_mode == "context_stepwise"
+        per_path_r = _estimate_pathwise_r_from_context(
+            hedge_paths_2d=eval_paths_2d_for_r,
+            pre_history_prices_2d=pre_hist_for_r,
+            context_days=int(delta_r_context_days),
+            trading_days_per_year=int(config["trading_days_per_year"]),
+            min_obs=int(delta_r_min_obs),
+            default_r=float(delta_r_default),
+            r_floor=None if delta_r_floor is None else float(delta_r_floor),
+            r_cap=None if delta_r_cap is None else float(delta_r_cap),
+            stepwise=bool(stepwise_r),
+        )
+        if np.ndim(per_path_r) == 1:
+            print(
+                f"[run:{run_name}] benchmark_delta_r_mode={delta_r_mode}: "
+                f"r mean={float(np.mean(per_path_r)):.6f}, std={float(np.std(per_path_r)):.6f}"
+            )
+        else:
+            r_t0 = np.asarray(per_path_r, dtype=np.float32)[:, 0]
+            print(
+                f"[run:{run_name}] benchmark_delta_r_mode={delta_r_mode}: "
+                f"r_t0 mean={float(np.mean(r_t0)):.6f}, std={float(np.std(r_t0)):.6f}, "
+                f"steps={int(np.asarray(per_path_r).shape[1])}"
+            )
+            r_steps_csv = os.path.join(dirs["tables_dir"], "risk_free_stepwise.csv")
+            pd.DataFrame(np.asarray(per_path_r, dtype=np.float32)).to_csv(r_steps_csv, index=False)
+            print(f"[run:{run_name}] Saved stepwise risk-free matrix: {r_steps_csv}")
+
     requested_pricing_method = str(config["pricing_method"]).strip().lower()
     effective_pricing_method = "fixed"
     if requested_pricing_method != "fixed":
@@ -1958,7 +2294,8 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "schema_version": 5,
             "actions_cache_schema_version": int(ACTIONS_CACHE_SCHEMA_VERSION),
             "run_name": str(run_name),
-            "benchmark_agent": str(config["benchmark_agent_name"]),
+            "compare_mode": str(compare_mode),
+            "benchmark_agent": str(benchmark_effective_name),
             "trained_agents": config["trained_agents"],
             "benchmark_agents_to_compare": config.get("benchmark_agents_to_compare", []),
             "pricing_method": str(effective_pricing_method),
@@ -1970,6 +2307,9 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             "sigma_source": str(config["sigma_source"]),
             "sigma_mode": _sigma_mode(config),
             "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
+            "benchmark_delta_r_mode": str(delta_r_mode),
+            "benchmark_delta_r_context_days": int(delta_r_context_days),
+            "benchmark_delta_r_min_obs": int(delta_r_min_obs),
             "benchmark_delta_sigma_context_days": int(config.get("benchmark_delta_sigma_context_days", 50)),
             "benchmark_delta_sigma_min_obs": int(config.get("benchmark_delta_sigma_min_obs", 10)),
             "benchmark_delta_sigma_garch_fit_from_context": bool(
@@ -2062,6 +2402,70 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             run_name=run_name,
         )
 
+    fixed_actions_paths = None
+    reuse_actions_from = config.get("benchmark_actions_reuse_from_run", None)
+    if (
+        compare_mode == "benchmark_vs_targets"
+        and reuse_actions_from is not None
+        and str(reuse_actions_from).strip()
+    ):
+        source_run_dir = _resolve_existing_run_dir(str(reuse_actions_from))
+        source_actions_dir = os.path.join(source_run_dir, "actions_cache")
+        if not os.path.isdir(source_actions_dir):
+            raise FileNotFoundError(
+                f"benchmark_actions_reuse_from_run resolved to '{source_run_dir}' but actions_cache was not found."
+            )
+        source_key = config.get("benchmark_actions_reuse_agent_name", None)
+        if source_key is None or not str(source_key).strip():
+            source_key = str(getattr(benchmark_agent, "name", ""))
+        source_actions_path = _find_actions_file(source_actions_dir, str(source_key))
+        reused_actions_path = source_actions_path
+
+        if bool(config.get("benchmark_actions_reuse_apply_no_intervention", False)):
+            band = float(
+                config.get(
+                    "benchmark_no_intervention_bound",
+                    config.get("no_intervention_bound", config.get("benchmark_no_trade_band", 0.0)),
+                )
+            )
+            band_mode = str(
+                config.get(
+                    "benchmark_no_intervention_mode",
+                    config.get("no_intervention_mode", "absolute"),
+                )
+            ).strip().lower()
+            actions_arr = np.load(source_actions_path)
+            actions_arr = _apply_no_intervention_band_to_actions(
+                actions_3d=actions_arr,
+                bound=float(band),
+                mode=str(band_mode),
+            )
+            if actions_cache_dir is not None:
+                os.makedirs(actions_cache_dir, exist_ok=True)
+                destination = os.path.join(
+                    actions_cache_dir,
+                    f"{_agent_identifier(benchmark_agent, 0)}_actions_reused_band.npy",
+                )
+            else:
+                destination = os.path.join(
+                    dirs["run_dir"],
+                    f"{_agent_identifier(benchmark_agent, 0)}_actions_reused_band.npy",
+                )
+            np.save(destination, actions_arr.astype(np.float32))
+            reused_actions_path = destination
+            print(
+                f"[run:{run_name}] Applied no-intervention band to reused benchmark actions: "
+                f"mode={band_mode}, bound={band:.6g}. Saved: {destination}"
+            )
+
+        fixed_actions_paths = {
+            _agent_identifier(benchmark_agent, 0): reused_actions_path,
+        }
+        print(
+            f"[run:{run_name}] Reusing benchmark actions from run: {source_run_dir} "
+            f"(source={source_actions_path})"
+        )
+
     eval_agent_batch_size = config.get("eval_agent_batch_size")
     terminal_progress_every = config.get("terminal_progress_log_every_agent_batches")
 
@@ -2080,7 +2484,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             per_path_r=per_path_r,
             per_path_sigma=per_path_sigma,
             plot_error=True,
-            plot_title="Error de Cobertura Terminal",
+            plot_title="",
             save_plot_path=plot_path,
             save_stats_path=stats_path,
             loss_functions=loss_fns,
@@ -2092,11 +2496,22 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
             progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
             save_actions_path=actions_cache_dir,
+            fixed_actions_paths=fixed_actions_paths,
         )
         pair_df.insert(0, "pair_name", pair_name)
         pairwise_rows.append(pair_df)
         print(f"[run:{run_name}] Saved pair plot: {plot_path}")
         print(f"[run:{run_name}] Saved pair stats: {stats_path}")
+        scatter_path = _save_actions_scatter_plot(
+            benchmark_agent=benchmark_agent,
+            compare_agent=agent,
+            actions_cache_dir=actions_cache_dir,
+            plots_dir=dirs["plots_dir"],
+            pair_name=pair_name,
+            run_name=run_name,
+        )
+        if scatter_path is not None:
+            print(f"[run:{run_name}] Saved pair action scatter: {scatter_path}")
 
     if pairwise_rows:
         pairwise_all = pd.concat(pairwise_rows, ignore_index=True)
@@ -2123,9 +2538,73 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         agent_eval_batch_size=int(eval_agent_batch_size) if eval_agent_batch_size is not None else None,
         progress_log_every_agent_batches=int(terminal_progress_every) if terminal_progress_every is not None else 5,
         save_actions_path=actions_cache_dir,
+        fixed_actions_paths=fixed_actions_paths,
         return_errors=True,
     )
     mean_errors, std_errors, loss_results = point_payload
+
+    # Persist full evaluation payload so any downstream metric can be recomputed
+    # without rerunning the whole comparison.
+    raw_dir = os.path.join(dirs["run_dir"], "raw")
+    os.makedirs(raw_dir, exist_ok=True)
+    eval_paths_arr = np.asarray(eval_paths_tensor, dtype=np.float32)
+    np.save(os.path.join(raw_dir, "eval_paths.npy"), eval_paths_arr)
+    if eval_pre_history_tensor is not None:
+        np.save(os.path.join(raw_dir, "eval_pre_history.npy"), np.asarray(eval_pre_history_tensor, dtype=np.float32))
+    if per_path_r is not None:
+        np.save(os.path.join(raw_dir, "per_path_r.npy"), np.asarray(per_path_r, dtype=np.float32))
+    if per_path_sigma is not None:
+        np.save(os.path.join(raw_dir, "per_path_sigma.npy"), np.asarray(per_path_sigma, dtype=np.float32))
+    if per_path_student_t_df is not None:
+        np.save(
+            os.path.join(raw_dir, "per_path_student_t_df.npy"),
+            np.asarray(per_path_student_t_df, dtype=np.float32),
+        )
+    if hmm_states_stepwise is not None:
+        np.save(
+            os.path.join(raw_dir, "hmm_states_stepwise.npy"),
+            np.asarray(hmm_states_stepwise, dtype=np.int32),
+        )
+
+    error_matrix = np.vstack([np.asarray(err, dtype=np.float64).reshape(-1) for err in errors_all])
+    agent_names_order = [str(getattr(agent, "name", f"agent_{i:02d}")) for i, agent in enumerate(all_agents)]
+    display_names_order = [_display_name(agent, str(config["language"])) for agent in all_agents]
+    np.save(os.path.join(raw_dir, "terminal_errors_by_agent.npy"), error_matrix.astype(np.float32))
+    long_errors_df = pd.DataFrame(
+        {
+            "path_index": np.repeat(np.arange(error_matrix.shape[1], dtype=np.int32), error_matrix.shape[0]),
+            "agent_name": np.tile(np.asarray(agent_names_order, dtype=object), error_matrix.shape[1]),
+            "agent_display_name": np.tile(np.asarray(display_names_order, dtype=object), error_matrix.shape[1]),
+            "terminal_hedging_error": error_matrix.T.reshape(-1),
+        }
+    )
+    long_errors_csv = os.path.join(dirs["tables_dir"], "terminal_errors_long.csv")
+    long_errors_df.to_csv(long_errors_csv, index=False)
+    wide_errors_df = pd.DataFrame(error_matrix.T, columns=agent_names_order)
+    wide_errors_df.insert(0, "path_index", np.arange(error_matrix.shape[1], dtype=np.int32))
+    wide_errors_csv = os.path.join(dirs["tables_dir"], "terminal_errors_wide.csv")
+    wide_errors_df.to_csv(wide_errors_csv, index=False)
+    raw_meta = {
+        "agent_names_order": agent_names_order,
+        "agent_display_names_order": display_names_order,
+        "n_paths": int(error_matrix.shape[1]),
+        "n_agents": int(error_matrix.shape[0]),
+        "files": {
+            "eval_paths": "raw/eval_paths.npy",
+            "eval_pre_history": "raw/eval_pre_history.npy" if eval_pre_history_tensor is not None else None,
+            "per_path_r": "raw/per_path_r.npy" if per_path_r is not None else None,
+            "per_path_sigma": "raw/per_path_sigma.npy" if per_path_sigma is not None else None,
+            "per_path_student_t_df": "raw/per_path_student_t_df.npy" if per_path_student_t_df is not None else None,
+            "hmm_states_stepwise": "raw/hmm_states_stepwise.npy" if hmm_states_stepwise is not None else None,
+            "terminal_errors_by_agent": "raw/terminal_errors_by_agent.npy",
+            "terminal_errors_long": "tables/terminal_errors_long.csv",
+            "terminal_errors_wide": "tables/terminal_errors_wide.csv",
+        },
+    }
+    raw_meta_path = os.path.join(raw_dir, "raw_payload_manifest.json")
+    with open(raw_meta_path, "w", encoding="utf-8") as f:
+        json.dump(raw_meta, f, indent=2)
+    print(f"[run:{run_name}] Saved raw comparison payload: {raw_meta_path}")
 
     point_rows = []
     empirical_rows = []
@@ -2191,6 +2670,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             bootstrap_method=str(config["bootstrap_method"]),
             moving_block_size=None if config["moving_block_size"] is None else int(config["moving_block_size"]),
             save_actions_path=actions_cache_dir,
+            fixed_actions_paths=fixed_actions_paths,
         )
         boot_csv = os.path.join(dirs["tables_dir"], "bootstrap_metrics_wide.csv")
         boot_df.to_csv(boot_csv, index=False)
@@ -2200,6 +2680,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         [
             {
                 "run_name": run_name,
+                "compare_mode": str(compare_mode),
                 "ticker": str(config["ticker"]),
                 "train_start_date": str(config["train_start_date"]),
                 "train_end_date": str(config["train_end_date"]),
@@ -2208,6 +2689,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
                 "sigma_source": str(config["sigma_source"]),
                 "sigma_mode": _sigma_mode(config),
                 "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
+                "benchmark_delta_r_mode": str(delta_r_mode),
                 "benchmark_delta_sigma_context_days": int(config.get("benchmark_delta_sigma_context_days", 50)),
                 "benchmark_delta_sigma_garch_fit_from_context": bool(
                     config.get("benchmark_delta_sigma_garch_fit_from_context", False)
@@ -2324,7 +2806,8 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
 
     meta = {
         "run_name": run_name,
-        "benchmark_agent": str(config["benchmark_agent_name"]),
+        "compare_mode": str(compare_mode),
+        "benchmark_agent": str(benchmark_effective_name),
         "trained_agents": config["trained_agents"],
         "benchmark_agents_to_compare": config.get("benchmark_agents_to_compare", []),
         "eval_paths_requested": int(config["eval_paths"]),
@@ -2333,6 +2816,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         "price_computation_mode": str(config.get("price_computation_mode", "pathwise_if_available")),
         "sigma_mode": _sigma_mode(config),
         "benchmark_delta_sigma_mode": _benchmark_delta_sigma_mode(config),
+        "benchmark_delta_r_mode": str(delta_r_mode),
         "benchmark_delta_sigma_context_days": int(config.get("benchmark_delta_sigma_context_days", 50)),
         "benchmark_delta_sigma_garch_fit_from_context": bool(
             config.get("benchmark_delta_sigma_garch_fit_from_context", False)

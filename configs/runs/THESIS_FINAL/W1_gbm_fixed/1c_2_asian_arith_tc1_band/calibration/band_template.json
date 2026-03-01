@@ -1,0 +1,10 @@
+{
+  "extends": "../compare/vs_lrm_mc.json",
+  "run_name": "tf_w1_1c_2_band_template_cmp",
+  "description": "template banda NI",
+  "benchmark_actions_reuse_from_run": "THESIS_FINAL/W1_gbm_fixed/1c_1_asian_arith_tc0_cvar50/compare/vs_lrm_mc",
+  "benchmark_actions_reuse_agent_name": "LocalRiskMinimizationAgent",
+  "benchmark_actions_reuse_apply_no_intervention": true,
+  "benchmark_no_intervention_mode": "percentage",
+  "benchmark_no_intervention_bound": 0.03
+}

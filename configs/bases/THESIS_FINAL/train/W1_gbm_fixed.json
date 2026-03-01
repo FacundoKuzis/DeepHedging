@@ -1,0 +1,12 @@
+{
+  "description": "THESIS_FINAL W1: GBM fixed parameters.",
+  "instrument_model": "gbm",
+  "fixed_implied_vol": 0.2,
+  "fixed_risk_free": 0.03,
+  "gbm_sigma_per_path_mode": "fixed",
+  "r_per_path_mode": "fixed",
+  "use_price_history_context": false,
+  "context_length": 0,
+  "history_conv1d_enabled": false,
+  "extends": "common.json"
+}

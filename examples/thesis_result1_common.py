@@ -296,6 +296,11 @@ def _garch_param_kwargs_from_config(config: dict[str, Any]) -> dict[str, Any]:
         None if config.get("garch_omega", None) is None else float(config.get("garch_omega"))
     )
     kwargs["garch_use_student_t"] = bool(config.get("garch_use_student_t", False))
+    kwargs["tail_shock_enabled"] = bool(config.get("tail_shock_enabled", False))
+    kwargs["tail_shock_magnitude_low"] = float(config.get("tail_shock_magnitude_low", 0.02))
+    kwargs["tail_shock_magnitude_high"] = float(config.get("tail_shock_magnitude_high", 0.10))
+    kwargs["tail_shock_gap_low"] = int(config.get("tail_shock_gap_low", 10))
+    kwargs["tail_shock_gap_high"] = int(config.get("tail_shock_gap_high", 30))
     return kwargs
 
 
@@ -308,6 +313,7 @@ def _hmm_matrix_kwargs_from_config(config: dict[str, Any]) -> dict[str, Any]:
         kwargs["hmm_transition_matrix"] = config.get("hmm_transition_matrix")
         kwargs["hmm_initial_distribution"] = config.get("hmm_initial_distribution")
         kwargs["hmm_vol_multipliers"] = config.get("hmm_vol_multipliers")
+        kwargs["hmm_r_multipliers"] = config.get("hmm_r_multipliers")
     elif mode == "uniform_random":
         kwargs["hmm_num_states"] = int(config["hmm_num_states"])
         kwargs["hmm_transition_uniform_low"] = float(config.get("hmm_transition_uniform_low", 0.0))
@@ -321,6 +327,12 @@ def _hmm_matrix_kwargs_from_config(config: dict[str, Any]) -> dict[str, Any]:
             config.get("hmm_vol_multipliers_uniform_high", 2.0)
         )
         kwargs["hmm_vol_multipliers_sort"] = bool(config.get("hmm_vol_multipliers_sort", True))
+        kwargs["hmm_r_multipliers_uniform_low"] = float(
+            config.get("hmm_r_multipliers_uniform_low", 0.5)
+        )
+        kwargs["hmm_r_multipliers_uniform_high"] = float(
+            config.get("hmm_r_multipliers_uniform_high", 1.5)
+        )
     else:
         raise ValueError("hmm_params_per_path_mode must be one of {'fixed','uniform_random'}.")
     return kwargs

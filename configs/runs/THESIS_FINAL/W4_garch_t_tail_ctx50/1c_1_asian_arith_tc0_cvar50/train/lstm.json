@@ -1,0 +1,11 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/train/W4_garch_t_tail_ctx50.json",
+  "run_name": "tf_w4_garch_t_tail_ctx50_1c_1_asian_arith_tc0_cvar50_lstm_train",
+  "description": "tf_w4_garch_t_tail_ctx50_1c_1_asian_arith_tc0_cvar50_lstm_train",
+  "model_name": "tf_w4_garch_t_tail_ctx50_1c_1_asian_arith_tc0_cvar50_lstm",
+  "agent_name": "LSTMAgent",
+  "contingent_claim": "AsianArithmeticCall",
+  "proportional_cost": 0.0,
+  "risk_measure_name": "CVaR50",
+  "cvar_alpha": 0.5
+}

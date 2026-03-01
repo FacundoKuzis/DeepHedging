@@ -1,0 +1,11 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/train/W1_gbm_fixed.json",
+  "run_name": "tf_w1_gbm_fixed_1a_1_lstm_train",
+  "description": "W1 1a.1 lstm",
+  "model_name": "tf_w1_gbm_fixed_1a_1_euro_tc0_cvar50_lstm",
+  "agent_name": "LSTMAgent",
+  "contingent_claim": "EuropeanCall",
+  "proportional_cost": 0.0,
+  "risk_measure_name": "CVaR50",
+  "cvar_alpha": 0.5
+}

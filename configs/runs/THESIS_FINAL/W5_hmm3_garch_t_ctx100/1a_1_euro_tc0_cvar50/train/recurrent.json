@@ -1,0 +1,11 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/train/W5_hmm3_garch_t_ctx100.json",
+  "run_name": "tf_w5_hmm3_garch_t_ctx100_1a_1_euro_tc0_cvar50_recurrent_train",
+  "description": "tf_w5_hmm3_garch_t_ctx100_1a_1_euro_tc0_cvar50_recurrent_train",
+  "model_name": "tf_w5_hmm3_garch_t_ctx100_1a_1_euro_tc0_cvar50_recurrent",
+  "agent_name": "RecurrentAgent",
+  "contingent_claim": "EuropeanCall",
+  "proportional_cost": 0.0,
+  "risk_measure_name": "CVaR50",
+  "cvar_alpha": 0.5
+}

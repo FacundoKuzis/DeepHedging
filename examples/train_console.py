@@ -35,7 +35,7 @@ def _apply_relaxed_defaults_train(config: dict[str, Any], pipeline: str) -> dict
             "load_if_exists": False,
             "save_after_train": True,
             "checkpoint_enabled": True,
-            "checkpoint_every_epochs": 1,
+            "checkpoint_every_epochs": 5,
             "checkpoint_save_best": True,
             "checkpoint_metric": "auto",
             "checkpoint_save_optimizer": True,
