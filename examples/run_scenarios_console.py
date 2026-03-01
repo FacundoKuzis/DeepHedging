@@ -85,6 +85,9 @@ def _classify_task(config_path: str) -> str:
         return "train"
     if "/compare/" in path_norm:
         return "compare"
+    if "/calibration/" in path_norm:
+        # Calibration configs are compare-like runs (e.g., NI-band sweeps).
+        return "compare"
     # Fallback by raw JSON keys.
     import json
 
