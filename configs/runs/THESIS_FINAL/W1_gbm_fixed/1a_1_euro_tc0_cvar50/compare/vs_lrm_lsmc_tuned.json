@@ -1,0 +1,27 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/compare/W1_gbm_fixed.json",
+  "run_name": "tf_w1_gbm_fixed_1a_1_vs_lrm_lsmc_tuned_cmp",
+  "description": "W1 1a.1 compare: Recurrent vs LRM LSMC (tuned).",
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "tf_w1_gbm_fixed_1a_1_euro_tc0_cvar50_recurrent"
+    }
+  ],
+  "contingent_claim": "EuropeanCall",
+  "proportional_cost": 0.0,
+  "benchmark_agent_name": "LocalRiskMinimizationAgent",
+  "benchmark_agents_to_compare": [],
+  "benchmark_lrm_provider": "lsmc",
+  "benchmark_lrm_outer_paths": 2048,
+  "benchmark_lrm_lsm_train_paths": 220000,
+  "benchmark_lrm_lsm_feature_set": "minimal",
+  "benchmark_lrm_lsm_poly_degree": 3,
+  "benchmark_lrm_lsm_ridge_alpha": 0.001,
+  "benchmark_lrm_lsm_use_cache": true,
+  "benchmark_lrm_lsm_cache_key": "thesis_final_w1_1a1_euro_lsmc_tuned_v1",
+  "benchmark_lrm_lsm_force_rebuild": true,
+  "benchmark_lrm_verbose": true,
+  "benchmark_lrm_log_every_t": 10,
+  "bootstrap_enabled": false
+}

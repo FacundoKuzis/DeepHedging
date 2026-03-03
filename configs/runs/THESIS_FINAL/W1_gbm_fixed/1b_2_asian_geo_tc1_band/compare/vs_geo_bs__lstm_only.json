@@ -1,0 +1,23 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/compare/W1_gbm_fixed.json",
+  "run_name": "tf_w1_1b_2_asian_geo_tc1_band_cmp__lstm_only",
+  "description": "W1 1b_2_asian_geo_tc1_band compare [lstm only]",
+  "trained_agents": [
+    {
+      "agent_name": "LSTMAgent",
+      "model_name": "tf_w1_gbm_fixed_1b_2_asian_geo_tc1_band_lstm"
+    }
+  ],
+  "contingent_claim": "AsianGeometricCall",
+  "proportional_cost": 0.01,
+  "benchmark_agent_name": "GeometricAsianDeltaHedgingAgent",
+  "benchmark_agents_to_compare": [],
+  "benchmark_lrm_provider": "asian_monte_carlo",
+  "benchmark_lrm_outer_paths": 96,
+  "benchmark_lrm_mc_inner_paths": 192,
+  "benchmark_lrm_mc_inner_chunk_size": 256,
+  "benchmark_lrm_mc_parallel_enabled": true,
+  "benchmark_lrm_mc_n_workers": 8,
+  "benchmark_lrm_mc_parallel_backend": "thread",
+  "benchmark_lrm_mc_parallel_chunk_size": 512
+}

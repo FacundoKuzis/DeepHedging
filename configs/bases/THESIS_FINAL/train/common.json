@@ -70,7 +70,7 @@
   "history_conv1d_enabled": false,
   "path_transformation_type": "log_moneyness",
   "include_log_strike_feature": false,
-  "sequence_output_mode": "trade",
-  "position_activation": "linear",
+  "sequence_output_mode": "position",
+  "position_activation": "sigmoid",
   "gbm_sigma_per_path_mode": "fixed"
 }

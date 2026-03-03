@@ -1,0 +1,11 @@
+{
+  "extends": "vs_bs_banded.json",
+  "run_name": "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_vs_bs_banded_cmp__lstm_only",
+  "description": "compare banda NI [lstm only]",
+  "trained_agents": [
+    {
+      "agent_name": "LSTMAgent",
+      "model_name": "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_lstm"
+    }
+  ]
+}

@@ -726,4 +726,4 @@ def copy_config_snapshot(config_path: str, dst_dir: str) -> str:
 
 
 def bootstrap_statistics_list():
-    return [Mean(), StdDev(), CVaR(0.5), CVaR(0.95), CVaR(0.99), MAE(), WorstCase()]
+    return [Mean(), StdDev(), CVaR(0.5), CVaR(0.9), CVaR(0.95), CVaR(0.99), MAE(), WorstCase()]

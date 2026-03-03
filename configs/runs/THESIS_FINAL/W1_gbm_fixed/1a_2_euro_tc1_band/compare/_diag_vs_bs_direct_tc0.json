@@ -1,0 +1,10 @@
+{
+  "extends": "vs_bs.json",
+  "run_name": "diag_w1_bs_direct_tc0",
+  "description": "diag direct bs tc0",
+  "trained_agents": [],
+  "benchmark_agents_to_compare": [],
+  "proportional_cost": 0.0,
+  "bootstrap_enabled": false,
+  "eval_seed": 34
+}

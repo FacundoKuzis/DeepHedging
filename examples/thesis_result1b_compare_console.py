@@ -497,6 +497,10 @@ def optional_keys() -> set[str]:
         "benchmark_delta_r_default",
         "benchmark_delta_r_floor",
         "benchmark_delta_r_cap",
+        "trained_agents_plot_unified_enabled",
+        "trained_agents_plot_unified_label_es",
+        "trained_agents_plot_unified_label_en",
+        "trained_agents_plot_unified_color",
     }
 
 
@@ -571,6 +575,19 @@ def validate_config(config: dict[str, Any]) -> None:
 
     if str(config["language"]).strip().lower() not in {"es", "en"}:
         raise ValueError("language must be 'es' or 'en'.")
+    if "trained_agents_plot_unified_enabled" in config and not isinstance(
+        config["trained_agents_plot_unified_enabled"], bool
+    ):
+        raise ValueError("trained_agents_plot_unified_enabled must be bool when provided.")
+    for key in ("trained_agents_plot_unified_label_es", "trained_agents_plot_unified_label_en"):
+        if key in config:
+            value = config[key]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{key} must be a non-empty string when provided.")
+    if "trained_agents_plot_unified_color" in config:
+        value = config["trained_agents_plot_unified_color"]
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("trained_agents_plot_unified_color must be a non-empty string when provided.")
 
     if "include_log_strike_feature" in config and not isinstance(config["include_log_strike_feature"], bool):
         raise ValueError("include_log_strike_feature must be bool when provided.")
@@ -1174,14 +1191,30 @@ def validate_config(config: dict[str, Any]) -> None:
     if not isinstance(config["trained_agents"], list):
         raise ValueError("trained_agents must be a list")
     for i, item in enumerate(config["trained_agents"]):
-        if not isinstance(item, dict) or set(item.keys()) != {"agent_name", "model_name"}:
-            raise ValueError(f"trained_agents[{i}] must contain exactly keys ['agent_name','model_name']")
+        if not isinstance(item, dict):
+            raise ValueError(f"trained_agents[{i}] must be an object.")
+        allowed_keys = {"agent_name", "model_name", "label", "label_es", "label_en", "color"}
+        extra_keys = set(item.keys()) - allowed_keys
+        if extra_keys:
+            raise ValueError(
+                f"trained_agents[{i}] has unknown keys: {sorted(extra_keys)}. "
+                f"Allowed keys: {sorted(allowed_keys)}"
+            )
+        if "agent_name" not in item or "model_name" not in item:
+            raise ValueError(f"trained_agents[{i}] must include keys ['agent_name','model_name']")
         name = str(item["agent_name"])
         validate_agent_name(name)
         if name not in TRAINABLE_AGENT_NAMES:
             raise ValueError(f"trained_agents[{i}].agent_name must be trainable")
         if not isinstance(item["model_name"], str) or not item["model_name"].strip():
             raise ValueError(f"trained_agents[{i}].model_name must be non-empty string")
+        for label_key in ("label", "label_es", "label_en"):
+            if label_key in item and item[label_key] is not None:
+                if not isinstance(item[label_key], str) or not str(item[label_key]).strip():
+                    raise ValueError(f"trained_agents[{i}].{label_key} must be a non-empty string when provided")
+        if "color" in item and item["color"] is not None:
+            if not isinstance(item["color"], str) or not str(item["color"]).strip():
+                raise ValueError(f"trained_agents[{i}].color must be a non-empty string when provided")
 
     benchmark_agents_to_compare = config.get("benchmark_agents_to_compare", [])
     if benchmark_agents_to_compare is None:
@@ -1273,27 +1306,114 @@ def _infer_trained_label_and_color(model_name: str) -> tuple[str | None, str | N
     return None, None
 
 
+def _resolve_trained_plot_style(
+    config: dict[str, Any],
+    model_name: str,
+    compare_mode: str,
+    trained_item: dict[str, Any] | None = None,
+) -> tuple[dict[str, str] | None, str | None]:
+    if isinstance(trained_item, dict):
+        label_generic = trained_item.get("label", None)
+        label_es = trained_item.get("label_es", label_generic)
+        label_en = trained_item.get("label_en", label_generic)
+        color = trained_item.get("color", None)
+        color_str = None
+        if color is not None:
+            color_str = str(color).strip()
+            if not color_str:
+                color_str = None
+        if label_es is not None or label_en is not None:
+            if label_es is None:
+                label_es = label_en
+            if label_en is None:
+                label_en = label_es
+            label_es = str(label_es).strip() if label_es is not None else ""
+            label_en = str(label_en).strip() if label_en is not None else ""
+            if label_es and label_en:
+                return {"es": label_es, "en": label_en}, color_str
+        if color_str is not None:
+            return None, color_str
+
+    if bool(config.get("trained_agents_plot_unified_enabled", False)):
+        label_es = str(config.get("trained_agents_plot_unified_label_es", "Agente Deep Hedging")).strip()
+        if not label_es:
+            label_es = "Agente Deep Hedging"
+        label_en = str(config.get("trained_agents_plot_unified_label_en", label_es)).strip()
+        if not label_en:
+            label_en = label_es
+        color = str(config.get("trained_agents_plot_unified_color", "steelblue")).strip()
+        if not color:
+            color = "steelblue"
+        return {"es": label_es, "en": label_en}, color
+
+    # Preserve current behavior when unified style is disabled.
+    if compare_mode == "trained_only":
+        inferred_label, inferred_color = _infer_trained_label_and_color(model_name)
+        if inferred_label is not None:
+            return {"es": inferred_label, "en": inferred_label}, inferred_color
+
+    return None, None
+
+
 def _model_path(agent, model_name: str) -> str:
     target_name = f"{model_name}.keras"
-    matches: list[str] = []
+    direct_matches: list[str] = []
+    best_ckpt_matches: list[str] = []
+    latest_ckpt_matches: list[str] = []
     for root, _, files in os.walk(RESULT1B_ROOT):
         if target_name not in files:
             continue
         full = os.path.join(root, target_name)
         parent = os.path.basename(os.path.dirname(full))
         if parent == str(agent.name):
-            matches.append(full)
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) == 0:
+            direct_matches.append(full)
+            continue
+
+        # Fallback for interrupted runs where only checkpoints exist:
+        # .../<agent_name>/checkpoints/best/<model>.keras
+        # .../<agent_name>/checkpoints/latest/<model>.keras
+        if parent in {"best", "latest"}:
+            parent_dir = os.path.basename(os.path.dirname(os.path.dirname(full)))
+            grandparent_dir = os.path.basename(
+                os.path.dirname(os.path.dirname(os.path.dirname(full)))
+            )
+            if parent_dir == "checkpoints" and grandparent_dir == str(agent.name):
+                if parent == "best":
+                    best_ckpt_matches.append(full)
+                else:
+                    latest_ckpt_matches.append(full)
+
+    if len(direct_matches) == 1:
+        return direct_matches[0]
+    if len(direct_matches) > 1:
+        rels = [os.path.relpath(p, RESULT1B_ROOT) for p in direct_matches]
+        raise FileNotFoundError(
+            f"Multiple direct model matches found for agent={agent.name}, model_name='{model_name}'. "
+            f"Use unique model_name. Matches: {rels}"
+        )
+
+    if len(best_ckpt_matches) == 1:
+        return best_ckpt_matches[0]
+    if len(best_ckpt_matches) > 1:
+        rels = [os.path.relpath(p, RESULT1B_ROOT) for p in best_ckpt_matches]
+        raise FileNotFoundError(
+            f"Multiple checkpoint-best matches found for agent={agent.name}, model_name='{model_name}'. "
+            f"Use unique model_name. Matches: {rels}"
+        )
+
+    if len(latest_ckpt_matches) == 1:
+        return latest_ckpt_matches[0]
+    if len(latest_ckpt_matches) > 1:
+        rels = [os.path.relpath(p, RESULT1B_ROOT) for p in latest_ckpt_matches]
+        raise FileNotFoundError(
+            f"Multiple checkpoint-latest matches found for agent={agent.name}, model_name='{model_name}'. "
+            f"Use unique model_name. Matches: {rels}"
+        )
+
+    if len(direct_matches) == 0:
         raise FileNotFoundError(
             f"Model not found for trained agent {agent.name} and model_name='{model_name}' under {RESULT1B_ROOT}."
         )
-    rels = [os.path.relpath(p, RESULT1B_ROOT) for p in matches]
-    raise FileNotFoundError(
-        f"Multiple model matches found for agent={agent.name}, model_name='{model_name}'. "
-        f"Use unique model_name. Matches: {rels}"
-    )
 
 
 
@@ -1304,19 +1424,25 @@ def _compute_empirical_error_metrics(errors: np.ndarray) -> dict[str, float]:
         raise ValueError("Cannot compute metrics on empty error array.")
 
     def _left_tail_cvar(alpha: float) -> float:
-        # CVaR(alpha) on left tail: average values below VaR at (1-alpha) quantile.
+        # Align with RiskMeasures.CVaR sign convention used by bootstrap:
+        # return positive loss magnitude from the left tail of errors.
         q = float(np.quantile(arr, 1.0 - float(alpha)))
         tail = arr[arr <= q]
-        return float(np.mean(tail)) if tail.size > 0 else q
+        tail_mean = float(np.mean(tail)) if tail.size > 0 else q
+        return float(-tail_mean)
+
+    var_95_raw = float(np.quantile(arr, 0.05))
+    var_99_raw = float(np.quantile(arr, 0.01))
+    worst_case_raw = float(np.min(arr))
 
     out = {
         "mean_error": float(np.mean(arr)),
         "std_error": float(np.std(arr, ddof=0)),
         "mae_error": float(np.mean(np.abs(arr))),
         "mse_error": float(np.mean(arr**2)),
-        "worst_case": float(np.min(arr)),
-        "var_95": float(np.quantile(arr, 0.05)),
-        "var_99": float(np.quantile(arr, 0.01)),
+        "worst_case": float(-worst_case_raw),
+        "var_95": float(-var_95_raw),
+        "var_99": float(-var_99_raw),
         "q_1pct": float(np.quantile(arr, 0.01)),
         "q_0_5pct": float(np.quantile(arr, 0.005)),
         "q_0_1pct": float(np.quantile(arr, 0.001)),
@@ -1325,10 +1451,10 @@ def _compute_empirical_error_metrics(errors: np.ndarray) -> dict[str, float]:
         "cvar_95": _left_tail_cvar(0.95),
         "cvar_99": _left_tail_cvar(0.99),
     }
-    tail95 = arr[arr <= out["var_95"]]
-    tail99 = arr[arr <= out["var_99"]]
-    out["es_95"] = float(np.mean(tail95)) if tail95.size > 0 else out["var_95"]
-    out["es_99"] = float(np.mean(tail99)) if tail99.size > 0 else out["var_99"]
+    tail95 = arr[arr <= var_95_raw]
+    tail99 = arr[arr <= var_99_raw]
+    out["es_95"] = float(-np.mean(tail95)) if tail95.size > 0 else out["var_95"]
+    out["es_99"] = float(-np.mean(tail99)) if tail99.size > 0 else out["var_99"]
     return out
 
 
@@ -1336,6 +1462,86 @@ def _agent_identifier(agent, idx: int) -> str:
     if hasattr(agent, "agent_id"):
         return str(agent.agent_id)
     return f"{int(idx):02d}_{getattr(agent, 'name', 'unknown_agent')}"
+
+
+def _shared_scatter_limits_from_data(
+    x: np.ndarray,
+    y: np.ndarray,
+    low_percentile: float = 0.01,
+    high_percentile: float = 99.9,
+    buffer_ratio: float = 0.05,
+) -> tuple[float, float]:
+    combined = np.concatenate(
+        [
+            np.asarray(x, dtype=np.float64).reshape(-1),
+            np.asarray(y, dtype=np.float64).reshape(-1),
+        ],
+        axis=0,
+    )
+    combined = combined[np.isfinite(combined)]
+    if combined.size == 0:
+        return -1.0, 1.0
+
+    lo = float(np.percentile(combined, float(low_percentile)))
+    hi = float(np.percentile(combined, float(high_percentile)))
+
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo = float(np.min(combined))
+        hi = float(np.max(combined))
+
+    span = float(hi - lo)
+    if not np.isfinite(span) or span <= 0.0:
+        center = float(lo) if np.isfinite(lo) else 0.0
+        half = max(1e-6, 0.05 * max(1.0, abs(center)))
+        return center - half, center + half
+
+    padding = float(buffer_ratio) * span
+    return float(lo - padding), float(hi + padding)
+
+
+def _safe_np_save(path: str, array: np.ndarray) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    try:
+        np.save(path, array)
+    except FileNotFoundError:
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        np.save(path, array)
+
+
+def _linear_regression_with_r2(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float]:
+    x_arr = np.asarray(x, dtype=np.float64).reshape(-1)
+    y_arr = np.asarray(y, dtype=np.float64).reshape(-1)
+    if x_arr.size == 0 or y_arr.size == 0 or x_arr.size != y_arr.size:
+        return np.nan, np.nan, np.nan
+
+    x_mean = float(np.mean(x_arr))
+    y_mean = float(np.mean(y_arr))
+    x_centered = x_arr - x_mean
+    y_centered = y_arr - y_mean
+    ss_xx = float(np.sum(x_centered * x_centered))
+    eps = float(np.finfo(np.float64).eps)
+
+    if ss_xx <= eps:
+        slope = 0.0
+        intercept = y_mean
+    else:
+        slope = float(np.sum(x_centered * y_centered) / ss_xx)
+        intercept = float(y_mean - slope * x_mean)
+
+    y_hat = slope * x_arr + intercept
+    ss_res = float(np.sum((y_arr - y_hat) ** 2))
+    ss_tot = float(np.sum(y_centered * y_centered))
+    if ss_tot <= eps:
+        r2 = 1.0 if ss_res <= eps else 0.0
+    else:
+        r2 = 1.0 - (ss_res / ss_tot)
+
+    if not np.isfinite(r2):
+        r2 = np.nan
+    return float(slope), float(intercept), float(r2)
 
 
 def _save_actions_scatter_plot(
@@ -1387,18 +1593,45 @@ def _save_actions_scatter_plot(
         x = x[idx]
         y = y[idx]
 
-    lo = float(min(np.min(x), np.min(y)))
-    hi = float(max(np.max(x), np.max(y)))
-    if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
-        lo = lo - 1.0
-        hi = hi + 1.0
+    lo, hi = _shared_scatter_limits_from_data(
+        x=x,
+        y=y,
+        low_percentile=0.01,
+        high_percentile=99.9,
+        buffer_ratio=0.05,
+    )
+    slope, intercept, r2 = _linear_regression_with_r2(x=x, y=y)
+
+    fit_y_lo = (slope * lo + intercept) if np.isfinite(slope) and np.isfinite(intercept) else np.nan
+    fit_y_hi = (slope * hi + intercept) if np.isfinite(slope) and np.isfinite(intercept) else np.nan
+    fit_ok = np.isfinite(fit_y_lo) and np.isfinite(fit_y_hi)
+
+    sign = "+" if (np.isfinite(intercept) and intercept >= 0.0) else "-"
+    if np.isfinite(slope) and np.isfinite(intercept):
+        formula = f"y = {slope:.4g}x {sign} {abs(intercept):.4g}"
+    else:
+        formula = "y = n/a"
+    r2_label = f"R2 = {r2:.4f}" if np.isfinite(r2) else "R2 = n/a"
 
     fig, ax = plt.subplots(figsize=(7, 7))
     ax.scatter(x, y, s=2, alpha=0.18, linewidths=0.0, color="#1f77b4")
-    ax.plot([lo, hi], [lo, hi], linestyle="--", linewidth=1.0, color="black")
+    reg_color = "#d62728"
+    if fit_ok:
+        ax.plot(
+            [lo, hi],
+            [fit_y_lo, fit_y_hi],
+            linestyle="-",
+            linewidth=1.3,
+            color=reg_color,
+            label=f"{formula} | {r2_label}",
+        )
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
     ax.set_xlabel("Acción benchmark")
     ax.set_ylabel("Acción agente")
     ax.grid(alpha=0.2)
+    if fit_ok:
+        ax.legend(loc="upper left", framealpha=0.9, fontsize=9)
     fig.tight_layout()
 
     scatter_path = os.path.join(plots_dir, f"{pair_name}_acciones_scatter.jpg")
@@ -1805,14 +2038,17 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         agent.load_model(model_path)
         print(f"[run:{run_name}] Loaded model: {model_path}")
 
-        # Special CVaR sweep labels/colors are only for trained-only overlays.
-        if compare_mode == "trained_only":
-            inferred_label, inferred_color = _infer_trained_label_and_color(str(item["model_name"]))
-            if inferred_label is not None:
-                agent.plot_name = {"es": inferred_label, "en": inferred_label}
-            if inferred_color is not None:
-                agent.plot_color = str(inferred_color)
-        agent.agent_id = f"tr_{idx_tr:02d}_{_slugify_label(str(item['model_name']))}"
+        plot_name_dict, plot_color = _resolve_trained_plot_style(
+            config=config,
+            model_name=str(item["model_name"]),
+            compare_mode=compare_mode,
+            trained_item=item,
+        )
+        if plot_name_dict is not None:
+            agent.plot_name = plot_name_dict
+        if plot_color is not None:
+            agent.plot_color = str(plot_color)
+        agent.agent_id = f"tr_{idx_tr:02d}_{_slugify_label(str(getattr(agent, 'name', item['model_name'])))}"
 
         trained_agents.append(agent)
 
@@ -2290,6 +2526,54 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
         windows_meta.to_csv(window_csv, index=False)
         print(f"[run:{run_name}] Saved historical window metadata: {window_csv}")
         print(f"[run:{run_name}] Evaluating on {eval_paths_tensor.shape[0]} historical windows.")
+
+    elif test_data_mode == "simulated" and delta_sigma_mode == "none":
+        # Simulated evaluation without benchmark sigma estimation:
+        # pass explicit per-path r/sigma to avoid environment-side fallback
+        # inference from realized paths, which can introduce unnecessary noise.
+        eval_n_paths = int(config["eval_paths"])
+        context_for_agent = int(config.get("context_length", 0)) if bool(config.get("use_price_history_context", False)) else 0
+        if hasattr(instrument, "generate_paths_with_context") and context_for_agent > 0:
+            full_paths = instrument.generate_paths_with_context(
+                eval_n_paths,
+                n_context_steps=int(context_for_agent),
+                random_seed=eval_seed,
+            )
+            full_paths = tf.convert_to_tensor(full_paths, dtype=tf.float32)
+            eval_pre_history_tensor = full_paths[:, : int(context_for_agent)]
+            eval_paths_tensor = tf.expand_dims(full_paths[:, int(context_for_agent) :], axis=-1)
+        else:
+            eval_paths_tensor = env.generate_data(eval_n_paths, random_seed=eval_seed)
+            eval_pre_history_tensor = None
+
+        inferred_path_r = env._infer_per_path_r_if_available(
+            per_path_r=None,
+            n_paths=int(eval_paths_tensor.shape[0]),
+        )
+        if inferred_path_r is not None:
+            per_path_r = inferred_path_r.astype(np.float32)
+        elif str(config["risk_free_source"]).strip().lower() == "fixed":
+            per_path_r = np.full((eval_paths_tensor.shape[0],), float(config["fixed_risk_free"]), dtype=np.float32)
+        else:
+            per_path_r = np.full((eval_paths_tensor.shape[0],), float(calib.r_train), dtype=np.float32)
+
+        inferred_path_sigma = env._infer_per_path_sigma_if_available(
+            per_path_sigma=None,
+            n_paths=int(eval_paths_tensor.shape[0]),
+        )
+        if inferred_path_sigma is not None:
+            per_path_sigma = inferred_path_sigma.astype(np.float32)
+            print(
+                f"[run:{run_name}] Using per-path sigma sampled by the instrument "
+                f"(n={int(per_path_sigma.shape[0])}, mean={float(np.mean(per_path_sigma)):.6f}, "
+                f"std={float(np.std(per_path_sigma)):.6f})."
+            )
+        else:
+            per_path_sigma = np.full((eval_paths_tensor.shape[0],), float(calib.sigma_train), dtype=np.float32)
+            print(
+                f"[run:{run_name}] Using explicit constant sigma for simulated evaluation: "
+                f"sigma={float(calib.sigma_train):.6f} (n={int(per_path_sigma.shape[0])})."
+            )
 
     elif test_data_mode == "simulated" and delta_sigma_mode != "none":
         # Force deterministic simulated paths with explicit pre-history for pathwise GARCH sigma estimation.
@@ -2804,28 +3088,34 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     raw_dir = os.path.join(dirs["run_dir"], "raw")
     os.makedirs(raw_dir, exist_ok=True)
     eval_paths_arr = np.asarray(eval_paths_tensor, dtype=np.float32)
-    np.save(os.path.join(raw_dir, "eval_paths.npy"), eval_paths_arr)
+    _safe_np_save(os.path.join(raw_dir, "eval_paths.npy"), eval_paths_arr)
     if eval_pre_history_tensor is not None:
-        np.save(os.path.join(raw_dir, "eval_pre_history.npy"), np.asarray(eval_pre_history_tensor, dtype=np.float32))
+        _safe_np_save(
+            os.path.join(raw_dir, "eval_pre_history.npy"),
+            np.asarray(eval_pre_history_tensor, dtype=np.float32),
+        )
     if per_path_r is not None:
-        np.save(os.path.join(raw_dir, "per_path_r.npy"), np.asarray(per_path_r, dtype=np.float32))
+        _safe_np_save(os.path.join(raw_dir, "per_path_r.npy"), np.asarray(per_path_r, dtype=np.float32))
     if per_path_sigma is not None:
-        np.save(os.path.join(raw_dir, "per_path_sigma.npy"), np.asarray(per_path_sigma, dtype=np.float32))
+        _safe_np_save(os.path.join(raw_dir, "per_path_sigma.npy"), np.asarray(per_path_sigma, dtype=np.float32))
     if per_path_student_t_df is not None:
-        np.save(
+        _safe_np_save(
             os.path.join(raw_dir, "per_path_student_t_df.npy"),
             np.asarray(per_path_student_t_df, dtype=np.float32),
         )
     if hmm_states_stepwise is not None:
-        np.save(
+        _safe_np_save(
             os.path.join(raw_dir, "hmm_states_stepwise.npy"),
             np.asarray(hmm_states_stepwise, dtype=np.int32),
         )
 
     error_matrix = np.vstack([np.asarray(err, dtype=np.float64).reshape(-1) for err in errors_all])
     agent_names_order = [str(getattr(agent, "name", f"agent_{i:02d}")) for i, agent in enumerate(all_agents)]
-    display_names_order = [_display_name(agent, str(config["language"])) for agent in all_agents]
-    np.save(os.path.join(raw_dir, "terminal_errors_by_agent.npy"), error_matrix.astype(np.float32))
+    display_names_order = [str(getattr(agent, "name", f"agent_{i:02d}")) for i, agent in enumerate(all_agents)]
+    _safe_np_save(
+        os.path.join(raw_dir, "terminal_errors_by_agent.npy"),
+        error_matrix.astype(np.float32),
+    )
     long_errors_df = pd.DataFrame(
         {
             "path_index": np.repeat(np.arange(error_matrix.shape[1], dtype=np.int32), error_matrix.shape[0]),
@@ -2874,7 +3164,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
     benchmark_q_0_1pct = float(np.quantile(benchmark_error, 0.001))
     for i, agent in enumerate(all_agents):
         row = {
-            "Agent": _display_name(agent, str(config["language"])),
+            "Agent": str(getattr(agent, "name", f"agent_{i:02d}")),
             "Mean": float(mean_errors[i]),
             "StdDev": float(std_errors[i]),
         }
@@ -2884,7 +3174,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
 
         err = np.asarray(errors_all[i]).reshape(-1)
         err = err[np.isfinite(err)]
-        risk_row = {"Agent": _display_name(agent, str(config["language"]))}
+        risk_row = {"Agent": str(getattr(agent, "name", f"agent_{i:02d}"))}
         if err.size == 0:
             risk_row.update({
                 "mean_error": np.nan,
@@ -2962,6 +3252,13 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             fixed_actions_paths=fixed_actions_paths,
             error_output_mode=("discounted_pnl" if compare_mode == "trained_only" else "hedging_error"),
         )
+        # Keep plot labels independent from table identifiers:
+        # tables must preserve the real agent names.
+        if "Agent" in boot_df.columns and len(boot_df) == len(all_agents):
+            boot_df["Agent"] = [
+                str(getattr(agent, "name", f"agent_{i:02d}"))
+                for i, agent in enumerate(all_agents)
+            ]
         boot_csv = os.path.join(dirs["tables_dir"], "bootstrap_metrics_wide.csv")
         boot_df.to_csv(boot_csv, index=False)
         print(f"[run:{run_name}] Saved bootstrap wide table: {boot_csv}")

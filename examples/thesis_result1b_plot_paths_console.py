@@ -236,7 +236,7 @@ def run_plot(
     config: dict,
     config_path: str,
     n_plot_paths: int,
-    plot_all_paths: bool = False,
+    plot_all_paths: bool = True,
     eval_paths_override: int | None = None,
 ) -> None:
     paths_2d, context_length, sigma_vec = _build_paths_from_config(
@@ -294,12 +294,18 @@ def main() -> None:
         "--n-plot-paths",
         type=int,
         default=80,
-        help="Number of sampled paths to draw (default: 80).",
+        help="Number of sampled paths to draw when --sample-paths is used (default: 80).",
     )
     parser.add_argument(
         "--plot-all-paths",
         action="store_true",
-        help="Si se activa, grafica todos los paths (ignora --n-plot-paths).",
+        help="Grafica todos los paths (ignora --n-plot-paths).",
+    )
+    parser.add_argument(
+        "--sample-paths",
+        dest="plot_all_paths",
+        action="store_false",
+        help="Usa muestreo de paths (habilita --n-plot-paths).",
     )
     parser.add_argument(
         "--eval-paths",
@@ -307,6 +313,7 @@ def main() -> None:
         default=None,
         help="Optional override for eval_paths used only for plotting.",
     )
+    parser.set_defaults(plot_all_paths=True)
     args = parser.parse_args()
 
     config_path = resolve_config_path(

@@ -1,0 +1,12 @@
+{
+  "extends": "vs_bs_banded.json",
+  "run_name": "diag_w1_bs_reuse_band0_tc0",
+  "description": "diag reuse bs band0 tc0",
+  "trained_agents": [],
+  "benchmark_agents_to_compare": [],
+  "benchmark_no_intervention_mode": "percentage",
+  "benchmark_no_intervention_bound": 0.0,
+  "proportional_cost": 0.0,
+  "bootstrap_enabled": false,
+  "eval_seed": 34
+}

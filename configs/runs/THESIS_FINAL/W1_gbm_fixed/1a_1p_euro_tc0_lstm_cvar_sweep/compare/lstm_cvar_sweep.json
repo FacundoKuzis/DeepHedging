@@ -5,15 +5,24 @@
   "trained_agents": [
     {
       "agent_name": "LSTMAgent",
-      "model_name": "tf_w1_gbm_fixed_1a_1_euro_tc0_cvar50_lstm"
+      "model_name": "tf_w1_gbm_fixed_1a_1_euro_tc0_cvar50_lstm",
+      "label_es": "Agente Deep Hedging CVaR 50%",
+      "label_en": "Deep Hedging Agent CVaR 50%",
+      "color": "#2ca02c"
     },
     {
       "agent_name": "LSTMAgent",
-      "model_name": "tf_w1_gbm_fixed_1a_1p_euro_tc0_lstm_cvar_sweep_lstm_cvar90"
+      "model_name": "tf_w1_gbm_fixed_1a_1p_euro_tc0_lstm_cvar_sweep_lstm_cvar90",
+      "label_es": "Agente Deep Hedging CVaR 90%",
+      "label_en": "Deep Hedging Agent CVaR 90%",
+      "color": "#ff7f0e"
     },
     {
       "agent_name": "LSTMAgent",
-      "model_name": "tf_w1_gbm_fixed_1a_1p_euro_tc0_lstm_cvar_sweep_lstm_cvar99"
+      "model_name": "tf_w1_gbm_fixed_1a_1p_euro_tc0_lstm_cvar_sweep_lstm_cvar99",
+      "label_es": "Agente Deep Hedging CVaR 99%",
+      "label_en": "Deep Hedging Agent CVaR 99%",
+      "color": "#1f77b4"
     }
   ],
   "contingent_claim": "EuropeanCall",

@@ -183,6 +183,24 @@ def _dispatch_compare(
     run_comparison(run_name=run_name, config_path=config_path_for_snapshot, config=config)
 
 
+def _dispatch_result1b_paths_plot(
+    run_name: str,
+    config_path_for_snapshot: str,
+    config: dict[str, Any],
+) -> None:
+    from examples.thesis_result1b_plot_paths_console import run_plot
+
+    print(f"[run:{run_name}] Generating sample path plots.")
+    run_plot(
+        run_name=run_name,
+        config=config,
+        config_path=config_path_for_snapshot,
+        n_plot_paths=80,
+        plot_all_paths=True,
+        eval_paths_override=None,
+    )
+
+
 def _result1b_run_dir_from_config_path(config_path: str) -> str:
     rel_stem = _get_config_relative_stem(config_path)
     return os.path.normpath(os.path.join(THESIS_MODELS_ROOT, rel_stem))
@@ -269,6 +287,7 @@ def main() -> None:
     print(f"[run:{run_name}] Loaded config: {source_path}")
     print(f"[run:{run_name}] Pipeline: {pipeline}")
 
+    compare_executed = False
     if not bool(args.force_run) and pipeline == "result1b":
         action, details = _result1b_compare_plan(config_path=source_path, config=config_clean)
         run_dir = str(details.get("run_dir"))
@@ -277,8 +296,7 @@ def main() -> None:
                 f"[run:{run_name}] Compare outputs already complete at '{run_dir}'. "
                 "Skipping (use --force-run to recompute)."
             )
-            return
-        if action == "bootstrap_only":
+        elif action == "bootstrap_only":
             from examples.thesis_result1b_compare_console import run_bootstrap_only_from_saved_payload
 
             print(
@@ -290,14 +308,32 @@ def main() -> None:
                 config_path=source_path,
                 config=config_clean,
             )
-            return
+            compare_executed = True
+        else:
+            _dispatch_compare(
+                pipeline=pipeline,
+                run_name=run_name,
+                config_path_for_snapshot=source_path,
+                config=config_clean,
+            )
+            compare_executed = True
+    else:
+        _dispatch_compare(
+            pipeline=pipeline,
+            run_name=run_name,
+            config_path_for_snapshot=source_path,
+            config=config_clean,
+        )
+        compare_executed = True
 
-    _dispatch_compare(
-        pipeline=pipeline,
-        run_name=run_name,
-        config_path_for_snapshot=source_path,
-        config=config_clean,
-    )
+    if pipeline == "result1b":
+        if compare_executed:
+            print(f"[run:{run_name}] Compare step finished. Building path plots.")
+        _dispatch_result1b_paths_plot(
+            run_name=run_name,
+            config_path_for_snapshot=source_path,
+            config=config_clean,
+        )
 
 
 if __name__ == "__main__":
