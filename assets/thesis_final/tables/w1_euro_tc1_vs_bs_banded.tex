@@ -1,0 +1,23 @@
+\begin{table}[H]
+\centering
+\caption{Métricas del error de cobertura para una opción call europea (W1, TC=1\%): benchmark con banda de no-intervención.}
+\label{tab:w1_euro_tc1_vs_bs_banded}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Métrica} & \textbf{BS Delta (banda)} & \textbf{Deep Hedging (Recurrent)} & \textbf{Deep Hedging (LSTM)} \\
+\thickhline
+Media & \makecell{-1,3328\\{\scriptsize [-1,3499; -1,3155]}} & \textbf{\makecell{-1,0619\\{\scriptsize [-1,0780; -1,0451]}}} & \makecell{-1,1160\\{\scriptsize [-1,1324; -1,0995]}} \\
+\midrule
+Desvío estándar & \makecell{1,2370\\{\scriptsize [1,2219; 1,2505]}} & \textbf{\makecell{1,1411\\{\scriptsize [1,1107; 1,1710]}}} & \makecell{1,1982\\{\scriptsize [1,1731; 1,2253]}} \\
+\midrule
+CVaR 50\% & \makecell{2,2723\\{\scriptsize [2,2507; 2,2933]}} & \textbf{\makecell{1,8467\\{\scriptsize [1,8232; 1,8668]}}} & \makecell{1,9482\\{\scriptsize [1,9228; 1,9741]}} \\
+\midrule
+CVaR 95\% & \makecell{4,2109\\{\scriptsize [4,1503; 4,2695]}} & \textbf{\makecell{4,1538\\{\scriptsize [4,0235; 4,2858]}}} & \makecell{4,5120\\{\scriptsize [4,4009; 4,6354]}} \\
+\midrule
+CVaR 99\% & \textbf{\makecell{5,2774\\{\scriptsize [5,1692; 5,3797]}}} & \makecell{6,7465\\{\scriptsize [6,3788; 7,0955]}} & \makecell{6,6345\\{\scriptsize [6,3642; 6,9243]}} \\
+\midrule
+MAE & \makecell{1,4970\\{\scriptsize [1,4828; 1,5114]}} & \textbf{\makecell{1,2069\\{\scriptsize [1,1927; 1,2186]}}} & \makecell{1,2400\\{\scriptsize [1,2257; 1,2544]}} \\
+\midrule
+Peor caso & \textbf{\makecell{7,1367\\{\scriptsize [6,8576; 7,1367]}}} & \makecell{15,9921\\{\scriptsize [10,6934; 15,9921]}} & \makecell{14,4249\\{\scriptsize [10,1533; 14,4249]}} \\
+\end{tabular}
+\end{table}

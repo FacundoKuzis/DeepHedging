@@ -1,0 +1,23 @@
+\begin{table}[H]
+\centering
+\caption{Métricas del error de cobertura para una opción call europea (W1, TC=0\%): benchmark Local Risk Minimization.}
+\label{tab:w1_euro_tc0_vs_lrm}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Métrica} & \textbf{LRM (MC)} & \textbf{Agente Deep Hedging} \\
+\thickhline
+Media & \makecell{-0,0027\\{\scriptsize [-0,0135; 0,0087]}} & \textbf{\makecell{-0,0017\\{\scriptsize [-0,0122; 0,0089]}}} \\
+\midrule
+Desvío estándar & \makecell{0,5384\\{\scriptsize [0,5295; 0,5476]}} & \textbf{\makecell{0,5351\\{\scriptsize [0,5266; 0,5442]}}} \\
+\midrule
+CVaR 50\% & \makecell{0,4205\\{\scriptsize [0,4068; 0,4322]}} & \textbf{\makecell{0,4127\\{\scriptsize [0,4001; 0,4260]}}} \\
+\midrule
+CVaR 95\% & \textbf{\makecell{1,2016\\{\scriptsize [1,1602; 1,2427]}}} & \makecell{1,2117\\{\scriptsize [1,1731; 1,2502]}} \\
+\midrule
+CVaR 99\% & \textbf{\makecell{1,7315\\{\scriptsize [1,6335; 1,8211]}}} & \makecell{1,7653\\{\scriptsize [1,6771; 1,8501]}} \\
+\midrule
+MAE & \makecell{0,4178\\{\scriptsize [0,4115; 0,4247]}} & \textbf{\makecell{0,4112\\{\scriptsize [0,4049; 0,4174]}}} \\
+\midrule
+Peor caso & \textbf{\makecell{2,6773\\{\scriptsize [2,4265; 2,6773]}}} & \makecell{3,1680\\{\scriptsize [2,4504; 3,1680]}} \\
+\end{tabular}
+\end{table}

@@ -5,8 +5,8 @@
   "trained_agents": [
 
     {
-      "agent_name": "LSTMAgent",
-      "model_name": "tf_w2_gbm_random_ctx50_1a_1_euro_tc0_cvar50_lstm"
+      "agent_name": "RecurrentAgent",
+      "model_name": "tf_w2_gbm_random_ctx50_1a_1_euro_tc0_cvar50_recurrent"
     }
   ],
   "contingent_claim": "EuropeanCall",

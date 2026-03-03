@@ -1,0 +1,23 @@
+\begin{table}[H]
+\centering
+\caption{Métricas del error de cobertura para una opción call asiática aritmética (W1, TC=1\%): benchmark con banda de no-intervención.}
+\label{tab:w1_asian_arith_tc1_vs_lrm_banded}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Métrica} & \textbf{LRM (banda)} & \textbf{Agente Deep Hedging} \\
+\thickhline
+Media & \makecell{-1,1546\\{\scriptsize [-1,1726; -1,1346]}} & \textbf{\makecell{-0,5504\\{\scriptsize [-0,5793; -0,5237]}}} \\
+\midrule
+Desvío estándar & \textbf{\makecell{0,9861\\{\scriptsize [0,9675; 1,0035]}}} & \makecell{1,3888\\{\scriptsize [1,3481; 1,4336]}} \\
+\midrule
+CVaR 50\% & \makecell{1,8883\\{\scriptsize [1,8619; 1,9102]}} & \textbf{\makecell{1,4120\\{\scriptsize [1,3629; 1,4653]}}} \\
+\midrule
+CVaR 95\% & \textbf{\makecell{3,4939\\{\scriptsize [3,4114; 3,5720]}}} & \makecell{4,9371\\{\scriptsize [4,7604; 5,1186]}} \\
+\midrule
+CVaR 99\% & \textbf{\makecell{4,5258\\{\scriptsize [4,3446; 4,6939]}}} & \makecell{6,8911\\{\scriptsize [6,5968; 7,1992]}} \\
+\midrule
+MAE & \makecell{1,2661\\{\scriptsize [1,2484; 1,2805]}} & \textbf{\makecell{0,8800\\{\scriptsize [0,8555; 0,9071]}}} \\
+\midrule
+Peor caso & \textbf{\makecell{7,3620\\{\scriptsize [6,2457; 7,3620]}}} & \makecell{10,1106\\{\scriptsize [9,1063; 10,1106]}} \\
+\end{tabular}
+\end{table}

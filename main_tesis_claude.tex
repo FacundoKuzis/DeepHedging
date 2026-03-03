@@ -1,0 +1,1267 @@
+%***********************************************************************************************************
+% Paquetes para español y matemática
+% Paquetes para incluir acentos
+% Paquetes para incluir gráficos
+% para incluir códigos de Matlab
+%***********************************************************************************************************
+
+\documentclass[11pt,a4paper,spanish]{article}
+
+% Paquete para utilizar fuentes del sistema (como Arial)
+\usepackage{fontspec}
+%\setmainfont{Arial} % Establece Arial como fuente principal
+
+\usepackage[utf8]{inputenc}  % Usa codificación utf8 para mostrar caracteres correctamente
+\usepackage[T1]{fontenc}     % Codificación de fuente correcta para caracteres especiales
+\usepackage[spanish]{babel}  % Soporte para el idioma español
+
+% Paquetes matemáticos y gráficos
+\usepackage{amsmath,amsbsy,amscd,amssymb,graphicx,epsfig,makeidx,multicol}
+\usepackage[round]{natbib}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage{setspace}        % Paquete para controlar el espaciado
+\usepackage{cases}
+\usepackage{subfigure}
+\usepackage{listings}
+\usepackage{color}%
+\usepackage{amsfonts}%
+\usepackage{enumerate}
+\usepackage{floatrow}
+\usepackage{appendix}
+\usepackage[section]{placeins}
+\usepackage{hyperref} % Para enlaces clicables
+\usepackage{svg}
+
+\usepackage{booktabs} % Para líneas de tabla de mejor calidad
+\usepackage{makecell} % Para celdas con múltiples líneas
+\usepackage{float} % Para la opción [H]
+
+\usepackage{array}       % Para definir nuevos comandos de línea
+
+% Definir una línea horizontal más gruesa
+\newcommand{\thickhline}{\noalign{\hrule height 1.5pt}}
+
+\numberwithin{equation}{section} % Configura la numeración según la sección
+
+% Configuración del espaciado a 1.5 líneas
+\onehalfspacing
+
+% Configuración para incluir códigos de Matlab
+\lstset{
+    language=Matlab,
+    basicstyle=\footnotesize,
+    keywordstyle=\color{blue},
+    commentstyle=\color{dkgreen},
+    stringstyle=\color{mauve},
+    escapeinside={\%*}{*)},
+    tabsize=2
+}
+
+\begin{document}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{titlepage}
+
+\begin{center}
+% Upper part of the page
+\includegraphics[width=0.3\textwidth]{LogoUdesaOficial.png} \\[1cm]
+
+\textbf{Universidad de San Andrés} \\[0.7cm]
+
+\textbf{Escuela de Administración y Negocios} \\[0.7cm]
+
+\textbf{Licenciatura en Finanzas} \\[1.8cm]
+
+
+\doublespacing
+{\large\large\textbf{\textit{Asian Deep Hedging}: Aprendizaje por refuerzo aplicado a la cobertura de opciones asiáticas}}
+
+\vspace{3cm}
+
+\bigskip
+
+\textbf{Autor: Facundo Ezequiel Kuzis} \\[0.7cm]
+
+\textbf{DNI: 43.974.456} \\[0.7cm]
+
+\textbf{Director de Tesis: Pablo Alejandro Macri}
+
+\vspace*{\fill}
+
+\textbf{Provincia de Buenos Aires, Argentina,\\ 04 de febrero 2025}
+
+\end{center}
+
+\end{titlepage}
+
+% Tabla de Contenidos (opcional)
+\tableofcontents
+\newpage
+
+
+\section*{Resumen}
+
+Este trabajo tiene como objetivo evaluar las técnicas de aprendizaje por refuerzo (\textit{Reinforcement Learning}) aplicadas a la cobertura de derivados financieros, enfocándose especialmente en el mercado de opciones asiáticas, tanto geométricas como aritméticas. El modelo se basa principalmente en el marco de \textit{Deep Hedging} propuesto por Buehler, H. et al. (2018). Los métodos tradicionales de cobertura, como el \textit{delta hedging} construido a partir del modelo de valuación de opciones europeas propuesto por Black, F. y Scholes, M. (1973), presentan limitaciones debido a supuestos poco realistas en los mercados, tales como comercio continuo, liquidez perfecta y ausencia de costos de transacción. En contraste, el \textit{Deep Hedging} ofrece un enfoque más realista al modelar estas fricciones. A su vez, proporciona una gran flexibilidad para adaptarse a derivados exóticos, que no cuentan con soluciones teóricas exactas para su replicación. El principal aporte de esta tesis es extender la literatura existente hacia la cobertura de opciones asiáticas, evaluando su desempeño tanto en ausencia como en presencia de costos de transacción, y comparándolo con métodos tradicionales de la industria. Hasta la fecha de publicación y al mejor conocimiento de los autores, este es el primer estudio que realiza dicho análisis para opciones asiáticas aritméticas.
+
+% Salto de página después del Resumen
+\newpage
+
+\section{Introducción}
+
+En los últimos años, los avances teóricos y computacionales han consolidado el aprendizaje por refuerzo (\textit{Reinforcement Learning}, RL) como una herramienta esencial para resolver problemas en entornos dinámicos e inciertos. Este enfoque permite que un agente aprenda a tomar decisiones óptimas interactuando con su entorno, ajustando sus acciones para maximizar recompensas a largo plazo. A diferencia del aprendizaje supervisado, que requiere datos etiquetados para guiar el proceso de aprendizaje, el aprendizaje por refuerzo no necesita una guía supervisada explícita; en su lugar, el agente descubre la mejor estrategia a través de la experiencia y la retroalimentación recibida en forma de recompensas o penalizaciones.
+
+Un ejemplo destacado de la eficacia del RL es su aplicación en juegos complejos como el ajedrez y el Go. Programas como \textit{AlphaZero} de \textit{DeepMind} han demostrado habilidades sobrehumanas en estos juegos, aprendiendo estrategias únicamente a través de autoaprendizaje y sin intervención humana directa (Silver et al., 2017). Asimismo, el aprendizaje por refuerzo se ha aplicado en diversas áreas científicas y tecnológicas. En robótica, permite que robots autónomos aprendan a realizar tareas complejas mediante ensayo y error. Por ejemplo, en la conducción autónoma, ayuda a los vehículos a tomar decisiones en tiempo real para navegar de manera segura (Kiran et al., 2021). La capacidad del aprendizaje por refuerzo para abordar problemas teóricamente complejos y encontrar soluciones computacionales efectivas lo posiciona como una herramienta poderosa en la industria moderna.
+
+El aprendizaje por refuerzo también ha demostrado ser una herramienta valiosa en el sector financiero, especialmente en la gestión de carteras y el \textit{trading} automatizado. Mediante la interacción continua con el entorno del mercado, los agentes de RL pueden aprender y adaptar estrategias de inversión que buscan maximizar los rendimientos ajustados al riesgo. Por ejemplo, se han desarrollado marcos que integran simulaciones de Monte Carlo con aprendizaje por refuerzo para mejorar la asignación de activos en carteras diversificadas (Ahn et al., 2022). Otro ejemplo de aplicación es en la ejecución óptima de órdenes, donde los agentes de RL determinan la mejor manera de dividir y programar grandes órdenes de compra o venta para minimizar el impacto en el mercado y los costos de transacción (Moallemi y Wang, 2022).
+
+Por otro lado, en los últimos años ha aumentado significativamente el interés por aplicar el aprendizaje por refuerzo a uno de los desafíos principales de la literatura financiera: las estrategias de cobertura de derivados financieros. El modelo que ha ganado mayor reconocimiento en este campo es el \textit{Deep Hedging} (Buehler et al., 2018). Este enfoque utiliza el aprendizaje por refuerzo profundo (\textit{Deep Reinforcement Learning}, \textit{DRL}) con algoritmos de gradiente de política (\textit{Policy Gradient Search}, \textit{PGS}) para optimizar las estrategias de cobertura considerando las fricciones del mercado, como los costos de transacción, el impacto en el mercado y las restricciones de liquidez. A diferencia del modelo clásico de Black-Scholes (\textit{BS}), que se basa en suposiciones simplificadoras sobre el comportamiento del mercado, el \textit{Deep Hedging} permite que el agente aprenda una estrategia óptima directamente a partir de la interacción con un entorno complejo. De esta manera, se maximiza una recompensa acumulada que incorpora las adversidades reales del mercado. Así, no solo se logra cubrir el riesgo en mercados sin fricciones, sino que también se pueden abordar escenarios más realistas y heterogéneos, como la posibilidad de adaptarse con mayor facilidad a derivados exóticos.
+
+Desde la publicación del trabajo de Buehler et al., varios estudios han ampliado este enfoque. Por ejemplo, Neagu y Godin (2024) investigaron el uso del \textit{Deep Hedging} considerando el impacto de mercado en la ejecución de órdenes, demostrando cómo un agente entrenado con aprendizaje por refuerzo puede minimizar estos costos y mejorar la eficiencia de la cobertura. Por su parte, Pickard et al. (2024) aplicaron el aprendizaje por refuerzo para cubrir opciones americanas, un desafío importante debido a la complejidad de su estructura de ejercicio temprano, y mostraron que los enfoques basados en RL superan las estrategias clásicas.
+
+El trabajo original de Buehler et al. empleó modelos de redes neuronales recurrentes simples y LSTM, destacándose por su capacidad de manejar series temporales complejas en un entorno de mercado simulado. Sin embargo, investigaciones posteriores han explorado el uso de otras arquitecturas para mejorar el desempeño. Por ejemplo, Son, G. y Kim, J. (2021) obtuvieron resultados positivos utilizando redes neuronales convolucionales (CNNs), como el modelo WaveNet, mostrando que estas arquitecturas pueden capturar patrones temporales de manera efectiva en contextos financieros.
+
+Además, diversos autores han evaluado la efectividad del método en opciones financieras más complejas, como las opciones barrera (Chen et al., 2023), las opciones asiáticas geométricas y las opciones digitales de compra (Qin, P., 2020). En estos casos, concluyeron que los modelos de redes neuronales pudieron aproximar exitosamente la estrategia de cobertura teórica para dichos derivados. Sin embargo, existen otros trabajos sobre derivados aún más complejos, como la aplicación a las \textit{Rainbow Options} (Collin, T., 2023), que no llegan a una conclusión positiva respecto a la utilidad del \textit{Deep Hedging} para estos instrumentos, comparado a otros métodos numéricos de la industria. El autor sugiere que las posibles causas de este fallo del modelo incluyen la excesiva complejidad inherente a la naturaleza de los pagos finales de estos derivados, los cuales dependen de la evolución de precios de numerosos subyacentes correlacionados entre sí, por lo que requiere una precisión elevada en la predicción de múltiples variables simultáneamente, lo que puede sobrepasar las capacidades actuales de los modelos de redes neuronales utilizados.
+
+El presente trabajo tiene como objetivo evaluar la efectividad del \textit{Deep Hedging} en la cobertura de los \textit{payoffs} de opciones asiáticas. Hasta la fecha, esta temática no ha sido abordada con profundidad en la literatura existente. El único estudio relevante en este ámbito es el de Qin (2020), quien obtuvo resultados prometedores al aplicar \textit{Deep Hedging} a opciones \textit{call} asiáticas geométricas. Sin embargo, dicho análisis se limitó a un entorno de mercado sin costos de transacción. A su vez, tampoco se han identificado investigaciones que examinen la efectividad de esta técnica en opciones asiáticas aritméticas. Por lo tanto, este trabajo busca llenar ese vacío investigativo, analizando si el \textit{Deep Hedging} puede aplicarse de manera eficaz a opciones asiáticas aritméticas de forma similar a como lo ha hecho con derivados de complejidad comparable, o si, por el contrario, estas opciones pertenecen a aquellos derivados que no se benefician de igual manera de este enfoque.
+
+El trabajo se organiza de la siguiente manera. En la Sección~\ref{sec:descripcion_problema}, se presenta una descripción del problema, donde se introducen las opciones financieras, el modelo clásico de Black-Scholes y sus limitaciones, así como métodos numéricos utilizados para la valoración de opciones exóticas, tales como Monte Carlo y \textit{Control Variates}. La Sección~\ref{sec:rl} está dedicada al aprendizaje por refuerzo, con énfasis en métodos fundamentales como redes neuronales y arquitecturas para datos secuenciales (\textit{Recurrent Neural Networks}, LSTM y WaveNet), que constituyen la base de los modelos de cobertura dinámica estudiados. En la Sección~\ref{sec:deep_hedging}, se desarrolla el modelo de \textit{Deep Hedging}, detallando el espacio de estado, la función de recompensa y los objetivos específicos que guían las estrategias de cobertura. La Sección~\ref{sec:experimentos_numericos} describe el diseño de los experimentos numéricos, las métricas de evaluación y el \textit{Bootstrapping} como método para el cálculo de los intervalos de confianza. En la Sección~\ref{sec:resultados}, se exponen los resultados, comparando la efectividad de las estrategias propuestas para opciones europeas y asiáticas, tanto en escenarios con costos de transacción como sin ellos. Finalmente, la Sección~\ref{sec:conclusiones} presenta las conclusiones, resumiendo los hallazgos más relevantes del trabajo y proponiendo posibles extensiones futuras.
+
+\newpage
+
+
+\section{Descripción del Problema}\label{sec:descripcion_problema}
+
+En este capítulo, se analizará en detalle el problema de la cobertura de opciones. Comenzará con una explicación exhaustiva del modelo de Black-Scholes y la estrategia de cobertura delta, incluyendo sus fundamentos teóricos y las hipótesis subyacentes. A continuación, abordamos las principales limitaciones de dicho modelo y las dificultades que surgen al enfrentarse a mercados con fricciones o a derivados más complejos. Finalmente, discutimos la relevancia de los métodos numéricos, en particular las simulaciones de Monte Carlo, como herramientas útiles para abordar estos problemas en entornos más realistas.
+
+\subsection{Introducción a las opciones y la cobertura}
+
+Las opciones son contratos financieros que otorgan al comprador el derecho, pero no la obligación, de comprar o vender un activo subyacente a un precio predeterminado, denominado precio de ejercicio ($K$), en una fecha futura $T$. Dependiendo de su naturaleza, las opciones pueden ser de compra (\textit{call}) o de venta (\textit{put}), y pueden tener diferentes estilos, siendo el europeo uno de los más comunes. En particular, una opción \textit{call }europea da al titular el derecho a adquirir el activo subyacente al precio de ejercicio en el momento del vencimiento $T$. El pago final, o \textit{payoff}, de esta opción es:
+
+\begin{equation}
+\text{Payoff}_{\text{call}} = \max(S_T - K, 0),
+\end{equation}
+
+
+donde $S_T$ es el precio del activo subyacente en el momento del vencimiento. Únicamente le será conveniente ejercer su opción en el caso de que el precio final del subyacente sea mayor al precio de ejercicio. 
+
+El valor de la opción en el presente depende de factores como el precio actual del activo subyacente ($S_0$), la volatilidad del activo ($\sigma$), la tasa de interés libre de riesgo ($r$), el tiempo hasta el vencimiento ($T$) y el precio de ejercicio ($K$). Los inversores utilizan las opciones no solo con fines especulativos, sino también para mitigar riesgos. La cobertura es la estrategia a través de la cual los inversores ajustan sus posiciones en los derivados para protegerse de movimientos adversos en el precio del activo subyacente, o ajustan su posición en el activo subyacente para cubrirse de las variaciones en el precio del derivado. De esta manera, estas estrategias se convierten en herramientas fundamentales para la gestión del riesgo financiero.
+
+\subsection{Modelo de Black-Scholes-Merton}\label{subsec:bsm}
+
+El modelo de Black-Scholes-Merton (Black y Scholes, 1973; Merton, 1973), comúnmente conocido como el modelo de Black-Scholes (BS), es uno de los pilares de la teoría moderna de valuación de opciones. Este modelo asume que el precio del activo subyacente sigue un \textbf{movimiento browniano geométrico} (\textit{Geometric Brownian Motion}, GBM), lo cual significa que la dinámica del precio $S_t$ se describe mediante la siguiente ecuación diferencial estocástica:
+
+\begin{equation}
+dS_t = \mu S_t dt + \sigma S_t dW_t,
+\end{equation}
+
+donde:
+\begin{itemize}
+    \item $S_t$: precio del activo en el tiempo $t$,
+    \item $\mu$: tasa de retorno esperada del activo,
+    \item $\sigma$: volatilidad del activo, un parámetro que mide la intensidad de las fluctuaciones del precio,
+    \item $W_t$: un movimiento browniano estándar, un proceso estocástico con incrementos independientes y normalmente distribuidos.
+\end{itemize}
+
+El movimiento browniano (o \textit{Wiener}) es un proceso continuo en el tiempo y con trayectoria continua, que se utiliza ampliamente en finanzas para modelar la incertidumbre inherente a los mercados. Bajo el supuesto de mercados libres de arbitraje y negociación continua sin fricciones, Black, Scholes y Merton mostraron cómo replicar el \textit{payoff} de una opción a vencimiento mediante una estrategia dinámica en el activo subyacente y en un bono libre de riesgo. Este argumento llevó a la derivación de la famosa \textbf{fórmula de Black-Scholes}.
+
+\subsubsection{Valuación de opciones}
+
+La valuación de una opción \textit{call} europea bajo las hipótesis del modelo de Black-Scholes se expresa mediante la fórmula cerrada (Black y Scholes, 1973; Merton, 1973):
+
+\begin{equation}
+C = S_0 N(d_1) - K e^{-rT} N(d_2),
+\end{equation}
+
+donde:
+\begin{itemize}
+    \item $C$: precio de la opción \textit{call},
+    \item $S_0$: precio actual del activo subyacente,
+    \item $K$: precio de ejercicio,
+    \item $T$: tiempo hasta el vencimiento,
+    \item $r$: tasa de interés libre de riesgo,
+    \item $N(\cdot)$: función de distribución acumulada de la normal estándar.
+\end{itemize}
+
+Los términos $d_1$ y $d_2$ se definen como:
+
+\begin{equation}
+d_1 = \frac{\ln\left(\frac{S_0}{K}\right) + \left(r + \frac{\sigma^2}{2}\right)T}{\sigma \sqrt{T}}, \quad
+d_2 = d_1 - \sigma \sqrt{T}.
+\label{eq:d1-d2}
+\end{equation}
+
+Esta fórmula se obtuvo mediante la creación de un portafolio que replica la opción combinando una posición en el activo subyacente y en instrumentos libres de riesgo, asegurando que los cambios en el portafolio coincidan con los de la opción. Black, Scholes y Merton utilizaron el cálculo estocástico, específicamente el lema de It\={o}, para derivar una ecuación que describe cómo varía el precio de la opción con el tiempo, el precio del activo y su volatilidad. Al resolver esta ecuación bajo las condiciones específicas de una opción europea, lograron obtener la fórmula cerrada de Black-Scholes. Este método asegura que no haya posibilidades de arbitraje, ya que cualquier diferencia entre el precio de la opción y el valor calculado permitiría obtener ganancias sin riesgo, lo cual no es viable en mercados eficientes. 
+
+\subsubsection{Las \textit{Greeks} y la cobertura Delta}
+
+Se conocen como \textit{Greeks} a las sensibilidades que miden cómo varía el precio de la opción ante pequeños cambios en los parámetros del modelo. La más relevante para la cobertura es el \textbf{delta} ($\Delta$), definido como:
+
+\begin{equation}
+\Delta = \frac{\partial C}{\partial S_0}.
+\end{equation}
+
+Para una opción \textit{call} europea bajo Black-Scholes, el delta es $N(d_1)$, que varía entre 0 y 1. Un delta cercano a 1 indica que la opción se comporta similarmente al activo subyacente, mientras que un delta cercano a 0 indica una menor sensibilidad a las variaciones en el precio del activo.
+
+La \textbf{cobertura delta} consiste en mantener una posición en el activo subyacente proporcional al delta de la opción. Por ejemplo, si el delta es 0.5, por cada opción en cartera se mantiene media unidad del activo subyacente. A medida que el precio del activo varía, el delta cambia y la posición debe reajustarse continuamente para mantener la cobertura. Si el mercado fuera realmente sin fricciones (es decir, sin costos de transacción, con divisibilidad infinita y liquidez perfecta), esta estrategia de cobertura dinámica permitiría neutralizar el riesgo asociado a la opción. Sin embargo, en la práctica, las fricciones del mercado dificultan la implementación de esta estrategia con ajuste continuo.
+
+\subsubsection{Limitaciones del modelo}
+
+A pesar de su utilidad y aceptación generalizada, el modelo de Black-Scholes presenta importantes limitaciones. Primero, asume que el precio del activo sigue un GBM con volatilidad constante, lo cual no se ajusta a la realidad observada en muchos mercados, donde la volatilidad es estocástica y la distribución de los precios de los activos exhibe colas más pesadas que las de una distribución log-normal (contemplado en modelos como Heston, 1993).
+
+Asimismo, el modelo supone la posibilidad de reequilibrar la cartera de cobertura de manera continua y sin costo, algo irrealizable en la práctica. En mercados reales existen costos de transacción, comisiones, barreras para la ejecución de órdenes y restricciones de liquidez que obstaculizan la cobertura continua. Aunque se han desarrollado enfoques teóricos para tratar de incorporar las fricciones en las estrategias de cobertura, como la introducción de bandas de no transacción, que establecen rangos dentro de los cuales no se realizan ajustes para evitar costos frecuentes (Almgren, 2001), estos métodos suelen ser complejos y difíciles de implementar en la práctica. La complejidad radica en la necesidad de estimar con precisión parámetros del mercado, como la volatilidad y los costos de transacción, que pueden ser variables y difíciles de medir en tiempo real, y la necesidad de recursos computacionales significativos y experiencia técnica avanzada, lo que puede no ser factible para todas las instituciones financieras. Por ello, muchos profesionales prefieren utilizar métodos tradicionales como el modelo de Black-Scholes, ignorando los costos de transacción, lo que genera ineficiencias y acumulación de errores que pueden llegar a ser significativos.
+
+Al mismo tiempo, cuando se trata de derivados más complejos o exóticos que no disponen de una fórmula de valuación cerrada, el modelo de Black-Scholes presenta limitaciones, ya que no puede capturar adecuadamente la complejidad del \textit{payoff} ni las dinámicas subyacentes. 
+
+\subsection{Opciones asiáticas y sus desafíos de valuación}
+
+En los mercados financieros existen diversos\textbf{ derivados exóticos}, es decir, contratos que presentan características más complejas que los derivados tradicionales, ofreciendo estructuras de pago más sofisticadas y personalizadas a las necesidades de distintos compradores. Dentro de esta categoría, las opciones asiáticas se han consolidado como instrumentos populares debido a su capacidad para suavizar la volatilidad asociada con las opciones estándar. A diferencia de una opción \textit{vanilla}, cuyo valor al vencimiento depende únicamente del precio final del activo subyacente, el \textit{payoff} de una opción asiática se calcula a partir del promedio de los precios del activo a lo largo de la vida del contrato. Esta característica reduce el impacto de fluctuaciones bruscas en el valor del activo cerca de la fecha de expiración, ya que la opción es menos sensible a picos momentáneos en el precio.
+
+En la práctica, las opciones asiáticas encuentran uso en distintas industrias y situaciones de cobertura. Por ejemplo, las empresas que manejan inventarios o que requieren insumos con precios volátiles (como materias primas, metales, productos agrícolas o energéticos) pueden emplear opciones asiáticas para estabilizar sus costos. Al considerar el precio promedio del período, se reduce el riesgo de verse perjudicadas por incrementos súbitos del precio en momentos puntuales. También son empleadas por inversores y gestores de portafolios que buscan instrumentos derivados con menor sensibilidad a movimientos bruscos y más alineados con valores “promediados” a lo largo del tiempo.
+
+Existen dos variantes destacadas: las \textbf{opciones asiáticas aritméticas} y las \textbf{opciones asiáticas geométricas}. Ambas se basan en promedios, pero difieren en la forma de calcularlo. La opción asiática aritmética toma el promedio simple de los precios del activo subyacente durante el período de vida del contrato. La opción asiática geométrica, en cambio, utiliza el promedio geométrico de estos precios, es decir, el promedio de los logaritmos de los precios, al cual posteriormente se aplica la función exponencial. Ambas pueden representarse en el caso de una opción de compra (\textit{call}) asiática, como:
+
+\begin{equation}
+\text{Payoff asiática aritmética} = \max\left( \frac{1}{T}\int_0^T S_t \, dt - K, 0 \right),
+\end{equation}
+
+\begin{equation}
+\text{Payoff asiática geométrica} = \max\left( \exp\left(\frac{1}{T} \int_0^T \ln(S_t) \, dt\right) - K, 0 \right).
+\end{equation}
+
+Las opciones asiáticas geométricas resultan más sencillas de abordar analíticamente. Bajo supuestos estándar, como la dinámica lognormal del activo subyacente y parámetros constantes, es posible derivar fórmulas cerradas (Zhang, 1998). Esto se debe a que el promedio geométrico, al utilizar la integral del logaritmo de los precios, preserva propiedades estadísticas clave: la suma de variables aleatorias normalmente distribuidas (como los logaritmos del precio bajo un supuesto lognormal) mantiene su distribución normal, lo que facilita el tratamiento matemático. En otras palabras, la distribución del logaritmo del promedio geométrico es normal si los logaritmos de los precios subyacentes lo son, permitiendo una solución más directa.
+
+Por el contrario, las opciones asiáticas aritméticas presentan mayores complicaciones analíticas. El promedio aritmético de un conjunto de variables aleatorias lognormales no sigue una distribución lognormal simple ni una combinación lineal fácilmente tratable. Esto implica que no se preservan las propiedades estadísticas que permitirían encontrar una fórmula cerrada. Sin tales propiedades, la valuación de las opciones asiáticas aritméticas debe, en general, recurrir a métodos numéricos. Aunque muy flexibles, estas herramientas requieren más tiempo de cómputo y pueden ser más complejas de implementar. Boyle y Potapchik (2008) realizaron comparaciones de diversas de estas técnicas, incluyendo simulaciones de Monte Carlo, métodos de diferencias finitas y enfoques cuasi-analíticos. Entre ellas, el método de Monte Carlo puede ser destacado por ofrecer resultados comparables a las otras técnicas, pero su mayor facilidad de implementación lo convierte en una herramienta muy útil para los practicantes de la industria.
+
+
+\subsubsection{Método de Monte Carlo}\label{subsubsec:metodo-monte-carlo}
+
+El método de Monte Carlo (MC) es una herramienta numérica ampliamente utilizada para la valuación de opciones y otros instrumentos financieros complejos, así como en diversas áreas de las ciencias exactas y aplicadas. Su origen se remonta a la década de 1940, cuando Stanislaw Ulam, John von Neumann y Nicholas Metropolis desarrollaron este enfoque en el contexto del Proyecto Manhattan (Metropolis y Ulam, 1949). El término “Monte Carlo” hace referencia al famoso casino de Mónaco, resaltando la analogía entre la generación de números aleatorios simulados y el azar propio del juego.
+
+La idea fundamental del método de Monte Carlo es aproximar el valor esperado de una variable aleatoria (en este caso, el \textit{payoff} de un derivado) mediante la simulación de un gran número de escenarios. En el caso de las opciones, el procedimiento típico consiste en:
+
+\begin{enumerate}
+    \item Se determina el modelo estocástico que rige la dinámica del precio del subyacente (por ejemplo, un GBM) y se fijan los parámetros: precio inicial del activo ($S_0$), volatilidad ($\sigma$), tasa libre de riesgo ($r$), precio de ejercicio ($K$) y horizonte temporal ($T$).
+
+    \item Se simulan $N$ trayectorias posibles del precio del activo subyacente a lo largo del intervalo $[0,T]$. Estas trayectorias se generan mediante incrementos aleatorios con distribución normal estándar, utilizando generadores de números pseudoaleatorios de alta calidad.
+
+    \item Para cada trayectoria, se computa el \textit{payoff} de la opción al vencimiento. En el caso de las opciones asiáticas, esto implica calcular el promedio (aritmético o geométrico, según corresponda) de las cotizaciones simuladas a lo largo de la vida del instrumento. Por ejemplo, para una opción asiática aritmética:
+    \begin{equation}
+    \text{Payoff asiática aritmética} = \max\left( \frac{1}{M}\sum_{i=1}^{M} S_{t_i} - K, 0 \right),
+    \end{equation}
+    donde $0 < t_1 < t_2 < \cdots < t_M = T$ son los tiempos de observación.
+
+    \item El precio de la opción se aproxima como el promedio de los \textit{payoffs} obtenidos en todas las trayectorias, descontado a valor presente con la tasa libre de riesgo:
+    \begin{equation}
+    C \approx e^{-rT}\frac{1}{N}\sum_{j=1}^{N}\text{Payoff}_j.
+    \end{equation}
+\end{enumerate}
+
+    El método de Monte Carlo es estocástico, por lo que la precisión de la estimación depende de la cantidad de simulaciones $N$. El error estándar decrece a razón de $1/\sqrt{N}$, por lo que para alcanzar altos niveles de exactitud puede ser necesario un número muy elevado de simulaciones, incrementando el costo computacional.
+
+\subsubsection{Método de \textit{Control Variates}} \label{subsubsec:metodo-monte-carlo-cv}
+
+A pesar de su versatilidad, el método de Monte Carlo presenta inconvenientes, principalmente su lenta convergencia y el alto costo computacional para obtener estimaciones de baja varianza. Para mejorar la eficiencia de las simulaciones, se emplean técnicas de reducción de varianza. Una de las más utilizadas es la técnica de variables de control, más conocida en inglés como \textit{Control Variate} (CV). Su fundamento estadístico se basa en el hecho de que, si se conoce con exactitud la esperanza de una variable aleatoria \( Y \), entonces se puede utilizar la diferencia \( X - Y \) (donde \( X \) es la variable cuyo valor se quiere estimar) para reducir la varianza del estimador. La clave es elegir una \( Y \) altamente correlacionada con \( X \). De este modo, las fluctuaciones aleatorias en \( X \) se compensan en buena medida con las de \( Y \), logrando una reducción en la varianza total del estimador.
+
+
+Supongamos que deseamos estimar la media de una variable aleatoria \( X \) mediante simulaciones de Monte Carlo. Si identificamos una variable aleatoria \( Y \) que cumple las siguientes condiciones:
+
+\begin{enumerate}
+    \item Esperanza conocida: \( \mathbb{E}[Y] = \mu_Y \).
+    \item \( Y \) está altamente correlacionada con \( X \).
+\end{enumerate}
+
+Se puede construir un nuevo estimador ajustado para \( \mathbb{E}[X] \) de la siguiente forma:
+
+\begin{equation}
+\hat{X}_{\text{CV}} = \bar{X} + \beta (\mu_Y - \bar{Y})
+\end{equation}
+
+Donde:
+
+\begin{itemize}
+    \item \( \bar{X} \) es la media muestral de \( X \) obtenida de las simulaciones.
+    \item \( \bar{Y} \) es la media muestral de \( Y \) obtenida de las mismas simulaciones.
+    \item \( \beta \) es una constante que se elige para minimizar la varianza del estimador ajustado.
+\end{itemize}
+
+La constante \( \beta \) se determina optimizando la reducción de la varianza del estimador ajustado \( \hat{X}_{\text{CV}} \). Matemáticamente, se selecciona \( \beta \) de tal manera que se minimice la varianza de \( \hat{X}_{\text{CV}} \). Este proceso implica derivar la expresión de la varianza de \( \hat{X}_{\text{CV}} \) y encontrar su mínimo respecto a \( \beta \). El cálculo resulta en la siguiente expresión para la constante óptima:
+
+\begin{equation}
+\beta^* = \frac{\text{Cov}(X, Y)}{\text{Var}(Y)}
+\end{equation}
+
+Al utilizar esta constante, la varianza del estimador ajustado se reduce en comparación con la varianza de \( \hat{X} \), especialmente cuando \( X \) y \( Y \) están altamente correlacionados. Esto mejora la eficiencia del método de Monte Carlo, permitiendo obtener estimaciones más precisas con un menor número de simulaciones.
+
+\subsubsection{\textit{Control Variates} para opciones asiáticas}
+La literatura ha explorado esta estrategia para las opciones asiáticas. Por ejemplo, Zhang et al. (2015) proponen utilizar la opción geométrica como CV para mejorar la eficiencia del método de Monte Carlo en la valuación de opciones aritméticas. Ambos tipos de derivados involucran promedios de precios a lo largo del tiempo, lo que genera una correlación elevada entre sus \textit{payoffs}. La ventaja adicional es que la opción asiática geométrica cuenta con una fórmula cerrada de valuación bajo el modelo de Black-Scholes. Esto permite conocer exactamente su valor teórico y utilizarlo para ajustar las estimaciones obtenidas por Monte Carlo para la opción aritmética. La valuación analítica de la opción asiática geométrica es:
+
+\begin{equation}
+C_{\text{geo}} = S_0 e^{-\left(r + \frac{\sigma^2}{6}\right)\left(\frac{T}{2}\right)} N(d_1) - K e^{-rT} N(d_2),
+\end{equation}
+
+donde
+
+\begin{equation}
+d_1 = \frac{\log\left(\frac{S_0}{K}\right) + \left(\frac{T}{2}\right)\left(r + \frac{\sigma^2}{6}\right)}{\sigma \sqrt{\frac{T}{3}}}, \quad
+d_2 = \frac{\log\left(\frac{S_0}{K}\right) + \left(\frac{T}{2}\right)\left(r - \frac{\sigma^2}{2}\right)}{\sigma \sqrt{\frac{T}{3}}}
+\end{equation}
+
+Adicionalmente, se puede obtener el delta analítico de la opción asiática geométrica:
+
+\begin{equation}
+\Delta_{\text{geo}} = e^{-\left(r + \frac{\sigma^2}{6}\right)\left(\frac{T}{2}\right)} N(d_1)
++ \frac{1}{\sigma \sqrt{2\pi T / 3}} \left( e^{-(rT/2 + T\sigma^2/12 + d_1^2/2)} - \frac{K}{S_0} e^{-(rT + d_2^2 / 2)} \right)
+\label{eq:delta_geo}
+\end{equation}
+
+Dado que $C_{\text{geo}}$ es conocido analíticamente, es posible utilizarlo para ajustar el estimador Monte Carlo de la opción asiática aritmética. En la práctica, se procede de la siguiente forma:
+
+\begin{equation}
+\hat{C}_{\text{aritm, CV}} = \bar{C}_{\text{aritm}} + [C_{\text{geo}} - \bar{C}_{\text{geo, sim}}],
+\end{equation}
+donde $\bar{C}_{\text{aritm}}$ es el valor promedio estimado por Monte Carlo de la opción aritmética y $\bar{C}_{\text{geo, sim}}$ es el valor promedio estimado por Monte Carlo de la opción geométrica. Dado que $C_{\text{geo}}$ es exacto, la diferencia entre la estimación de la opción geométrica y su valor analítico se utiliza para ajustar la estimación de la opción aritmética, reduciendo la varianza del estimador final.
+
+A pesar de la implementación de estas técnicas de reducción de varianza, los métodos numéricos tradicionales como el método de Monte Carlo continúan presentando desafíos significativos en términos de costos computacionales, especialmente cuando se requiere una alta precisión o se manejan derivados financieros complejos. Este motivo, junto al de la necesidad de un mejor modelado de fricciones como los costos de transacción, son las principales motivaciones para la exploración de posibles alternativas más eficientes, como los enfoques que hacen uso del aprendizaje por refuerzo,  para optimizar las estrategias de cobertura de manera más ágil, escalable y completa.
+
+\newpage
+
+
+\section{Aprendizaje por refuerzo}\label{sec:rl}
+
+El \textbf{aprendizaje por refuerzo} (\textit{Reinforcement Learning}, RL) es una rama del aprendizaje automático que se centra en cómo un agente de \textit{software} debe tomar acciones en un entorno para maximizar una noción de recompensa acumulada. A diferencia de otros paradigmas de aprendizaje, como el aprendizaje supervisado o no supervisado, en el RL el agente no recibe instrucciones explícitas sobre qué acciones tomar. En su lugar, debe descubrir por sí mismo qué decisiones conducen a las mayores recompensas a través de un proceso de prueba y error.
+
+En este capítulo, se explorarán los fundamentos del aprendizaje por refuerzo, con un enfoque particular en los métodos basados en gradientes de política (\textit{Policy Gradient Methods}). Se comenzará con una visión general del RL, mencionando brevemente el \textit{Q-learning}, y luego se profundizará en las técnicas basadas en gradientes de política, como el algoritmo \textit{REINFORCE}. También se introducirán conceptos clave de aprendizaje profundo (\textit{Deep Learning}), como las redes neuronales (\textit{Neural Networks}, NNs), el perceptrón multicapa (\textit{Multi-Layer Perceptron}, MLP), el algoritmo de retropropagación (\textit{backpropagation}) y las redes neuronales recurrentes (\textit{Recurrent Neural Networks}, RNNs), que son herramientas esenciales en la implementación de algoritmos de RL modernos.
+
+\subsection{Visión general del aprendizaje por refuerzo}
+
+En el aprendizaje por refuerzo, un agente interactúa con un entorno en una serie de pasos de tiempo discretos. En cada paso $t$, el agente observa el estado actual del entorno, $s_t \in S$, donde $S$ es el conjunto de todos los estados posibles. Basándose en esta observación, el agente selecciona una acción $a_t \in A$, donde $A$ es el conjunto de acciones disponibles. Como resultado de esta acción, el agente recibe una recompensa $r_t \in R$ y el entorno transita a un nuevo estado $s_{t+1}$ de acuerdo con una función de transición de estados $P(s_{t+1} \mid s_t, a_t)$.
+
+El objetivo del agente es aprender una política $\pi(a \mid s)$, que define la probabilidad de tomar una acción $a$ dado un estado $s$, de manera que maximice la recompensa acumulada esperada a lo largo del tiempo. Esta recompensa acumulada se define generalmente como el retorno descontado:
+
+\begin{equation}
+R_t = \sum_{k=t}^{\infty} \gamma^{k-t} r_k,
+\end{equation}
+donde $\gamma \in [0,1]$ es el factor de descuento que determina la importancia de las recompensas futuras en comparación con las inmediatas.
+
+Matemáticamente, el problema se modela típicamente como un \textbf{Proceso de Decisión de Markov} (\textit{Markov Decision Process}, MDP), que es un marco matemático para modelar la toma de decisiones en situaciones donde los resultados son en parte aleatorios y en parte controlados por el agente. Un MDP se define por la tupla $(S, A, P, R)$, donde:
+
+\begin{itemize}
+    \item $S$: Conjunto de estados.
+    \item $A$: Conjunto de acciones.
+    \item $P(s_{t+1} \mid s_t, a_t)$: Función de transición de probabilidad de estados.
+    \item $R(s_t, a_t)$: Función de recompensa.
+\end{itemize}
+
+Una propiedad fundamental de los MDPs es la propiedad de Markov, que establece que la probabilidad de transición al siguiente estado depende únicamente del estado actual y de la acción tomada, y no de los estados o acciones anteriores. Es decir, el futuro es independiente del pasado dado el presente. Esta propiedad permite que los MDPs sean manejables y analizables matemáticamente, facilitando el desarrollo de algoritmos para encontrar políticas óptimas que maximicen la recompensa acumulada esperada.
+
+Existen dos enfoques principales en el aprendizaje por refuerzo: los métodos basados en valores (\textit{Value-based methods}) y los métodos basados en políticas (\textit{Policy-based methods}).
+
+\subsubsection{\textit{Q-learning}}
+
+El \textit{Q-learning} es un algoritmo de RL basado en valores que busca aprender la función de valor de acción, $Q(s,a)$, que estima la recompensa acumulada esperada al tomar una acción $a$ en un estado $s$ y luego seguir la política óptima. La función $Q(s,a)$ se actualiza iterativamente utilizando la ecuación de actualización:
+
+\begin{equation}
+Q(s_t, a_t) \leftarrow Q(s_t, a_t) + \alpha \left[r_t + \gamma \max_{a'} Q(s_{t+1}, a') - Q(s_t, a_t)\right],
+\end{equation}
+donde:
+\begin{itemize}
+    \item $\alpha$: es la tasa de aprendizaje.
+    \item $\gamma$: es el factor de descuento.
+    \item $a'$: representa las posibles acciones en el siguiente estado $s_{t+1}$.
+\end{itemize}
+
+El \textit{Q-learning} es actualmente uno de los enfoques más utilizados en el campo del aprendizaje por refuerzo debido a su simplicidad y eficacia en una amplia variedad de problemas. Sin embargo, presenta limitaciones cuando se enfrenta a entornos con espacios de acción continuos o de alta dimensionalidad. Por ejemplo, en problemas que requieren determinar cantidades fraccionarias de instrumentos financieros para comprar o vender, el \textit{Q-learning} puede no ser la mejor opción, ya que exigiría una discretización finita del espacio de acciones. Esta discretización puede resultar en una representación ineficiente o limitada, impidiendo que el agente explore adecuadamente todas las posibles decisiones y, en consecuencia, afectando negativamente el rendimiento del modelo.
+
+
+\subsubsection{Métodos de gradiente de política}
+
+Los \textbf{métodos de gradiente de política} tratan de optimizar directamente la política del agente parametrizándola y ajustando sus parámetros para maximizar la recompensa esperada. A diferencia de los métodos basados en valores, que evalúan las acciones en función de una función de valor, los métodos basados en políticas trabajan con la política misma, lo que es especialmente ventajoso en entornos con espacios de acción continuos o estocásticos.
+
+Sea $\pi_{\theta}(a \mid s)$ una política parametrizada por $\theta$, donde $\theta$ es un vector de parámetros que define el comportamiento del agente. El objetivo es encontrar $\theta$ que maximice la recompensa acumulada esperada:
+
+\begin{equation}
+J(\theta) = \mathbb{E}_{\pi_{\theta}}[R_t] = \mathbb{E}_{\pi_{\theta}}\left[\sum_{k=t}^{\infty} \gamma^{k-t} r_k\right].
+\end{equation}
+
+\subsection{Redes neuronales como modelador de la política paramétrica}
+\label{subsubsec:redes_neuronales_politica}
+
+Las redes neuronales, también conocidas como \textit{Neural Networks} (NN), proporcionan una forma flexible y poderosa de representar funciones de alta complejidad. En el contexto del aprendizaje por refuerzo, se suele utilizar una red neuronal para modelar de manera directa la política \(\pi_\theta(a \mid s)\). De este modo, se define una dependencia parametrizada por \(\theta\) entre el estado del entorno \(s\) y la acción \(a\) que el agente debe tomar. Cada parámetro del vector \(\theta\) corresponde a los pesos y sesgos de la red neuronal, permitiendo ajustar numéricamente la política con miras a \emph{maximizar la recompensa acumulada}.
+
+El concepto de red neuronal surge de la idea de enlazar un gran número de \emph{neuronas} artificiales dispuestas en capas. Cada neurona efectúa dos pasos principales para procesar la información que recibe. En el primer paso, realiza una combinación lineal de sus entradas, que pueden ser el propio estado \(s\) (en la capa de entrada) o las activaciones de la capa anterior (en las capas intermedias). Si denotamos por \(a^{(l)}\) el vector de activaciones de la capa \(l\), y por \(W^{(l)}\) y \(b^{(l)}\) las matrices de pesos y sesgos que conectan la capa \(l-1\) con la capa \(l\), entonces la combinación lineal puede representarse como
+\[
+z^{(l)} = W^{(l)}\, a^{(l-1)} \;+\; b^{(l)}.
+\]
+En esta expresión, \(z^{(l)}\) es el vector de \emph{pre-activaciones} para la capa \(l\), que será transformado posteriormente. Este proceso, que se ilustra en la Figura~\ref{fig:nn_pdf}, destaca cómo las entradas son combinadas linealmente mediante pesos y sesgos para calcular las pre-activaciones de la capa. En el segundo paso, cada neurona aplica una función de activación no lineal \(\sigma(\cdot)\) para dar lugar a la activación final de dicha capa,
+\[
+a^{(l)} = \sigma\!\bigl(z^{(l)}\bigr).
+\]
+
+La elección de \(\sigma(\cdot)\) es crucial para dotar a la red de capacidad de representación no lineal. Comúnmente se utilizan funciones como la sigmoide, definida como \(\sigma(x) = \frac{1}{1 + e^{-x}}\), que comprime los valores de entrada al rango \((0, 1)\); la tangente hiperbólica, definida como \(\sigma(x) = \tanh(x) = \frac{e^x - e^{-x}}{e^x + e^{-x}}\), que comprime los valores de entrada al rango \((-1, 1)\); o la \textit{ReLU} (\textit{Rectified Linear Unit}), definida como \(\sigma(x) = \max(0, x)\), que aplica una activación lineal para valores positivos y cero para valores negativos.
+
+En la primera capa (capa de entrada), las activaciones \(a^{(0)}\) suelen ser simplemente el propio estado \(s\). En la capa de salida, las activaciones finales \(a^{(L)}\) se interpretan según el tipo de problema de aprendizaje por refuerzo que se aborde. Si el conjunto de acciones es discreto, es frecuente utilizar una función \textit{softmax} para garantizar que las salidas de la red definan una distribución de probabilidad sobre las acciones disponibles. Si, en cambio, el espacio de acciones es continuo, la capa de salida podría devolver los parámetros (por ejemplo, media y varianza) de una distribución probabilística sobre la acción que el agente tomará, o directamente la acción a tomar. Este proceso puede observarse en la Figura~\ref{fig:red_nn_pdf}, donde se muestra cómo las capas de entrada, intermedias y de salida están conectadas, destacando el flujo de información hacia adelante característico de las redes neuronales multicapa.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1.0\textwidth]{NN.pdf}
+    \caption{Esquema del flujo de información dentro de una sola neurona artificial. Este proceso incluye la entrada desde la capa previa, la combinación lineal de los pesos y sesgos (\(z^{(l)}\)), la aplicación de una función de activación no lineal (\(\sigma\)) y la generación de la salida (\(a^{(l)}\)) para la siguiente capa.}
+    \label{fig:nn_pdf}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1.0\textwidth]{red_nn.pdf}
+    \caption{Diagrama de una red neuronal multicapa que muestra las conexiones entre la capa de entrada, capas intermedias (ocultas) y capa de salida. Cada nodo representa una neurona artificial, mientras que las flechas ilustran cómo la información se propaga a través de las capas, siguiendo el flujo hacia adelante.}
+    \label{fig:red_nn_pdf}
+\end{figure}
+
+
+La esencia de utilizar redes neuronales en la política \(\pi_\theta(a \mid s)\) radica en que, ajustando apropiadamente \(\theta\), la red pueda aproximar de manera arbitrariamente cercana cualquier comportamiento deseado. Es decir, en la práctica, si la red neuronal es lo suficientemente amplia (en cantidad de neuronas) y profunda (en número de capas), se puede capturar patrones muy complejos y no lineales que relacionen el estado \(s\) con la acción \(a\). 
+
+\medskip
+
+\subsection{Algoritmo de \textit{backpropagation} para el cálculo de gradientes}
+\label{subsubsec:backpropagation}
+
+Para entrenar una red neuronal que parametrice la política, se requiere un método sistemático que permita ajustar los pesos y sesgos de forma que el valor objetivo \(J(\theta)\) aumente. En el aprendizaje profundo, la herramienta central para calcular la sensibilidad de una función de salida con respecto a sus parámetros internos es el algoritmo de \textbf{\textit{backpropagation}} (o \emph{retropropagación del error}). Su fundamento matemático descansa en la regla de la cadena del cálculo diferencial, la cual facilita el cómputo eficiente de derivadas en funciones compuestas de múltiples capas.
+
+La idea central del \textit{backpropagation} es la siguiente. Primero, se realiza una pasada \textit{hacia adelante} (\textit{forward pass}) a través de la red para obtener el resultado final (la política y, por ende, la acción seleccionada o la probabilidad de cada acción). A partir de esta interacción con el entorno, el agente obtiene recompensas y, por consiguiente, \emph{puede computar un criterio de desempeño}. En el caso de métodos de gradiente de política, dicho criterio suele expresarse como una \emph{función de pérdida} \(\mathcal{L}(\theta)\), diseñada de modo que \emph{minimizar} \(\mathcal{L}\) equivalga a \emph{maximizar} el retorno \(J(\theta)\). Puede suceder, por ejemplo, que
+\[
+\mathcal{L}(\theta) \;=\; -\,J(\theta),
+\]
+lo cual invierte el signo de la función objetivo para transformarla en un problema de minimización estándar.
+
+Una vez definida la función de pérdida, se aplican derivadas parciales para entender cómo cambiar los parámetros de la red a fin de mejorar el desempeño. El algoritmo de \textit{backpropagation} contribuye a calcular
+\[
+\nabla_\theta\, \mathcal{L}(\theta),
+\]
+es decir, el vector de derivadas de \(\mathcal{L}\) con respecto a cada componente de \(\theta\). Gracias a la estructura secuencial de la red neuronal, es posible descomponer la derivada total en términos de los gradientes parciales de cada capa, de modo que el error se \emph{retropropaga} desde la salida hasta la entrada. A grandes rasgos, si denotamos el vector de activaciones de la capa \(l\) como \(a^{(l)}\), y la salida de la red en la capa final como \(a^{(L)}\), la regla de la cadena nos indica que si \(\mathcal{L}\) depende de \(a^{(L)}\), y \(a^{(L)}\) depende de \(a^{(L-1)}\), entonces
+\[
+\frac{\partial \mathcal{L}}{\partial a^{(l)}} 
+\;=\; 
+\frac{\partial \mathcal{L}}{\partial a^{(l+1)}} \; \frac{\partial a^{(l+1)}}{\partial a^{(l)}}.
+\]
+Este mecanismo se repite capa tras capa, relacionando las variaciones de la función de pérdida con los cambios en cada nodo (neurona) y cada parámetro (peso y sesgo).
+
+La importancia de \textit{backpropagation} reside en que permite computar de manera muy eficiente los gradientes en redes con cientos de miles e incluso millones de parámetros. Una vez que se han obtenido dichos gradientes, se aplica una \emph{regla de actualización}. Uno de los enfoques más simples es el descenso por gradiente puro:
+\[
+\theta \;\leftarrow\; \theta \;-\; \alpha\, \nabla_{\theta}\, \mathcal{L}(\theta),
+\]
+donde \(\alpha\) es la \textit{tasa de aprendizaje}. Este ajuste persigue el objetivo de mover \(\theta\) en la dirección que reduce la función de pérdida, y, por ende, mejora la política. En la práctica, se emplean variantes más avanzadas como el \textit{Adam} (\textit{Adaptive Moment Estimation}), que combina dos ideas clave: un promedio móvil de los gradientes (para captar la dirección general del descenso) y un promedio móvil de los gradientes al cuadrado (para ajustar la escala del paso en cada dimensión). \textit{Adam} adapta automáticamente la magnitud del paso para cada parámetro en \(\theta\), dando pasos más grandes en direcciones donde los gradientes son pequeños y pasos más pequeños donde los gradientes son grandes. Esto ayuda a manejar problemas como escalas muy diferentes entre los parámetros, estabiliza el entrenamiento y acelera la convergencia hacia un mínimo.
+
+
+Desde un punto de vista intuitivo, \textit{backpropagation} también cumple la función de asignar responsabilidad: cuando el agente recibe una recompensa desfavorable, el error se propaga hacia atrás identificando qué capas y neuronas contribuyeron a la decisión equivocada. Si la recompensa es favorable, el gradiente se encargará de fortalecer los parámetros que llevaron al éxito. Este bucle de prueba y corrección, repetido en múltiples episodios de interacción con el entorno, forma la base del \emph{aprendizaje} en el aprendizaje por refuerzo profundo y permite que la política \(\pi_\theta\) se adapte a entornos complejos y cambiantes. 
+
+
+
+\subsection{Modelado de recompensas por \textit{batch}}
+\label{subsubsec:recompensas_batch}
+
+En el aprendizaje por refuerzo, las recompensas son fundamentales para guiar al agente en la toma de decisiones que maximicen la utilidad a lo largo del tiempo. Sin embargo, en muchos escenarios prácticos, las recompensas no se obtienen inmediatamente después de realizar una acción individual, sino que se reciben al completar una secuencia de acciones o incluso tras ejecutar múltiples simulaciones de dichas secuencias. Este fenómeno es particularmente relevante en aplicaciones financieras, como la evaluación de estrategias de trading o la cobertura de derivados, donde el desempeño de una estrategia puede evaluarse mediante métricas agregadas como la pérdida promedio o el Valor en Riesgo Condicional (\textit{Conditional Value at Risk}, CVaR).
+
+Para entrenar de manera eficiente al agente en entornos donde las recompensas son diferidas o agregadas a través de múltiples simulaciones, se emplea una técnica conocida como procesamiento por \textbf{\textit{batch}}. Un \textit{batch} se refiere a un conjunto de múltiples simulaciones o trayectorias de interacción entre el agente y el entorno que se procesan simultáneamente durante una iteración de entrenamiento. Cada simulación dentro del \textit{batch} consta de \( N \) pasos de acción, representando una secuencia de decisiones y recompensas obtenidas a lo largo del tiempo.
+
+El proceso de entrenamiento utilizando métodos de gradiente de política y procesamiento por \textit{batch} se puede describir mediante los siguientes pasos:
+
+\begin{enumerate}
+    \item \textbf{Se ejecutan múltiples simulaciones en paralelo}, cada una consistiendo en \( N \) pasos de acción. Durante estas simulaciones, el agente interactúa con el entorno siguiendo la política actual \(\pi_{\theta}(a \mid s)\), donde \(\theta\) representa los parámetros de la política.
+    
+    \item Al finalizar cada simulación, \textbf{se calcula una recompensa individual} que puede ser, por ejemplo, el error de cobertura. Esta recompensa refleja el desempeño de la secuencia completa de acciones realizadas durante cada simulación.
+    
+    \item A partir de las recompensas individuales obtenidas en todas las simulaciones del \textit{batch}, \textbf{se calcula una única función de pérdida agregada}. Esta función de pérdida puede ser definida como la media de las recompensas negativas (para maximizar las recompensas, equivaldría a minimizar la pérdida) o utilizar métricas de riesgo como el CVaR.
+    
+    \item Utilizando la función de pérdida calculada, \textbf{se computan los gradientes} respecto a los parámetros \(\theta\) de la política. Estos gradientes \textbf{se emplean para actualizar los parámetros \(\theta\)} mediante un algoritmo de optimización, como el descenso por gradiente, con el objetivo de minimizar la pérdida y, por ende, mejorar la política del agente.
+\end{enumerate}
+
+El proceso de optimización se basa en la estimación del gradiente de \( J(\theta) \) respecto a \(\theta\) con el método explicado en la sección anterior, que permite ajustar los parámetros de la política para maximizar el retorno esperado. En el contexto de procesamiento por \textit{batch}, esta estimación del gradiente se realiza utilizando las recompensas agregadas de todas las simulaciones dentro del \textit{batch}, proporcionando una estimación más precisa y estable que la obtenida a partir de una única trayectoria.
+
+\medskip
+
+\subsection{Redes neuronales para secuencias temporales}
+\label{subsec:rnns}
+
+Para abordar los problemas de RL que requieren procesar secuencias de estados u observaciones que evolucionan a lo largo del tiempo, se han desarrollado arquitecturas de redes neuronales especializadas en el procesamiento de datos secuenciales. A continuación, se describen distintos enfoques para abordar esta tarea, desde redes neuronales recurrentes sencillas hasta modelos más complejos como LSTM o WaveNet.
+
+
+\subsubsection{Redes neuronales recurrentes y \textit{backpropagation through time}}
+\label{subsubsec:rnn_bptt}
+
+Una manera inicial de introducir el procesamiento secuencial es mediante un modelo simple que conecta la salida de la red al siguiente paso temporal. En la práctica, esto puede verse como un \emph{Feed-Forward Network} (FFN) que se “replica” para cada instante, tomando como entrada el estado \(s_t\) y la salida previa \(\mathbf{y}_{t-1}\). Tal representación se ilustra a la derecha de la Figura~\ref{fig:recurrent_neuron}, donde se “desenrolla” una neurona para reflejar su comportamiento en varios timesteps. 
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1.0\textwidth]{rnn_simple.pdf}
+    \caption{Esquema de una red neuronal con conexión recurrente desarrollada en el tiempo.}
+    \label{fig:recurrent_neuron}
+\end{figure}
+
+Para problemas con dependencias de mayor alcance, se utilizan modelos donde no solo se pasa la salida previa \(\mathbf{y}_{t-1}\), sino también un \emph{estado oculto} \(\mathbf{h}_{t-1}\). En cada paso de tiempo \(t\), se actualiza de acuerdo con
+\[
+\mathbf{h}_t 
+= 
+f(U\, \mathbf{x}_t + W\, \mathbf{h}_{t-1} + \mathbf{b}),
+\]
+donde \(\mathbf{x}_t\) es la entrada (p.\ ej.\ el estado \(s_t\)) y \(f(\cdot)\) puede ser \(\tanh\) o \textit{ReLU}. La salida en cada paso es
+\[
+\mathbf{y}_t 
+= 
+g(V\, \mathbf{h}_t + \mathbf{c}),
+\]
+con \(\mathbf{y}_t\) representando la acción o política elegida. En la Figura~\ref{fig:deep_rnn} se observa un ejemplo de este tipo de RNN con varias capas, desenrollada a lo largo de múltiples pasos.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1\textwidth]{drnn.pdf}
+    \caption{Esquema de una red neuronal con conexión recurrente y estados ocultos intermedios desarrollada en el tiempo.}
+    \label{fig:deep_rnn}
+\end{figure}
+
+Para el entrenamiento de estas redes se emplea el algoritmo de \textit{backpropagation through time} (BPTT). Consiste en desenrollar la RNN durante \(T\) pasos de tiempo y aplicar retropropagación como si se tratase de una red profunda de \(T\) capas. Esto permite corregir cada peso considerando su influencia acumulada a lo largo de la secuencia. Sin embargo, si \(T\) es grande, pueden producirse problemas de desvanecimiento o explosión de gradiente, que dificultan la optimización. En esos casos, se recortan los gradientes o se emplean mecanismos adicionales para estabilizar el entrenamiento, tal como se hace en las LSTM.
+
+\subsubsection{Long Short-Term Memory (LSTM)}
+\label{subsubsec:lstm}
+
+
+Las \textbf{Long Short-Term Memory} (LSTM) nacen como una solución a los problemas de \emph{desvanecimiento} y \emph{explosión} de gradientes que suelen surgir cuando se entrenan Redes Neuronales Recurrentes (RNN) simples sobre secuencias largas. La Figura~\ref{fig:lstm_cell} (basada en la Figura~15-12) muestra el diagrama de una celda LSTM típica, donde se destaca un \emph{estado de celda} \(\mathbf{c}_t\) que se regula mediante tres \emph{puertas} principales:
+\begin{itemize}
+    \item \textbf{Forget gate} (\(f_t\)): controla qué parte del estado de celda previo \(\mathbf{c}_{t-1}\) se \emph{olvida}.
+    \item \textbf{Input gate} (\(i_t\)): determina cuánta información \emph{nueva} ingresa al estado de celda en el paso actual.
+    \item \textbf{Output gate} (\(o_t\)): define cuánto de la información retenida en \(\mathbf{c}_t\) se expone al estado oculto \(\mathbf{h}_t\).
+\end{itemize}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{lstm_structure.png}
+    \caption{Estructura interna de una celda LSTM. Extraído de Ingolfsonn (2021).}
+    \label{fig:lstm_cell}
+\end{figure}
+
+En cada paso de tiempo \(t\), la celda LSTM recibe una entrada \(\mathbf{x}_t\) (por ejemplo, el estado \(s_t\) en un problema de RL) y el estado oculto anterior \(\mathbf{h}_{t-1}\), junto con el estado de celda \(\mathbf{c}_{t-1}\). A partir de estas señales, las LSTM llevan a cabo las operaciones siguientes:
+
+\begin{align}
+    f_t &= \sigma\!\bigl(W_f \cdot [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_f\bigr), \\
+    i_t &= \sigma\!\bigl(W_i \cdot [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_i\bigr), \\
+    \tilde{\mathbf{c}}_t &= \tanh\!\bigl(W_c \cdot [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_c\bigr), \\
+    \mathbf{c}_t &= f_t \,\odot\, \mathbf{c}_{t-1} \;+\; i_t \,\odot\, \tilde{\mathbf{c}}_t, \\
+    o_t &= \sigma\!\bigl(W_o \cdot [\mathbf{h}_{t-1}, \mathbf{x}_t] + \mathbf{b}_o\bigr), \\
+    \mathbf{h}_t &= o_t \,\odot\, \tanh\!\bigl(\mathbf{c}_t\bigr),
+\end{align}
+donde \(\odot\) denota la multiplicación elemento a elemento y \(\sigma\) representa la función sigmoide \(\sigma(x) = \tfrac{1}{1 + e^{-x}}\). El vector \(\tilde{\mathbf{c}}_t\) (a veces llamado \emph{candidate cell state}) es la nueva información candidata para ingresar en el estado de la celda; la puerta \(i_t\) regula cuánto de esta información se añade. Simultáneamente, la puerta \(f_t\) “olvida” parte de \(\mathbf{c}_{t-1}\). Por último, la puerta \(o_t\) define qué parte de \(\mathbf{c}_t\) se usa para actualizar el estado oculto \(\mathbf{h}_t\).
+
+Se puede pensar que la LSTM \emph{selecciona} continuamente qué recuerdos “conservar” y cuáles “descartar”. El uso de la conexión directa en \(\mathbf{c}_t\) (sin sobrescribirse a la fuerza en cada paso) permite mantener un “canal de gradiente” que evita que la información se atenúe de forma extrema cuando se retropropaga en secuencias largas. De esta manera, el entrenamiento mediante \emph{backpropagation through time} (BPTT) es más estable: las LSTM tienden a retener patrones a largo plazo y a manejar mejor las variaciones rápidas a corto plazo. En aplicaciones de aprendizaje por refuerzo, esto puede ser esencial para capturar estrategias de trading en activos financieros que presentan tendencias a largo plazo o para detectar fases críticas en un entorno con \emph{episodios} extensos.
+
+
+
+\subsubsection{WaveNet}
+\label{subsubsec:wavenet}
+
+WaveNet es una arquitectura innovadora diseñada para procesar secuencias de larga duración sin recurrir a conexiones recurrentes. Utiliza convoluciones dilatadas unidimensionales (1D) que permiten capturar información de ventanas de tamaño creciente, como se muestra en la Figura~\ref{fig:wavenet_arch}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\textwidth]{wavenet_structure.png}
+    \caption{Arquitectura WaveNet basada en convoluciones dilatadas. Extraído de Balaban (2019).}
+    \label{fig:wavenet_arch}
+\end{figure}
+
+Las convoluciones 1D operan sobre la secuencia \(\{\mathbf{x}_t\}\) a lo largo del tiempo, aplicando filtros de longitud \(k\) que combinan elementos como \(\mathbf{x}_t, \mathbf{x}_{t-1}, \dots,\allowbreak \mathbf{x}_{t-(k-1)}\). Esta operación extrae características locales relevantes para identificar patrones específicos en datos estructurados, ya sean secuencias temporales o imágenes.
+
+La \emph{dilatación} en las convoluciones introduce intervalos entre los elementos del filtro, lo que permite abarcar una mayor parte de la secuencia sin aumentar el tamaño del filtro. Con un factor de dilatación \(d\), el filtro accede a \(\mathbf{x}_t, \mathbf{x}_{t-d}, \mathbf{x}_{t-2d}, \dots, \mathbf{x}_{t-(k-1)d}\). Al emplear factores de dilatación que crecen exponencialmente (1, 2, 4, 8, \dots), cada capa sucesiva expande el campo receptivo de manera exponencial, permitiendo que la red capture dependencias a largo plazo con un número reducido de capas. Este esquema eficiente evita redundancias y asegura una cobertura amplia de la secuencia.
+
+Para ilustrar la diferencia entre una convolución estándar y una dilatada, se considera una secuencia de entrada \(\mathbf{x} = [x_0, x_1, x_2, x_3, x_4]\) y un filtro \(\mathbf{w} = [w_0, w_1, w_2]\).
+
+En una \emph{convolución estándar}, la operación en el punto \(t\) se define como:
+
+\[
+y_t = \sum_{i=0}^{k-1} w_i \cdot x_{t-i}
+\]
+
+Por ejemplo, para \(t = 2\):
+
+\[
+y_2 = w_0 \cdot x_2 + w_1 \cdot x_1 + w_2 \cdot x_0
+\]
+
+En cambio, una \emph{convolución dilatada} con factor \(d = 2\) en \(t = 4\) se expresa como:
+
+\[
+y_4 = \sum_{i=0}^{k-1} w_i \cdot x_{4 - 2i} = w_0 \cdot x_4 + w_1 \cdot x_2 + w_2 \cdot x_0
+\]
+
+Mediante el uso de dilataciones, cada capa adicional de la red incrementa significativamente el campo receptivo, permitiendo que WaveNet capture tanto patrones locales como dependencias de largo alcance de manera eficiente.
+
+\newpage
+
+
+\section{El modelo de \textit{Deep Hedging}}\label{sec:deep_hedging}
+
+En esta sección se presenta una formulación detallada del marco de \textit{Deep Hedging}, basándose en la notación de Buehler et al. (2019a; 2019b). Los autores reconocen al modelo como una herramienta eficaz para desarrollar estrategias de cobertura de derivados ilíquidos mediante rebalanceo periódico, y que ofrece las siguientes ventajas frente a métodos tradicionales:
+
+\begin{itemize} 
+\item \textbf{Adaptabilidad a fricciones de mercado:} El modelo es capaz de incorporar diversas fricciones del mercado, tales como costos de transacción proporcionales, diferenciales \textit{bid/ask} y restricciones de liquidez. 
+
+\item \textbf{Compatibilidad con derivados exóticos:} Puede adaptarse fácilmente para gestionar derivados exóticos que carecen de soluciones analíticas cerradas. A diferencia de los métodos tradicionales que dependen de fórmulas específicas, este modelo utiliza redes neuronales para aprender y optimizar estrategias de cobertura directamente a partir de datos de mercado simulados o históricos. 
+
+\item \textbf{Independencia del modelo de generación de precios:} Las estrategias de cobertura se entrenan utilizando diversas dinámicas de mercado sin requerir medidas de martingala equivalentes ni modelos de precios explícitos, como el modelo de Black-Scholes. Esta independencia del método generador de precios permite entrenar el modelo en simuladores más realistas, tales como el modelo de Heston, modelos de salto-difusión como el de Merton, o incluso modelos basados en datos como las Redes Generativas Antagónicas (GANs).
+
+\item \textbf{Escalabilidad:} El marco de \textit{Deep Hedging} está diseñado para manejar eficientemente problemas de alta dimensión al optimizar sobre los instrumentos de cobertura en lugar del tamaño de la cartera. Esto permite abordar carteras complejas que contienen múltiples derivados sin incurrir en una explosión combinatoria de posibles estrategias.
+
+\end{itemize}
+
+
+
+A continuación, se introducirán todos los componentes del modelo paso a paso.
+
+\subsection{Espacio de estados}
+
+El espacio de estados \( \mathcal{S}_t \) representa la colección de toda la información disponible en el tiempo \( t \) que puede influir en las decisiones de \textit{trading}. Formalmente, el estado en el tiempo \( t \) se denota por:
+\begin{equation}
+s_t \in \mathcal{S}_t.
+\end{equation}
+
+El estado puede incluir:
+\begin{itemize}
+    \item Precios de los instrumentos de cobertura (acciones, opciones, etc.) y otras variables de mercado en el tiempo \( t \), denotadas por \( H_t \).
+    \item Precios pasados y movimientos de mercado, tales como precios mínimos y máximos históricos (\( \min_{t' < t} H_{t'} \) y \( \max_{t' < t} H_{t'} \)).
+    \item Acciones pasadas \( a_{t-1}, a_{t-2}, \dots \) tomadas por la estrategia.
+    \item Para modelos recurrentes, puede incluir los estados internos ocultos de la red neuronal.
+\end{itemize}
+
+\subsection{Espacio de acciones}
+
+El espacio de acciones \( \mathcal{A}_t(s_t) \) define el conjunto de todas las acciones de \textit{trading} permisibles en el tiempo \( t \), dado el estado \( s_t \). Las acciones se representan por:
+\begin{equation}
+a_t \in \mathcal{A}_t(s_t),
+\end{equation}
+donde \( a_t \) especifica cuánto comprar o vender para cada instrumento de cobertura.
+El espacio de acciones puede estar restringido. Por ejemplo, se pueden imponer límites de liquidez y riesgo que reflejan las restricciones del mercado y evitan una exposición excesiva, así como también aplicar reglas específicas del mercado, como la prohibición de la venta en corto, lo que implicaría que ciertas variables, como \( \delta_t \), sean no negativas (\( \delta_t \geq 0 \)).
+
+
+La posición en los instrumentos de cobertura evoluciona de acuerdo con:
+\begin{equation}
+\delta_t^\pi = a_t^\pi + \delta_{t-1}^\pi,
+\end{equation}
+donde \( \delta_t^\pi \) representa las tenencias de instrumentos de cobertura bajo la política \( \pi \) en el tiempo \( t \).
+
+\subsection{Recompensas y costos}
+
+La recompensa \( R_t^\pi \) representa la ganancia o pérdida neta en el tiempo \( t \), y comprende dos componentes:
+\begin{enumerate}
+    \item \textbf{Cambios de valor de los instrumentos de cobertura:} \( \delta_t^\pi h_t(s_t) \), donde \( h_t(s_t) \) denota el cambio de valor generado por los instrumentos de cobertura en el tiempo \( t \).
+    \item \textbf{Flujos de cartera de derivados:} \( z_t(s_t) \), que representa los flujos de caja de la cartera de derivados ilíquidos. En el caso de ser el lanzador de una opción \textit{call}, por ejemplo, \(z_t\) será negativa si el precio terminal es mayor al precio de ejercicio, representando la obligación a pagar.
+\end{enumerate}
+
+Por lo tanto, la recompensa bruta es la suma de los flujos de fondos:
+\begin{equation}
+R_t^\pi = \delta_t^\pi h_t(s_t) + z_t(s_t).
+\end{equation}
+
+La notación original de Buehler et al.\ no incluye directamente el efecto de la tasa de interés sobre la posición en efectivo y su evolución en cada paso. Esto es necesario para modelar de forma completa la posibilidad de tomar deuda para cubrir la posición, o la inversión del excedente de caja en bonos libres de riesgo. Para modelarlo, asumiendo que se puede prestar y pedir prestado a una misma tasa libre de riesgo \(r\), se pueden realizar los siguientes cálculos.
+
+Sea \(M_t^\pi(s_t)\) la \textbf{posición en efectivo} en el instante \(t\). Dicha posición 
+se actualiza en cada paso temporal en función de los flujos de efectivo del periodo, ya sean por compra, venta, pagos o cobros:
+\begin{equation}
+M_t^\pi(a_t, s_t) \;=\; M_{t-1}^\pi(a_{t-1}, s_{t-1}) \;-\; C_t(a_{t}, s_{t}).
+\end{equation}
+
+El término \( C_t(a_{t}, s_{t}) \) representa \emph{la salida neta de efectivo} generada al ejecutar la acción \( a_t \) en el estado \( s_t \) (incluyendo costos de \textit{trading} y costos de transacción), además del pago o cobro de intereses sobre la posición de efectivo anterior:
+\begin{equation}
+C_t(a_t, s_t) \;=\; a_t\,H_t(s_t) \;+\; c_t(a_t, s_t) \;-\; r\;M_{t-1}^\pi(a_{t-1}, s_{t-1})\,\Delta t,
+\end{equation}
+donde:
+\begin{itemize}
+    \item \( a_t \, H_t(s_t) \): Costo debido al volumen de \textit{trading} (flujo por compra o venta).  
+    \item \( c_t(a_t, s_t) \): Costos adicionales (por ejemplo, costos de transacción). Para costos proporcionales, se define:
+    \begin{equation}
+    c_t(a_t, s_t) = \gamma \, H_t(s_t) \, |a_t|,
+    \end{equation}
+    donde \( \gamma > 0 \) es una constante de proporcionalidad.
+    \item \(-r\;M_{t-1}^\pi(a_{t-1}, s_{t-1})\,\Delta t\): Interés pagado o cobrado sobre la posición de efectivo acumulada al final del periodo anterior (se suma si es un egreso, se resta si es un ingreso).
+\end{itemize}
+
+Por lo tanto, el signo de \( C_t\) determina si existe una salida (\( C_t> 0\)) o un ingreso (\( C_t <  0\)) de efectivo en el periodo.
+
+\subsection{Valor objetivo}
+
+Las recompensas totales hasta el momento t, ajustadas por costos, se dan por:
+\begin{equation}
+G_t^\pi = \sum_{k=1}^t \left( R_k^\pi - C_k^\pi \right).
+\end{equation}
+
+Para evaluar la deseabilidad de una estrategia de \textit{trading}, se introduce una medida de retorno ajustado por riesgo, \( E(\cdot) \). Una medida común es el \textit{Conditional Value at Risk (CVaR)}:
+\begin{equation}
+\text{CVaR}_\alpha(X) = \mathbb{E}[X \mid X \geq \text{VaR}_\alpha(X)]
+\end{equation}
+donde \( \alpha \) es el nivel de confianza, y \(X\) representa la pérdida de la estrategia. El CVaR proporciona una visión más completa del riesgo que otras medidas, al capturar no solo la probabilidad de pérdidas extremas, sino también la magnitud de dichas pérdidas, lo que lo hace especialmente útil para la gestión y optimización de estrategias de cobertura.
+
+
+La \textbf{función de valor} para una estrategia \( \pi \) es:
+\begin{equation}
+v_t^\pi(z | s) = E \left[ -G_t^\pi \mid s_t = s \right].
+\end{equation}
+Esto representa las pérdidas de la estrategia de cobertura, teniendo en cuenta los costos incurridos, y siendo evaluada por la medida de riesgo elegida. Por ende, la política óptima \( \pi^* \) minimiza la función de valor terminal:
+\begin{equation}
+v_T^*(z | s) = \inf_{\pi \in \mathcal{A}} v_T^\pi(z | s).
+\end{equation}
+
+
+
+\subsection{Precio de indiferencia}
+
+El precio de indiferencia \( p^*(z | s) \) de una cartera \( z \) se define como:
+\begin{equation}
+p^*(z | s) = v_t^*(z | s) - v_t^*(0 | s)
+\end{equation}
+tal que:
+\begin{equation}
+v_t^*(z + p^* | s) = v_t^*(0 | s).
+\end{equation}
+
+El término \( v_t^*(0 | s) \) representa cuál sería el valor generado por la política de \textit{trading} óptima de una cartera sin incluir los derivados, es decir, considerando únicamente el activo subyacente. Este valor captura cualquier ganancia o riesgo estadístico inherente al activo que no está asociado con la cobertura. En escenarios donde se utiliza un generador de precios sin tendencia, \( v_t^*(0 | s) \) tiende a ser igual a cero, ya que no existe una dinámica subyacente en la evolución del precio del activo que genere ganancias o pérdidas adicionales. Por lo tanto, \( v_t^*(0 | s) \) actúa como una referencia base que permite evaluar el impacto neto de incorporar derivados en la estrategia de cobertura. Esto conlleva que \(p^*\) refleja la compensación requerida para neutralizar el riesgo adicional introducido por la cartera de derivados \( z \), teniendo en cuenta la estrategia de cobertura óptima del modelo. 
+
+
+\newpage
+
+
+\section{Experimentos numéricos}\label{sec:experimentos_numericos}
+
+En esta sección se presenta la estructura de los experimentos numéricos diseñados para evaluar la efectividad del enfoque de \textit{Deep Hedging}, tanto en ausencia como en presencia de costos de transacción. Se considerarán tres escenarios de derivados: una opción \textit{call} europea, una opción \textit{call} asiática geométrica y una opción \textit{call} asiática aritmética. Siguiendo el esquema de los experimentos de Buehler et al. (2018), se reproducirá, en lo fundamental, los resultados de los autores para el derivado de tipo europeo, validando los resultados al compararlos con la cobertura según el modelo de Black-Scholes. Posteriormente, se extenderá el análisis y se aplicará el mismo enfoque a una opción \textit{call} asiática geométrica, que también cuenta con una solución cerrada, y finalmente, se realizará con una opción \textit{call} asiática aritmética, cuya cobertura no posee solución teórica exacta, por lo que será validada mediante métodos numéricos (Monte Carlo con \textit{Control Variates}).
+Para cada tipo de derivado, se realizarán dos experimentos: uno sin costos de transacción y otro con costos del 1\%. Esto permitirá evaluar la capacidad del \textit{Deep Hedging} tanto en un entorno ideal, como en un contexto más realista con fricciones.
+
+\subsection{Diseño experimental}
+
+Para todos los escenarios, el activo subyacente se modela como un GBM con los siguientes parámetros:
+
+\begin{itemize}
+    \item Precio inicial: \( S_0 = 100 \).
+    \item Horizonte temporal: \( T = \tfrac{21}{252} \) años (21 días, asumiendo 252 días hábiles en un año).
+    \item Número de pasos de simulación: \( N = 21 \) (equivalente a un rebalanceo diario en un horizonte de un mes aproximado).
+    \item Tasa libre de riesgo: \( r = 0.05 \).
+    \item Volatilidad: \( \sigma = 0.05 \).
+\end{itemize}
+
+
+En el entrenamiento de cada modelo, se generan 100.000 trayectorias simuladas del subyacente, con las cuales se entrena el modelo durante 100 \textit{epochs}, es decir, 100 pasadas completas por todo el conjunto de datos de entrenamiento. Cada \textit{epoch} se subdivide en 10 lotes de 10.000 trayectorias, para los cuales se realizan las actualizaciones de los parámetros de la red neuronal. 
+
+Para mejorar la estabilidad de la convergencia, fue de utilidad emplear una tasa de aprendizaje con decaimiento exponencial. En particular, se parte de una tasa inicial de \(0.001\), reduciéndose cada 10 \textit{epochs} con una tasa de decaimiento de \(0.99\). Este esquema de decaimiento exponencial ayuda a que el modelo efectúe ajustes más finos a medida que avanza el entrenamiento, previniendo oscilaciones alrededor de un mínimo local y contribuyendo a una convergencia más estable. 
+
+La medida de riesgo utilizada como criterio de optimización es la minimización de la CVaR50 del error de cobertura, tal como proponen Buehler et al. (2018). Minimizar esta medida con un nivel de confianza del 50\% implica concentrarse en la mitad más desfavorable de la distribución de errores. En otras palabras, la estrategia no sólo busca minimizar el error promedio, sino también reducir el impacto de escenarios adversos, garantizando mayor robustez en la cobertura.
+
+\subsection{Medición del desempeño}
+
+La calidad de la cobertura se mide mediante el \textbf{desajuste de cobertura terminal}:
+
+\begin{equation}
+\text{Desajuste} = P_0 - e^{-rT}(z + \delta_T \cdot H_T) - \sum_{i} \text{Costo}_i,
+\end{equation}
+
+donde \(P_0\) es el precio inicial cobrado por el derivado, \(z\) su \textit{payoff} final, \(\delta_T \cdot H_T\) el valor al vencimiento de la posición en el subyacente, y \(\sum_i \text{Costo}_i\) los costos de transacción si existieran.  La interpretación intuitiva de esta medida es la siguiente: se comienza cobrando la prima \(P_0\) al inicio de la operación. Se quiere replicar el \textit{payoff} \(z\) del derivado al vencimiento combinando compras y ventas del activo subyacente (con un monto final \(\delta_T \cdot H_T\)). En un mundo ideal sin costos, fricciones de mercado ni discretización temporal, la cobertura continua teórica permitiría replicar perfectamente el \textit{payoff}, dejando este desajuste en cero. Sin embargo, en la práctica, la cobertura se realiza en instantes discretos y con costos de transacción, por lo que incluso las estrategias derivadas de modelos teóricos (como Black-Scholes) pueden generar resultados positivos o negativos. La discretización del tiempo y el reequilibrio periódico, en lugar de continuo, generan imperfecciones en la replicación, dando lugar a desviaciones con respecto a la cobertura perfecta.
+
+Para mantener consistencia en la comparación entre distintos métodos, se utilizará como \(P_0\) el precio dado por el modelo teórico o numérico de referencia correspondiente a cada derivado. Por ejemplo, para las opciones europeas se usa el precio cerrado de Black-Scholes, mientras que para las opciones asiáticas aritméticas se recurre al estimador obtenido vía Monte Carlo con \textit{Control Variates}. Esta elección asegura que todos los métodos de cobertura partan del mismo punto de referencia, evitando que diferencias en el punto de partida (el precio inicial) distorsionen la evaluación del desempeño.
+
+En este contexto, el desajuste terminal ofrece una medida del éxito de la estrategia. Si el desajuste es positivo, significa que la cobertura fue más que suficiente para contrarrestar el \textit{payoff}, e incluso la posición final en el subyacente dejó un excedente a favor del vendedor de la opción. Por el contrario, si el desfasaje es negativo, indica que se subestimó el \textit{payoff} o se incurrieron costos excesivos. En suma, el valor del desajuste refleja qué tan efectiva fue la estrategia de cobertura al lidiar con las limitaciones prácticas y la incertidumbre asociados a la replicación dinámica del \textit{payoff}. Con la inclusión de costos de transacción, el error también refleja la habilidad del modelo para equilibrar la precisión de la cobertura y las salidas innecesarias que generan gastos.
+
+
+
+
+
+\subsubsection{Métricas de evaluación}
+
+Una evaluación robusta del desempeño de las estrategias de cobertura no puede limitarse únicamente a promediar las diferencias finales entre el \textit{payoff} del derivado y la posición replicante. Por ello, se utilizan múltiples métricas complementarias para obtener una visión más completa de la calidad de la cobertura. En primer lugar, el \textbf{error medio} ofrece una medida sencilla del sesgo promedio en el desajuste, revelando si las estrategias tienden a dejar sistemáticamente un excedente o una carencia respecto del \textit{payoff} objetivo. Sin embargo, dado que el error medio puede verse compensado por desviaciones positivas y negativas, se emplea también el \textbf{error medio absoluto (\textit{mean absolute error}, MAE)}, que promedia el valor absoluto de los errores y ofrece así una noción de la magnitud típica del desacierto, sin atenuarla con posibles compensaciones simétricas.
+
+A fin de entender la variabilidad inherente a los resultados, se introduce el \textbf{desvío estándar}, el cual mide la dispersión de los errores alrededor de su media, brindando información sobre la consistencia con que la estrategia se acerca a la cobertura perfecta. No obstante, evaluar sólo la media y la variabilidad no es suficiente para identificar si la estrategia sufre pérdidas catastróficas o escenarios extremos desfavorables. Para ello, se incorpora el \textbf{CVaR} en diferentes niveles (50\%, 95\% y 99\%), una medida de riesgo que captura la severidad de las peores pérdidas y no sólo su frecuencia. Por ejemplo, el CVaR al 99\% examina el promedio del 1\% de los peores resultados, reflejando la magnitud de las pérdidas más extremas. Finalmente, se considera el \textbf{peor caso (mínimo)}, el error más negativo observado, que sirve para ilustrar la magnitud del daño potencial máximo que podría sufrir la estrategia.
+
+
+
+\subsubsection{Intervalos de confianza mediante \textit{Bootstrap}}
+
+Para cada una de las métricas de evaluación mencionadas anteriormente, se calcularán intervalos de confianza utilizando el método \textit{Bootstrap} con 10.000 simulaciones. Los intervalos de confianza proporcionan una estimación del rango dentro del cual se espera que se encuentre el valor real de una métrica, con un cierto nivel de confianza, típicamente del 95\%. Este enfoque es fundamental para cuantificar la incertidumbre asociada a las estimaciones obtenidas a partir de muestras finitas y permite realizar comparaciones más robustas entre los resultados del modelo de referencia y los modelos de \textit{Deep Hedging}.
+
+Un intervalo de confianza ofrece una manera de entender la precisión de una estimación puntual al considerar la variabilidad inherente a los datos observados. En el contexto de esta investigación, los intervalos de confianza son especialmente útiles para evaluar si las diferencias observadas entre las estrategias de cobertura son estadísticamente significativas o si podrían atribuirse al azar. Al acompañar cada métrica con su correspondiente intervalo de confianza, se puede determinar con mayor certeza si un modelo de \textit{Deep Hedging} supera al modelo de referencia en términos de rendimiento y robustez.
+
+El método \textit{Bootstrap}, introducido por Efron (1979), es una técnica de remuestreo que permite estimar la distribución de una estadística a partir de los datos observados, sin asumir una distribución subyacente específica. El procedimiento se desarrolla en los siguientes pasos:
+
+\begin{enumerate}
+    \item Se parte de la \textbf{muestra original} de datos observados. En este caso, los 100.000 errores de cobertura producidos por los distintos modelos a partir de las simulaciones. 
+    \item  Se generan múltiples muestras \textit{Bootstrap} mediante \textbf{remuestreo con reemplazo} de la muestra original. En este estudio, se realizan 10.000 simulaciones.
+    \item Para cada muestra \textit{Bootstrap}, se \textbf{calcula la estadística} de interés (por ejemplo, la media o el CVaR).
+    \item A partir de las estadísticas calculadas en todas las simulaciones, se construye una \textbf{distribución empírica de la métrica}.
+    \item Se \textbf{determinan los percentiles} correspondientes al intervalo de confianza deseado (por ejemplo, los percentiles 2.5\% y 97.5\% para un intervalo del 95\%).
+\end{enumerate}
+
+El uso de \textit{Bootstrap} es particularmente ventajoso en escenarios donde la distribución de los errores no es conocida o es difícil de modelar teóricamente. Dado que las métricas de evaluación, como el error medio o el CVaR, pueden presentar comportamientos complejos y no necesariamente seguir distribuciones estándar, el método \textit{Bootstrap} proporciona una forma flexible y robusta de estimar la incertidumbre asociada. Además, este método es aplicable a una variedad de métricas, permitiendo una evaluación coherente y consistente a lo largo de todas las medidas de desempeño consideradas.
+
+En forma de ejemplo, las Figuras \ref{fig:bootstrap_media} y \ref{fig:bootstrap_cvar} ilustran las distribuciones \textit{Bootstrap} para el error medio y CVaR (50\%) del modelo BS delta en la opción europea. Cada histograma muestra la distribución empírica obtenida a partir de las 10.000 simulaciones, destacando la estimación puntual y los límites inferior y superior del intervalo de confianza del 95\%.
+
+Estos intervalos de confianza permiten evaluar la precisión de las métricas de desempeño y facilitan la comparación entre diferentes estrategias de cobertura. Si los intervalos de confianza de dos modelos no se solapan significativamente, se puede inferir que existe una diferencia estadísticamente significativa en su rendimiento. Por el contrario, si los intervalos se solapan, las diferencias observadas podrían no ser estadísticamente relevantes, sugiriendo que ambas estrategias presentan un desempeño similar dentro del margen de incertidumbre.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth,
+        trim=0 0 0 1.75cm,
+        clip]{mean_bootstrap_histogram.pdf}
+    \caption{Distribución \textit{Bootstrap} del error medio para el modelo BS delta en una opción europea. Se indican la estimación puntual y los límites inferior y superior del intervalo de confianza del 95\%.}
+    \label{fig:bootstrap_media}
+\end{figure}
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[
+        width=0.8\textwidth,
+        trim=0 0 0 1.75cm,
+        clip
+    ]{CVaR_50_bootstrap_histogram.pdf}
+    \caption{Distribución \textit{Bootstrap} de \textit{CVaR (50\%)} para el modelo BS delta en una opción europea. Se muestran la estimación puntual y los límites inferior y superior del intervalo de confianza del 95\%.}
+    \label{fig:bootstrap_cvar}
+\end{figure}
+
+
+\medskip
+\subsection{Implementación}
+
+La implementación del modelo de \emph{Deep Hedging} se desarrolló en \texttt{Python} y se encuentra disponible en \href{https://github.com/FacundoKuzis/DeepHedging}{GitHub}\footnote{Disponible en: \url{https://github.com/FacundoKuzis/DeepHedging}}. El desarrollo empleó la biblioteca \texttt{TensorFlow 2.17}, aprovechando específicamente \texttt{tf.keras} para la construcción y entrenamiento de redes neuronales, así como \texttt{tf.GradientTape} para la ejecución de \emph{backpropagation}. 
+La organización del código se basó en un enfoque modular, pensado para facilitar la incorporación de otros tipos de derivados, arquitecturas de redes neuronales, funciones de costo, métricas de pérdida y modelos generadores de precios. Este diseño promueve tanto la escalabilidad como la reproducibilidad de experimentos en distintos entornos de aplicación.
+
+Se consideraron tres tipos principales de agentes, cada uno con una arquitectura de red neuronal distinta. El primero consistió en un modelo de tipo recurrente simple, compuesto por dos capas densas (\texttt{Dense(30, activation='relu')}) y una capa de salida lineal (\texttt{Dense(linear)}). El segundo se basó en redes \emph{Long Short-Term Memory} (LSTM), con una primera capa \texttt{LSTM(30)} seguida de otra \texttt{LSTM(30, activation='relu')} y una capa final lineal (\texttt{Dense(linear)}). El tercero incorporó el esquema \emph{WaveNet}, mediante una primera capa \texttt{Conv1D(activation='relu')} y tres bloques residuales, cada uno compuesto por convoluciones de kernel 2 y 1, así como una conexión residual. Tras estos bloques se incluyó una capa de salida \texttt{Conv1D(linear)} con 32 filtros. 
+
+Para lograr una representación más estable y apropiada de los precios, se aplicó la transformación de \emph{log moneyness}, definida como $\log\!\Bigl(\frac{S_t}{K}\Bigr)$, donde \(S_t\) es el precio del activo subyacente y \(K\) corresponde al precio de ejercicio. Este escalamiento normaliza los datos de entrada y favorece una curva de aprendizaje más estable en redes neuronales, al reducir la variabilidad que conllevan las magnitudes absolutas de precios.
+
+El entrenamiento se llevó a cabo en Google Colab, haciendo uso de su GPU y de su memoria RAM de 12 GB.
+
+\newpage
+
+\section{Resultados}\label{sec:resultados}
+
+En esta sección se presentan y analizan los resultados obtenidos de los experimentos numéricos diseñados para evaluar la efectividad de las estrategias de \textit{Deep Hedging} en la cobertura de diferentes tipos de derivados financieros. La evaluación se realiza en tres escenarios distintos, cada uno correspondiente a un tipo específico de derivado: opción \textit{call} europea, opción \textit{call} asiática geométrica y opción \textit{call} asiática aritmética. Para cada uno de estos derivados, los resultados se dividen en dos subcategorías: sin costos de transacción y con costos de transacción del 1\%. Esta doble categorización permite analizar el desempeño de las estrategias en entornos ideales y en condiciones más realistas donde se incorporan fricciones de mercado.
+
+Cada conjunto de resultados incluye una tabla detallada de métricas que cuantifican los errores de cobertura de cada estrategia implementada por los distintos agentes de \textit{Deep Hedging}. Estas métricas comprenden el error medio, desvío estándar, \textit{Conditional Value at Risk} (CVaR) a niveles del 50\% y 95\%, el peor caso observado y el error medio absoluto (\textit{Mean Absolute Error}, MAE). Para cada métrica, se presentan intervalos de confianza al 95\%, calculados por \textit{Bootstrapping}, que proporcionan una estimación de la incertidumbre asociada a cada estimación. Además, se identifica en negrita el mejor valor entre todos los agentes para cada medición, considerando que, para las métricas de desvío estándar, CVaR 50\% y 95\%, peor caso y MAE, el mejor resultado corresponde al menor valor obtenido, mientras que para la métrica de la media, el mejor resultado es aquel más cercano a cero.
+
+
+\subsection{Opción europea}
+
+La opción \textit{call} europea se selecciona como el primer escenario de evaluación para analizar el desempeño del modelo propuesto en un entorno fundamental y bien definido. Este derivado financiero es particularmente significativo debido a que la estrategia de cobertura óptima bajo el modelo de Black-Scholes (\textit{BS Delta}) está ampliamente establecida y es reconocida en la literatura financiera, lo que la convierte en un punto de referencia esencial para comparar y validar las estrategias desarrolladas mediante \textit{Deep Hedging}.
+
+Se usará como precio del derivado la fórmula para la valuación de una opción \textit{call} europea según el modelo de Black-Scholes, presentada en la Fórmula 2.3, que proporciona un valor teórico preciso bajo supuestos de mercados ideales, tales como ausencia de costos de transacción, liquidez perfecta y volatilidad constante del activo subyacente. Esta fórmula no solo facilita la determinación del precio justo de la opción, sino que también define la estrategia de cobertura delta óptima, detallada en la Sección  ~\ref{subsec:bsm}, que busca neutralizar el riesgo asociado al movimiento del precio del activo subyacente mediante un reequilibrio continuo de la cartera.
+
+
+\subsubsection{Sin costos de transacción}
+
+La Tabla \ref{tab:europea_sin_costos} presenta las métricas de error de cobertura para la opción \textit{call} europea sin costos de transacción, y las Figuras \ref{fig:european_no_cost_recurrent_comparison}, \ref{fig:european_no_cost_lstm_comparison} y \ref{fig:european_no_cost_wavenet_comparison} las muestran visualmente. En este entorno idealizado, se espera que la estrategia de cobertura basada en el modelo de Black-Scholes (\textit{BS Delta}) supere a las estrategias aprendidas por los agentes de \textit{Deep Hedging}, debido a su naturaleza teóricamente óptima bajo las hipótesis de mercados sin fricciones.
+
+
+\begin{table}[H]
+\centering
+\caption{Métricas del error de cobertura para la opción \textit{call} europea sin costos de transacción.}
+\label{tab:europea_sin_costos}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Métrica} & \textbf{BS Delta} & \textbf{Recurrente} & \textbf{LSTM} & \textbf{WaveNet} \\
+\thickhline  % Línea más gruesa después de los encabezados
+Media & \textbf{\makecell{0,0057\\{\scriptsize [0,0051; 0,0063]}}} & \makecell{0,0079\\{\scriptsize [0,0031; 0,0126]}} & \makecell{0,0061\\{\scriptsize [0,0047; 0,0076]}} & \makecell{0,0079\\{\scriptsize [0,0031; 0,0126]}} \\
+\midrule
+Desvío estándar & \textbf{\makecell{0,1044\\{\scriptsize [0,1037; 0,1050]}}} & \makecell{0,7771\\{\scriptsize [0,7725; 0,7817]}} & \makecell{0,2357\\{\scriptsize [0,2345; 0,2370]}} & \makecell{0,7791\\{\scriptsize [0,7745; 0,7837]}} \\
+\midrule
+CVaR 50\% & \textbf{\makecell{0,0725\\{\scriptsize [0,0717; 0,0733]}}} & \makecell{0,5658\\{\scriptsize [0,5574; 0,5743]}} & \makecell{0,1778\\{\scriptsize [0,1760; 0,1796]}} & \makecell{0,5659\\{\scriptsize [0,5574; 0,5744]}} \\
+\midrule
+CVaR 95\% & \textbf{\makecell{0,2418\\{\scriptsize [0,2390; 0,2446]}}} & \makecell{2,1174\\{\scriptsize [2,0982; 2,1365]}} & \makecell{0,5267\\{\scriptsize [0,5212; 0,5321]}} & \makecell{2,1275\\{\scriptsize [2,1082; 2,1469]}} \\
+\midrule
+Peor caso & \textbf{\makecell{0,7479\\{\scriptsize [0,6890; 0,7479]}}} & \makecell{5,7077\\{\scriptsize [4,4876; 5,7077]}} & \makecell{1,5256\\{\scriptsize [1,3822; 1,5256]}} & \makecell{5,7542\\{\scriptsize [4,5098; 5,7542]}} \\
+\midrule
+MAE & \textbf{\makecell{0,0785\\{\scriptsize [0,0781; 0,0789]}}} & \makecell{0,6240\\{\scriptsize [0,6211; 0,6268]}} & \makecell{0,1841\\{\scriptsize [0,1832; 0,1851]}} & \makecell{0,6249\\{\scriptsize [0,6220; 0,6277]}} \\
+\midrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.65\textwidth,
+        trim=0 0 0 1.75cm,
+        clip]{european_no_cost_recurrent_comparison.pdf}
+\caption{Distribución del error de cobertura: BS Delta vs Agente Recurrente (sin costos).}
+\label{fig:european_no_cost_recurrent_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{european_no_cost_lstm_comparison.pdf}
+\caption{Distribución del error de cobertura: BS Delta vs Agente LSTM (sin costos).}
+\label{fig:european_no_cost_lstm_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{european_no_cost_wavenet_comparison.pdf}
+\caption{Distribución del error de cobertura: BS Delta vs Agente WaveNet (sin costos).}
+\label{fig:european_no_cost_wavenet_comparison}
+\end{figure}
+
+Como era de esperar, la estrategia \textit{BS Delta} obtiene los mejores resultados en todas las métricas evaluadas, reflejando la precisión y estabilidad inherentes al modelo de Black-Scholes en condiciones casi ideales, solamente distorsionadas por la discretización temporal. Sin embargo, es importante destacar que los intervalos de confianza al 95\% para el error medio de los agentes de \textit{Deep Hedging} (Recurrente, LSTM y WaveNet) se solapan con el de \textit{BS Delta}, lo que indica que no existen diferencias estadísticamente significativas en el error medio entre \textit{BS Delta} y los agentes de \textit{Deep Hedging} bajo estas condiciones. Esto indica un gran éxito en el aprendizaje de estos modelos para la cobertura, en términos del promedio.
+
+A pesar de esto, los agentes entrenados presentan una mayor variabilidad en sus errores, evidenciada por desvíos estándar superiores. Además, las métricas de CVaR y peor caso muestran una clara ventaja para \textit{BS Delta}, lo que indica una mayor robustez frente a escenarios adversos. Esta información es de suma importancia para este tipo de problemas, por lo que es lógico recurrir al modelo de BS 
+como referencia óptima en términos de precisión y estabilidad en entornos teóricos sin fricciones. 
+
+\subsubsection{Con costos de transacción del 1\%}
+
+\begin{table}[H]
+\centering
+\caption{Métricas del error de cobertura para la opción \textit{call} europea con costos de transacción.}
+\label{tab:europea_con_costos}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Métrica} & \textbf{BS Delta} & \textbf{Recurrente} & \textbf{LSTM} & \textbf{WaveNet} \\
+\thickhline  % Línea más gruesa después de los encabezados
+Media & \makecell{-1,970\\{\scriptsize [-1,973; -1,967]}} & \makecell{-0,155\\{\scriptsize [-0,159; -0,150]}} & \textbf{\makecell{-0,022\\{\scriptsize [-0,028; -0,016]}}} & \makecell{-0,158\\{\scriptsize [-0,162; -0,153]}} \\
+\midrule
+Desvío estándar & \textbf{\makecell{0,546\\{\scriptsize [0,544; 0,549]}}} & \makecell{0,777\\{\scriptsize [0,772; 0,782]}} & \makecell{0,947\\{\scriptsize [0,942; 0,952]}} & \makecell{0,776\\{\scriptsize [0,772; 0,781]}} \\
+\midrule
+CVaR 50\% & \makecell{2,417\\{\scriptsize [2,413; 2,421]}} & \textbf{\makecell{0,728\\{\scriptsize [0,720; 0,737]}}} & \makecell{0,746\\{\scriptsize [0,735; 0,756]}} & \makecell{0,729\\{\scriptsize [0,721; 0,737]}} \\
+\midrule
+CVaR 95\% & \makecell{3,182\\{\scriptsize [3,172; 3,191]}} & \textbf{\makecell{2,280\\{\scriptsize [2,261; 2,299]}}} & \makecell{2,556\\{\scriptsize [2,534; 2,578]}} & \makecell{2,287\\{\scriptsize [2,268; 2,307]}} \\
+\midrule
+Peor caso & \textbf{\makecell{4,742\\{\scriptsize [4,537; 4,742]}}} & \makecell{5,871\\{\scriptsize [4,650; 5,871]}} & \makecell{6,740\\{\scriptsize [5,307; 6,740]}} & \makecell{5,914\\{\scriptsize [4,670; 5,914]}} \\
+\midrule
+MAE & \makecell{1,970\\{\scriptsize [1,967; 1,973]}} & \makecell{0,589\\{\scriptsize [0,586; 0,592]}} & \makecell{0,765\\{\scriptsize [0,761; 0,768]}} & \textbf{\makecell{0,586\\{\scriptsize [0,583; 0,590]}}} \\
+\midrule
+\end{tabular}
+\end{table}
+
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{european_1p_cost_recurrent_comparison.pdf}
+\caption{Distribución del error de cobertura: BS Delta vs Agente Recurrente (con costos).}
+\label{fig:european_1p_cost_recurrent_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{european_1p_cost_lstm_comparison.pdf}
+\caption{Distribución del error de cobertura: BS Delta vs Agente LSTM (con costos).}
+\label{fig:european_1p_cost_lstm_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{european_1p_cost_wavenet_comparison.pdf}
+\caption{Distribución del error de cobertura: BS Delta vs Agente WaveNet (con costos).}
+\label{fig:european_1p_cost_wavenet_comparison}
+\end{figure}
+
+La Tabla \ref{tab:europea_con_costos} presenta las métricas de error de cobertura para la opción \textit{call} europea con un costo de transacción del 1\%, complementadas por las Figuras \ref{fig:european_1p_cost_recurrent_comparison}, \ref{fig:european_1p_cost_lstm_comparison} y \ref{fig:european_1p_cost_wavenet_comparison}, que ilustran visualmente las distribuciones de error correspondientes. En este escenario más realista, los agentes de \textit{Deep Hedging} demuestran un desempeño ampliamente superior al modelo de Black-Scholes (\textit{BS Delta}) en múltiples métricas clave, incluyendo una media de error más cercana a cero, menores valores de CVaR a distintos niveles y un \textit{MAE} reducido. Estos resultados reflejan la capacidad de los agentes de \textit{Deep Hedging} para adaptarse eficazmente a las fricciones de mercado introducidas por los costos de transacción, optimizando sus estrategias de cobertura para minimizar las pérdidas promedio y gestionar mejor los riesgos asociados.
+
+A pesar de estos avances, la estrategia \textit{BS Delta} mantiene una ventaja en términos de consistencia y robustez frente a escenarios extremos, evidenciada por un menor desvío estándar y una mejor actuación en el peor caso observado. Esto indica que, aunque los agentes de \textit{Deep Hedging} son más eficientes en condiciones promedio y de riesgo moderado, presentan una mayor variabilidad y vulnerabilidad ante eventos adversos en comparación con la estrategia tradicional. Esta observación subraya la importancia de equilibrar la eficiencia en costos con la capacidad de manejar la incertidumbre y los riesgos extremos en la cobertura de derivados financieros.
+
+Dentro de los agentes de \textit{Deep Hedging}, el modelo LSTM destaca por su superior desempeño en la media de error, siendo significativamente mejor que los modelos Recurrente y WaveNet en este aspecto. Sin embargo, en las métricas de consistencia y gestión de riesgos (CVaR y MAE), los agentes Recurrente y WaveNet superan al LSTM, mostrando una mayor estabilidad y eficacia en la mitigación de riesgos.
+
+\subsection{Opción asiática geométrica}
+
+La siguiente serie de experimentos se realiza utilizando una opción \textit{call} asiática geométrica, la cual, a diferencia de la asiática aritmética, cuenta con una solución analítica cerrada derivada de una adaptación del modelo de Black-Scholes, expresada en la Ecuación ~\ref{eq:delta_geo}. Esta característica permite comparar el desempeño de los agentes de \textit{Deep Hedging} no solo contra la estrategia delta derivada de métodos numéricos aproximados, sino también contra una referencia teórica más sólida y precisa. Al disponer de una solución analítica, se puede evaluar de manera más rigurosa la efectividad de las estrategias aprendidas por los agentes, garantizando una validación robusta de su capacidad para replicar el \textit{payoff} objetivo bajo condiciones ideales.
+
+\subsubsection{Sin costos de transacción}
+
+\begin{table}[H]
+\centering
+\caption{Métricas del error de cobertura para la opción \textit{call} asiática geométrica sin costos de transacción.}
+\label{tab:asiatica_geo_sin_costos}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Métrica} & \textbf{BS Delta} & \textbf{Recurrente} & \textbf{LSTM} & \textbf{WaveNet} \\
+\thickhline  % Línea más gruesa después de los encabezados
+Media & \textbf{\makecell{0,0046\\{\scriptsize [0,0009; 0,0084]}}} & \makecell{0,0068\\{\scriptsize [0,0063; 0,0073]}} & \makecell{0,0067\\{\scriptsize [0,0062; 0,0071]}} & \makecell{0,0068\\{\scriptsize [0,0062; 0,0074]}} \\
+\midrule
+Desvío estándar & \makecell{0,6125\\{\scriptsize [0,6092; 0,6158]}} & \makecell{0,0841\\{\scriptsize [0,0836; 0,0845]}} & \textbf{\makecell{0,0787\\{\scriptsize [0,0782; 0,0791]}}} & \makecell{0,0983\\{\scriptsize [0,0977; 0,0989]}} \\
+\midrule
+CVaR 50\% & \makecell{0,4431\\{\scriptsize [0,4403; 0,4458]}} & \makecell{0,0577\\{\scriptsize [0,0570; 0,0583]}} & \textbf{\makecell{0,0537\\{\scriptsize [0,0531; 0,0543]}}} & \makecell{0,0677\\{\scriptsize [0,0669; 0,0686]}} \\
+\midrule
+CVaR 95\% & \makecell{0,9724\\{\scriptsize [0,9652; 0,9794]}} & \makecell{0,1905\\{\scriptsize [0,1884; 0,1925]}} & \textbf{\makecell{0,1813\\{\scriptsize [0,1793; 0,1833]}}} & \makecell{0,2412\\{\scriptsize [0,2384; 0,2439]}} \\
+\midrule
+Peor caso & \makecell{1,9421\\{\scriptsize [1,8275; 1,9421]}} & \makecell{0,7454\\{\scriptsize [0,5455; 0,7454]}} & \textbf{\makecell{0,5500\\{\scriptsize [0,5120; 0,5500]}}} & \makecell{0,7446\\{\scriptsize [0,6599; 0,7446]}} \\
+\midrule
+MAE & \makecell{0,4742\\{\scriptsize [0,4718; 0,4766]}} & \makecell{0,0650\\{\scriptsize [0,0647; 0,0653]}} & \textbf{\makecell{0,0610\\{\scriptsize [0,0607; 0,0613]}}} & \makecell{0,0759\\{\scriptsize [0,0755; 0,0763]}} \\
+\midrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_geometric_no_cost_recurrent_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta Asiática Geométrica vs Agente Recurrente (sin costos).}
+\label{fig:asian_geo_no_cost_recurrent_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_geometric_no_cost_lstm_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta Asiática Geométrica vs Agente LSTM (sin costos).}
+\label{fig:asian_geo_no_cost_lstm_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_geometric_no_cost_wavenet_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta Asiática Geométrica vs Agente WaveNet (sin costos).}
+\label{fig:asian_geo_no_cost_wavenet_comparison}
+\end{figure}
+
+
+La Tabla \ref{tab:asiatica_geo_sin_costos} presenta las métricas de error de cobertura para la opción \textit{call} asiática geométrica sin costos de transacción, acompañadas de las Figuras \ref{fig:asian_geo_no_cost_recurrent_comparison}, \ref{fig:asian_geo_no_cost_lstm_comparison} y \ref{fig:asian_geo_no_cost_wavenet_comparison} que muestran visualmente las distribuciones de error. Al igual que en el caso de la opción europea, los agentes de \textit{Deep Hedging} logran una media de errores que no es significativamente peor que la estrategia teórica basada en el modelo de Black-Scholes. Los intervalos de confianza al 95\% para el error medio de los agentes entrenados se solapan con el de BS Delta, indicando que las diferencias en el error medio no son estadísticamente significativas. Esto sugiere que los agentes de \textit{Deep Hedging} han logrado replicar de manera efectiva el \textit{payoff} objetivo de la opción asiática geométrica bajo condiciones ideales, manteniendo un rendimiento comparable al modelo de referencia en términos de error promedio.
+
+Sin embargo, a diferencia del escenario europeo, en este caso los agentes de redes neuronales, especialmente el LSTM, demuestran una clara ventaja en las métricas de riesgo, como el desvío estándar, CVaR a distintos niveles, el peor caso y el \textit{MAE}. Esta superioridad podría atribuirse a que la estrategia teórica de \textit{BS Delta} asume tanto la posibilidad de \textit{trading} continuo como un promedio calculado continuamente, lo que genera una mayor acumulación de fricciones al trasladarse a una realidad de espacio temporal discretizado. Por el contrario, los agentes de \textit{Deep Hedging}, al estar entrenados específicamente para considerar estas condiciones, han adaptado sus estrategias de reequilibrio para minimizar el impacto negativo de dichas fricciones. Como resultado, presentan una menor variabilidad en sus errores y una mejor gestión de escenarios adversos, evidenciando una mayor robustez y eficiencia en la mitigación de riesgos en comparación con la estrategia teórica tradicional.
+
+
+
+\subsubsection{Con costos de transacción del 1\%}
+
+\begin{table}[H]
+\centering
+\caption{Métricas del error de cobertura para la opción \textit{call} asiática geométrica con costos de transacción.}
+\label{tab:asiatica_geo_con_costos}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Métrica} & \textbf{BS Delta} & \textbf{Recurrente} & \textbf{LSTM} & \textbf{WaveNet} \\
+\thickhline  % Línea más gruesa después de los encabezados
+Media & \makecell{-2,3204\\{\scriptsize [-2,3277; -2,3128]}} & \makecell{-0,0222\\{\scriptsize [-0,0254; -0,0190]}} & \textbf{\makecell{0,0048\\{\scriptsize [0,0014; 0,0081]}}} & \makecell{-0,0248\\{\scriptsize [-0,0281; -0,0216]}} \\
+\midrule
+Desvío estándar & \makecell{1,2043\\{\scriptsize [1,1994; 1,2091]}} & \textbf{\makecell{0,5170\\{\scriptsize [0,5140; 0,5199]}}} & \makecell{0,5475\\{\scriptsize [0,5444; 0,5505]}} & \makecell{0,5265\\{\scriptsize [0,5234; 0,5296]}} \\
+\midrule
+CVaR 50\% & \makecell{3,3000\\{\scriptsize [3,2912; 3,3086]}} & \textbf{\makecell{0,4124\\{\scriptsize [0,4067; 0,4180]}}} & \makecell{0,4127\\{\scriptsize [0,4068; 0,4186]}} & \makecell{0,4184\\{\scriptsize [0,4126; 0,4242]}} \\
+\midrule
+CVaR 95\% & \makecell{4,6772\\{\scriptsize [4,6613; 4,6925]}} & \textbf{\makecell{1,4146\\{\scriptsize [1,4027; 1,4268]}}} & \makecell{1,4601\\{\scriptsize [1,4475; 1,4728]}} & \makecell{1,4526\\{\scriptsize [1,4402; 1,4653]}} \\
+\midrule
+Peor caso & \makecell{7,1849\\{\scriptsize [6,9035; 7,1849]}} & \textbf{\makecell{3,3307\\{\scriptsize [3,0095; 3,3307]}}} & \makecell{3,4897\\{\scriptsize [3,1239; 3,4897]}} & \makecell{3,4554\\{\scriptsize [3,1124; 3,4554]}} \\
+\midrule
+MAE & \makecell{2,3420\\{\scriptsize [2,3347; 2,3491]}} & \textbf{\makecell{0,4140\\{\scriptsize [0,4121; 0,4159]}}} & \makecell{0,4463\\{\scriptsize [0,4444; 0,4483]}} & \makecell{0,4190\\{\scriptsize [0,4171; 0,4210]}} \\
+\midrule
+\end{tabular}
+\end{table}
+
+
+En presencia de costos de transacción, la estrategia delta experimenta una degradación significativa en su desempeño promedio y una mayor vulnerabilidad a escenarios extremos. Por el contrario, los agentes entrenados nuevamente logran adaptarse y mitigar el impacto de las fricciones, demostrando su gran efectividad para los escenarios más complejos.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_geometric_1p_cost_recurrent_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta Asiática Geométrica vs Agente Recurrente (con costos).}
+\label{fig:asian_geo_1p_cost_recurrent_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_geometric_1p_cost_lstm_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta Asiática Geométrica vs Agente LSTM (con costos).}
+\label{fig:asian_geo_1p_cost_lstm_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_geometric_1p_cost_wavenet_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta Asiática Geométrica vs Agente WaveNet (con costos).}
+\label{fig:asian_geo_1p_cost_wavenet_comparison}
+\end{figure}
+
+\subsection{Opción asiática aritmética}
+
+La opción asiática aritmética no cuenta con una solución analítica cerrada para su precio ni para su cobertura óptima bajo el modelo de Black-Scholes. Por este motivo, en estos experimentos se utiliza el precio y cobertura de referencia obtenidos mediante simulaciones de Monte Carlo con \textit{Control Variates}, tal como fue descrita en la Sección ~\ref{subsubsec:metodo-monte-carlo-cv}.
+
+\subsubsection{Sin costos de transacción}
+La Tabla \ref{tab:asiatica_arit_sin_costos} y las Figuras \ref{fig:asian_arith_no_cost_recurrent_comparison}, \ref{fig:asian_arith_no_cost_lstm_comparison} y \ref{fig:asian_arith_no_cost_wavenet_comparison} muestran los resultados del escenario sin costos de transacción. En este caso, al igual que con las opciones geométricas, se observa que la media de los errores de cobertura obtenidos por los agentes entrenados no difiere significativamente de la estrategia de referencia basada en simulaciones de Monte Carlo. Así mismo, como en el caso anterior, los agentes de redes neuronales, especialmente el modelo recurrente, demuestran una clara ventaja en las métricas de riesgo, como el desvío estándar, CVaR a distintos niveles, el peor caso y el \textit{MAE}. Esta superioridad puede atribuirse al hecho de que, aunque el método de Monte Carlo con \textit{Control Variates} trata de minimizar la varianza con respecto al Monte Carlo normal, aún requiere un esfuerzo computacional significativo para obtener resultados más consistentes y seguir reduciendo su dispersión. Por otro lado, los agentes han adaptado sus estrategias de reequilibrio de manera eficiente para minimizar la variabilidad y gestionar mejor los escenarios adversos sin necesidad de incrementar considerablemente el costo computacional. 
+
+\begin{table}[H]
+\centering
+\caption{Métricas del error de cobertura para la opción \textit{call} asiática aritmética sin costos de transacción.}
+\label{tab:asiatica_arit_sin_costos}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Métrica} & \textbf{Monte Carlo} & \textbf{Recurrente} & \textbf{LSTM} & \textbf{WaveNet} \\
+\thickhline  % Línea más gruesa después de los encabezados
+Media & \makecell{0,0042\\{\scriptsize [-0,0072; 0,0154]}} & \textbf{\makecell{-0,0009\\{\scriptsize [-0,0025; 0,0007]}}} & \makecell{-0,0010\\{\scriptsize [-0,0037; 0,0016]}} & \makecell{0,0016\\{\scriptsize [-0,0014; 0,0045]}} \\
+\midrule
+Desvío estándar & \makecell{0,5833\\{\scriptsize [0,5732; 0,5935]}} & \textbf{\makecell{0,0819\\{\scriptsize [0,0805; 0,0833]}}} & \makecell{0,1357\\{\scriptsize [0,1326; 0,1389]}} & \makecell{0,1507\\{\scriptsize [0,1481; 0,1534]}} \\
+\midrule
+CVaR 50\% & \makecell{0,4431\\{\scriptsize [0,4319; 0,4476]}} & \textbf{\makecell{0,0637\\{\scriptsize [0,0617; 0,0658]}}} & \makecell{0,1015\\{\scriptsize [0,0980; 0,1051]}} & \makecell{0,1137\\{\scriptsize [0,1099; 0,1174]}} \\
+\midrule
+CVaR 95\% & \makecell{0,8731\\{\scriptsize [0,8515; 0,8940]}} & \textbf{\makecell{0,1968\\{\scriptsize [0,1900; 0,2033]}}} & \makecell{0,3449\\{\scriptsize [0,3304; 0,3594]}} & \makecell{0,3444\\{\scriptsize [0,3327; 0,3557]}} \\
+\midrule
+Peor caso & \makecell{1,9244\\{\scriptsize [1,5589; 1,9244]}} & \textbf{\makecell{0,4581\\{\scriptsize [0,3975; 0,4581]}}} & \makecell{0,9852\\{\scriptsize [0,8917; 0,9852]}} & \makecell{0,8488\\{\scriptsize [0,6417; 0,8488]}} \\
+\midrule
+MAE & \makecell{0,4742\\{\scriptsize [0,4718; 0,4766]}} & \textbf{\makecell{0,0628\\{\scriptsize [0,0618; 0,0639]}}} & \makecell{0,1006\\{\scriptsize [0,0989; 0,1024]}} & \makecell{0,1156\\{\scriptsize [0,1137; 0,1175]}} \\
+\midrule
+\end{tabular}
+\end{table}
+
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_arithmetic_no_cost_recurrent_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta MC vs Agente Recurrente (sin costos).}
+\label{fig:asian_arith_no_cost_recurrent_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_arithmetic_no_cost_lstm_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta MC vs Agente LSTM (sin costos).}
+\label{fig:asian_arith_no_cost_lstm_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_arithmetic_no_cost_wavenet_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta MC vs Agente WaveNet (sin costos).}
+\label{fig:asian_arith_no_cost_wavenet_comparison}
+\end{figure}
+
+
+\subsubsection{Con costos de transacción del 1\%}
+
+La Tabla \ref{tab:asiatica_arit_con_costos} y las Figuras \ref{fig:asian_arith_1p_cost_recurrent_comparison}, \ref{fig:asian_arith_1p_cost_lstm_comparison} y \ref{fig:asian_arith_1p_cost_wavenet_comparison} evidencian que, en presencia de costos, la estrategia Monte Carlo experimenta un deterioro notable, mientras que los agentes entrenados modulan sus operaciones y logran una mayor estabilidad y mejores métricas de riesgo. Esto confirma la tendencia observada en los casos anteriores: el \textit{Deep Hedging} resulta particularmente valioso cuando se enfrentan fricciones de mercado, ya que puede aprender a equilibrar la precisión de la cobertura con la reducción de costos, superando así las limitaciones de las estrategias que suponen cobertura continua y sin fricciones.
+
+
+\begin{table}[H]
+\centering
+\caption{Métricas del error de cobertura para la opción \textit{call} asiática aritmética con costos de transacción.}
+\label{tab:asiatica_arit_con_costos}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Métrica} & \textbf{Monte Carlo} & \textbf{Recurrente} & \textbf{LSTM} & \textbf{WaveNet} \\
+\thickhline  % Línea más gruesa después de los encabezados
+Media & \makecell{-1,9709\\{\scriptsize [-1,9867; -1,9555]}} & \makecell{-0,0416\\{\scriptsize [-0,0513; -0,0316]}} & \textbf{\makecell{-0,0019\\{\scriptsize [-0,0126; 0,0089]}}} & \makecell{-0,0133\\{\scriptsize [-0,0238; -0,0027]}} \\
+\midrule
+Desvío estándar & \makecell{0,8071\\{\scriptsize [0,7939; 0,8200]}} & \textbf{\makecell{0,5084\\{\scriptsize [0,4992; 0,5178]}}} & \makecell{0,5535\\{\scriptsize [0,5437; 0,5635]}} & \makecell{0,5436\\{\scriptsize [0,5338; 0,5536]}} \\
+\midrule
+CVaR 50\% & \makecell{2,5904\\{\scriptsize [2,5768; 2,6040]}} & \textbf{\makecell{0,4218\\{\scriptsize [0,4038; 0,4394]}}} & \makecell{0,4225\\{\scriptsize [0,4033; 0,4414]}} & \makecell{0,4225\\{\scriptsize [0,4034; 0,4414]}} \\
+\midrule
+CVaR 95\% & \makecell{3,2817\\{\scriptsize [3,2555; 3,3058]}} & \textbf{\makecell{1,4241\\{\scriptsize [1,3859; 1,4625]}}} & \makecell{1,4955\\{\scriptsize [1,4546; 1,5360]}} & \makecell{1,4899\\{\scriptsize [1,4490; 1,5305]}} \\
+\midrule
+Peor caso & \makecell{4,2755\\{\scriptsize [3,8915; 4,2755]}} & \textbf{\makecell{2,7439\\{\scriptsize [2,6599; 2,7439]}}} & \makecell{2,9244\\{\scriptsize [2,7645; 2,9244]}} & \makecell{2,9117\\{\scriptsize [2,7616; 2,9117]}} \\
+\midrule
+MAE & \makecell{1,9889\\{\scriptsize [1,9741; 2,0040]}} & \textbf{\makecell{0,4014\\{\scriptsize [0,3954; 0,4076]}}} & \makecell{0,4489\\{\scriptsize [0,4427; 0,4553]}} & \makecell{0,4366\\{\scriptsize [0,4304; 0,4430]}} \\
+\midrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_arithmetic_1p_cost_recurrent_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta MC vs Agente Recurrente (con costos).}
+\label{fig:asian_arith_1p_cost_recurrent_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_arithmetic_1p_cost_lstm_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta MC vs Agente LSTM (con costos).}
+\label{fig:asian_arith_1p_cost_lstm_comparison}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth,         trim=0 0 0 1.75cm,         clip]{asian_arithmetic_1p_cost_wavenet_comparison.pdf}
+\caption{Distribución del error de cobertura: Delta MC vs Agente WaveNet (con costos).}
+\label{fig:asian_arith_1p_cost_wavenet_comparison}
+\end{figure}
+
+\newpage
+
+
+\section{Conclusiones}\label{sec:conclusiones}
+
+El objetivo principal de este trabajo fue investigar la eficacia del \textit{Deep Hedging} propuesto por Buehler et al. (2018; 2019a; 2019b), un enfoque de aprendizaje por refuerzo profundo, aplicado a la cobertura de derivados exóticos como las opciones asiáticas. Se comenzó revisando los fundamentos teóricos financieros clásicos, partiendo del modelo de Black-Scholes-Merton para la valuación de opciones europeas, y se discutieron las limitaciones asociadas a la ausencia de costos de transacción, la asunción de reequilibrio continuo y las suposiciones sobre la dinámica del subyacente. Se abordó también la variación del modelo de Black-Scholes para la cobertura de opciones asiáticas geométricas, y la necesidad de utilizar métodos numéricos para la valuación de opciones asiáticas aritméticas, entre los que se encuentra la metodología de Monte Carlo. Posteriormente, se realizó un repaso sobre las redes neuronales y la técnica del aprendizaje por refuerzo, para luego introducir el método de \textit{Deep Hedging}. Este enfoque no sólo se libera de muchas de las hipótesis restrictivas que caracterizan a los modelos teóricos, sino que también puede aprender estrategias más robustas frente a fricciones, costes de transacción y propiedades estadísticamente complejas del subyacente y del derivado.
+
+Tras asentar las bases metodológicas, se procedió a la implementación experimental con distintos tipos de derivados: opciones \textit{call} europeas, opciones \textit{call} asiáticas geométricas y opciones \textit{call} asiáticas aritméticas. En todas las situaciones, se entrenaron y compararon tres agentes basados en modelos neuronales: recurrente simple, LSTM y WaveNet. Para cada escenario, se evaluó la cobertura tanto en ausencia como en presencia de costos de transacción.
+
+En primer lugar, se replicó el escenario clásico de la opción \textit{call} europea bajo el modelo de Black-Scholes, sin costos de transacción. Esto sirvió como un punto de partida sólido, ya que la estrategia delta es conocida por ser óptima en condiciones ideales y permitió verificar la validez del enfoque de \textit{Deep Hedging} como un método capaz de aproximar resultados similares. En efecto, los agentes entrenados alcanzaron errores promedio de cobertura que no resultaron significativamente distintos de la estrategia delta tradicional, aunque poseen mayor volatilidad y peor reacción a casos extremos. Sin embargo, cuando se introdujeron costos de transacción, los agentes de \textit{Deep Hedging} demostraron claras ventajas, mitigando sustancialmente el impacto de las fricciones y superando el desempeño de la cobertura delta de Black-Scholes en varias métricas, particularmente en aquellas enfocadas en el error promedio y riesgo.
+
+Esta tendencia se extendió al analizar las opciones asiáticas. La opción \textit{call} asiática geométrica, poseedora de una solución analítica cerrada, permitió validar nuevamente que los agentes de \textit{Deep Hedging} pueden competir en entornos sin fricciones con estrategias óptimas teóricas. Más aún, evidenciaron ventajas con respecto al modelo teórico, dada la acumulación de errores que produce la discretización temporal para este derivado. Cuando se consideraron costos de transacción, mostraron ventajas significativas al reducir la magnitud de errores extremos y estabilizar la distribución de resultados. Esta flexibilidad es un rasgo esencial, ya que en mercados reales la perfección teórica es inalcanzable, y los métodos que mejor se adaptan a condiciones adversas destacan por sobre aquellos que sólo optimizan en entornos ideales.
+
+El desafío principal del estudio radicaba en la opción \textit{call} asiática aritmética, derivado que no cuenta con una solución analítica cerrada. En este caso, el método de referencia elegido fue una aproximación numérica mediante Monte Carlo con \textit{Control Variates}, una técnica estándar en la industria financiera para valuar instrumentos exóticos. Nuevamente, en ausencia de costos, los agentes de \textit{Deep Hedging} mostraron un desempeño comparable en promedio, a la vez que redujeron significativamente la varianza y el riesgo de resultados adversos en comparación con la referencia numérica. Cuando se incorporaron costos de transacción, la habilidad del modelo de \textit{Deep Hedging} para adaptarse y optimizar la relación entre precisión de cobertura y costos se vio reflejada en métricas sustancialmente mejores.
+
+Las conclusiones de los resultados numéricos sugieren que el \textit{Deep Hedging} puede igualar el desempeño de las estrategias clásicas sin costos, y superarlas en cuanto se introducen fricciones. Al comparar los diferentes arquitecturas de redes neuronales recurrentes, LSTM y WaveNet, ninguno de ellos sobresalió de manera significativamente superior al resto en todos los casos. No obstante, el agente LSTM demostró una leve ventaja en un mayor número de escenarios, lo cual sugiere que las propiedades de memoria a largo plazo inherentes a esa arquitectura podrían ser más efectivas para aprender estrategias de cobertura robustas para este tipo de derivados, con este \textit{set} específico de parámetros. A pesar de eso, estas ventajas no fueron lo suficientemente marcadas como para afirmar que una sola arquitectura domina a las otras.
+
+La capacidad del \textit{Deep Hedging} para ajustarse a mercados más realistas, incluyendo discretización del tiempo y costos de transacción, es su mayor fortaleza. Se evidenció que los agentes entrenados pueden reducir la magnitud de las pérdidas extremas y mantener una dispersión de resultados significativamente menor. Esto es particularmente notable con derivados exóticos, como la opción asiática aritmética, en la que no existe una solución teórica y las metodologías tradicionales pueden resultar demasiado costosas o imprecisas. El método permitió encontrar estrategias de cobertura más estables y adaptativas, lo cual sugiere un gran potencial para su uso en la industria financiera.
+
+Como vías de investigación futura, se presenta un amplio panorama de oportunidades, tanto para opciones asiáticas como para el resto de derivados exóticos. Por un lado, el uso de modelos generativos avanzados, como Redes Generativas Antagónicas o modelos difusionales, podría mejorar el modelado del entorno de precios, exponiendo a los agentes de \textit{Deep Hedging} a escenarios más ricos y variados. Por otro lado, la evaluación de este enfoque en condiciones aún más realistas, con microestructuras de mercado, impactos de las órdenes en el libro y restricciones regulatorias o de liquidez, podría brindar una perspectiva más completa de su utilidad en el mundo real. Finalmente, la comparación con otros métodos numéricos y heurísticos, así como la integración con diferentes criterios de riesgo y performance, puede ayudar a orientar el desarrollo de estrategias que no sólo busquen replicar el \textit{payoff} de un derivado, sino que también respondan a las necesidades específicas y objetivos de gestión de riesgo de cada inversor o institución financiera.
+
+\newpage
+
+\begin{thebibliography}{99}
+
+\bibitem{ahn_et_al_2022} Ahn, J., Park, S., Kim, J., \& Lee, J.-H. (2022). Reinforcement Learning Portfolio Manager Framework with Monte Carlo Simulation. \textit{arXiv preprint arXiv:2207.02458}.
+
+\bibitem{almgren_chriss_2001} Almgren, R., \& Chriss, N. (2001). Optimal execution of portfolio transactions. \textit{Journal of Risk}, 3(2), 5–39.
+
+\bibitem{balaban_2019} Balaban, J. (2019). How WaveNet Works. \textit{Towards Data Science}. Recuperado de \url{https://towardsdatascience.com/how-wavenet-works-12e2420ef386}
+
+\bibitem{black_scholes_1973} Black, F., \& Scholes, M. (1973). The pricing of options and corporate liabilities. \textit{The Journal of Political Economy}, 81(3), 637–654.
+
+\bibitem{boyle_potapchik_2008} Boyle, P., \& Potapchik, A. (2008). Prices and sensitivities of Asian options: a survey. \textit{Insurance: Mathematics \& Economics}, 42(1), 189–211.
+
+\bibitem{buehler2018}
+Buehler, H., Gonon, L., Teichmann, J., \& Wood, B. (2018). Deep Hedging. \textit{arXiv preprint arXiv:1802.03042}.
+
+\bibitem{buehler2019a}
+Buehler, H., Gonon, L., Teichmann, J., Wood, B., Mohan, B., \& Kochems, J. (2019). Deep Hedging: Hedging Derivatives Under Generic Market Frictions Using Reinforcement Learning. \textit{SSRN Electronic Journal}.
+
+
+\bibitem{buehler2019b} Buehler, H., Gonon, L., Teichmann, J., \& Wood, B. (2019). Deep hedging. \textit{Quantitative Finance}, 19(8), 1271–1291.
+
+\bibitem{chen_et_al_2023} Chen, J., Fu, Y., Hull, J. C., Poulos, Z., Wang, Z., \& Yuan, J. (2023). Hedging barrier options using reinforcement learning. \textit{Journal of Investment Management}, 22(4).
+
+\bibitem{collin_2023} Collin, T. (2023). Using deep learning to hedge rainbow options (Tesis de maestría). Université Paris Dauphine - PSL.
+
+\bibitem{efron_1979} Efron, B. (1979). Bootstrap methods: Another look at the jackknife. \textit{The Annals of Statistics}, 7(1), 1–26.
+
+\bibitem{geron_2022} Géron, A. (2022). \textit{Hands-On Machine Learning with Scikit-Learn, Keras, and TensorFlow} (3rd ed.). O'Reilly Media.
+
+
+\bibitem{glasserman_2003} Glasserman, P. (2003). \textit{Monte Carlo Methods in Financial Engineering}. Springer.
+
+\bibitem{hull_2018} Hull, J. C. (2018). \textit{Options, Futures and Other Derivatives} (10ª ed.). Pearson.
+
+\bibitem{ingolfsson_2021} Ingolfsson, T. M. (2021). Insights into LSTM architecture. Recuperado de \url{https://thorirmar.com/post/insight_into_lstm/}
+
+\bibitem{kemna_vorst_1990} Kemna, A. G. Z., \& Vorst, A. C. F. (1990). A pricing method for options based on average asset values. \textit{Journal of Banking \& Finance}, 14(1), 113–129.
+
+\bibitem{kiran_et_al_2021} Kiran, B. R., Sobh, I., Talpaert, V., Mannion, P., Sallab, A. A. A., Yogamani, S., \& Pérez, P. (2021). Deep Reinforcement Learning for Autonomous Driving: A Survey. \textit{IEEE Transactions on Intelligent Transportation Systems}, 22(6), 3263-3283.
+
+\bibitem{merton_1973} Merton, R. C. (1973). Theory of Rational Option Pricing. \textit{The Bell Journal of Economics and Management Science}, 4(1), 141–183.
+
+\bibitem{metropolis_ulam_1949} Metropolis, N., \& Ulam, S. (1949). The Monte Carlo Method. \textit{Journal of the American Statistical Association}, 44(247), 335–341.
+
+\bibitem{moallemi_wang_2022} Moallemi, C. C., \& Wang, M. (2022). A reinforcement learning approach to optimal execution. \textit{Quantitative Finance}, 22(6), 1051–1069.
+
+\bibitem{neagu_godin_2024} Neagu, A., \& Godin, F. (2024). Deep Hedging with Market Impact. \textit{Proceedings of the 37th Canadian Conference on Artificial Intelligence}.
+
+\bibitem{pickard_et_al_2024} Pickard, R., Wredenhagen, F., DeJesus, J., Schlener, M., \& Lawryshyn, Y. (2024). Hedging American Put Options with Deep Reinforcement Learning. \textit{arXiv preprint arXiv:2405.06774}.
+
+
+\bibitem{qin_2020} Qin, P. (2020). Pricing and hedging of derivatives by unsupervised deep learning (Tesis de maestría). Imperial College London.
+
+\bibitem{silver_et_al_2017} Silver, D., Hubert, T., Schrittwieser, J., Antonoglou, I., Lai, M., Guez, A., ... \& Hassabis, D. (2017). Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm. \textit{arXiv preprint arXiv:1712.01815}.
+
+\bibitem{son_kim_2021} Son, G., \& Kim, J. (2021). Neural Networks for Delta Hedging. \textit{arXiv preprint arXiv:2112.10084}.
+
+\bibitem{zhang_1998} Zhang, P. G. (1998). \textit{Exotic options: a guide to second generation options} (2ª ed.). World Scientific Publishing.
+
+\bibitem{zhang_yu_wang_2015} Zhang, B., Yu, Y., \& Wang, W. (2015). Numerical algorithm for delta of Asian option. \textit{The Scientific World Journal}, 2015, Artículo 692847.
+
+
+
+
+\end{thebibliography}
+
+
+
+
+
+
+
+
+
+
+
+
+\end{document}
+
+
+
