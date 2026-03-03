@@ -2,6 +2,6 @@
   "source_config": "C:\\Users\\facun\\Downloads\\tesis\\DeepHedging\\DeepHedging\\configs\\runs\\THESIS_FINAL\\W1_gbm_fixed\\1c_2_asian_arith_tc1_band\\compare\\vs_lrm_mc_banded.json",
   "objective_col": "benchmark_empirical_cvar_50",
   "objective_direction": "min",
-  "best_band_bound": 0.01,
-  "best_band_pct": 1.0
+  "best_band_bound": 0.5,
+  "best_band_pct": 50.0
 }

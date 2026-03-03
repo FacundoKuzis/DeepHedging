@@ -302,9 +302,13 @@ Alternativas (usadas solo en caso especial CVaR sweep):
 
 ## 5. Agentes Entrenables (Deep Hedgers)
 
-En THESIS_FINAL se entrenan (según escenario):
+En THESIS_FINAL se usa la familia **Agente Deep Hedging**. Según la corrida, se entrena/evalúa:
 - `RecurrentAgent` (feedforward por paso, con posición acumulada)
 - `LSTMAgent` (secuencia completa con LSTM)
+
+Convención de reporte para tesis/comité:
+- A nivel escenario se reporta como **Agente Deep Hedging** (sin fijar arquitectura).
+- La arquitectura exacta (LSTM/Recurrent) se mantiene en artefactos técnicos (JSON, nombres de modelo, CSV).
 
 ### 5.1 Features base (por paso t)
 
@@ -335,11 +339,14 @@ Cuando `history_conv1d_enabled=true`, el vector `h_t` (largo `L`) se “ve” po
 - Residuales opcionales por capa
 - Pooling final: `global_max` (en THESIS_FINAL)
 
-Arquitectura usada en THESIS_FINAL (W2–W5):
+Arquitectura Conv1D usada en THESIS_FINAL (W2–W5):
 - 3 capas Conv1D, cada una produce 16 filtros
 - Dilataciones: 1, 2, 4
 - Kernel size: 3
-- Dropout: 0.00, 0.03, 0.03
+- Dropout típico en `compare`: 0.00, 0.03, 0.03
+- Dropout en `train`:
+  - W2: 0.00, 0.05, 0.05
+  - W3–W5: 0.00, 0.03, 0.03
 - Residuales: off, on, on
 
 Salida del encoder:
@@ -818,6 +825,10 @@ Esto produce una `sigma_final_t` más grande cuando el ajuste de colas indica he
 
 Cada subescenario tiene `train/` y `compare/`. Los `.2` tienen además `calibration/`.
 
+Convención vigente para comunicación de resultados:
+- En texto y figuras de tesis se informa **Agente Deep Hedging** (sin distinguir LSTM/Recurrent por escenario).
+- A nivel técnico interno, un escenario puede correr LSTM, Recurrent o ambos, y también variantes `__lstm_only` / `__recurrent_only`.
+
 Comparaciones por claim (la “regla” pedida por la tesis se interpreta como: un compare por benchmark relevante, sin mezclar benchmarks en el mismo JSON):
 
 - **Europea**
@@ -832,12 +843,17 @@ Comparaciones por claim (la “regla” pedida por la tesis se interpreta como: 
 En escenarios `.2` (TC=1% + banda NI), hay versiones “banded”:
 - `compare/*_banded.json`
 
+Variantes operativas presentes en configs (no cambian la definición financiera del escenario):
+- Corridas por arquitectura: `*__lstm_only.json`, `*__recurrent_only.json`
+- Corridas por costo alternativo: `*_0_003.json`, `*_0_005.json`
+- Corridas de diagnóstico local: `_diag_*.json`
+- Corridas LRM exploratorias en W1: `vs_lrm_lsmc*.json`, `vs_lrm_mc_2batches.json`
+
 Caso especial `1a.1'` (solo W1):
 - `compare_mode="trained_only"`: compara solo modelos entrenados (LSTM CVaR50/90/99) sin benchmark.
 
 Ejemplos de paths (source-of-truth son los JSON):
-- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/train/recurrent.json`
-- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/train/lstm.json`
+- `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/train/` (agente Deep Hedging; arquitectura según corrida)
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/compare/vs_bs.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1_euro_tc0_cvar50/compare/vs_lrm_mc.json`
 - `configs/runs/THESIS_FINAL/W1_gbm_fixed/1a_1p_euro_tc0_lstm_cvar_sweep/compare/lstm_cvar_sweep.json`
@@ -878,25 +894,20 @@ a_0 = e_0
 a_t = e_t - e_{t-1}   (t>=1)
 ```
 
-### 10.3 Grilla obligatoria (tesis)
+### 10.3 Grilla de calibración (estado actual)
 
-La grilla de búsqueda para `eta` es:
-- Desde 0.5% a 10% inclusive
-- Step 0.5%
+La calibración por script (`examples/calibrate_bs_no_intervention_grid.py`) permite:
+- `grid_min_pct >= 0`
+- `grid_max_pct >= 0`
+- `grid_max_pct >= grid_min_pct`
+- `grid_step_pct > 0`
+- Sin tope duro en 100% (el rango lo define el comando).
 
-Conjunto:
-
-```
-eta ∈ {0.005, 0.010, 0.015, ..., 0.100}
-```
-
-En cada carpeta `.2/calibration/` existen configs:
-- `band_0005.json ... band_0100.json`
-- `band_template.json` y `band_template_lrm.json` son solo plantillas (no se ejecutan automáticamente por el runner).
-
-Cardinalidad (por carpeta de calibración):
-- 20 runs reales: `band_0005..band_0100` (grilla 0.5%..10% step 0.5%).
-- 2 templates: `band_template*.json` (no ejecutar).
+Grilla definida en JSON por carpeta `.2/calibration/`:
+- Estándar en la mayoría de escenarios: `band_0005..band_0100` (0.5%..10%, paso 0.5%).
+- Excepción vigente: `W1_gbm_fixed/1a_2_euro_tc1_band` extiende hasta `band_0200` (20%).
+- `band_template.json` y `band_template_lrm.json` son plantillas (no ejecutar).
+- `bs_band_calibration_best.json` es metadata de selección, no corrida.
 
 Selección:
 - Elegir el `eta` que minimiza el `cvar_50` del benchmark en `tables/empirical_risk_metrics.csv` para los runs de calibración.
@@ -911,6 +922,8 @@ Por comparación (`compare_mode="benchmark_vs_targets"`):
 - Histograma de `error` terminal por agente (en español, sin título).
 - Scatter “acciones benchmark vs acciones agente” (por paso) para cada par benchmark-vs-agente.
 - Plots de paths usados en la comparación (niveles y log-moneyness) generados por `run_scenarios_console.py`.
+- Para agentes entrenados, el label visual puede unificarse como **Agente Deep Hedging** (`trained_agents_plot_unified_*`).
+- Los nombres reales de agente/modelo (LSTM/Recurrent) se preservan en archivos y tablas (`point_metrics.csv`, `empirical_risk_metrics.csv`, `bootstrap_metrics_wide.csv`, nombres de artefacto).
 
 Caso especial CVaR sweep (trained-only):
 - Un único plot overlay con 3 histogramas (CVaR50/90/99) con colores fijos:
@@ -1001,29 +1014,30 @@ Comportamiento default del runner:
 3) En W2–W5, `r` está fijo a `0.03` y no se estima (benchmark_delta_r_mode="none").
 4) La sigma del benchmark en W2–W4 se estima causalmente con `garch_context_stepwise` usando contexto + historia hasta `t`.
 5) En W5, el benchmark usa `hmm_garch_student_context_stepwise` y guarda `sigma`, `df` y `states` stepwise.
-6) En escenarios `.2`, el benchmark reusa acciones de `.1` y aplica banda NI calibrada en grilla 0.5%..10% step 0.5%.
+6) En escenarios `.2`, el benchmark reusa acciones de `.1` y aplica banda NI calibrada con grilla configurable (en los JSON, usualmente 0.5%..10%; en W1/1a_2 extendida hasta 20%).
 7) Todas las métricas necesarias quedan persistidas (raw payload + tablas) para análisis offline.
 
 
 ---
 
-## 14. Inventario Exhaustivo de Configs (THESIS_FINAL)
+## 14. Inventario Actual de Configs (THESIS_FINAL)
 
-Esta sección enumera **todo** lo que se corre en THESIS_FINAL (sin agregar ni quitar escenarios), con paths relativos bajo `configs/runs/THESIS_FINAL/`.
+Este inventario refleja el estado actual de `configs/runs/THESIS_FINAL/` (excluyendo carpetas temporales `compare/_tmp_bs_band_calibration`).
 
-Convenciones:
-- `train/*.json`: entrenamientos (modelos guardados bajo `.../train/<run>/models/`).
-- `compare/*.json`: comparaciones finales (artefactos bajo `.../compare/<run>/`).
-- `calibration/*.json`: calibración de banda NI (solo escenarios `.2`).
-- En `calibration/`:
-  - Se ejecutan solo `band_0005..band_0100` (20 configs).
-  - `band_template*.json` son plantillas (no ejecutar).
+Totales actuales:
+- `train/*.json`: 48
+- `compare/*.json`: 79
+- `calibration/*.json`: 265
+
+Convención para este inventario:
+- Se separa la **matriz canónica** (lo que define escenarios de tesis) de **variantes operativas** (debug, arquitectura-only, costos alternativos, etc.).
+- En la matriz canónica, los `train/*.json` se reportan como corridas de **Agente Deep Hedging** sin distinguir arquitectura por escenario.
+
+### 14.1 Matriz canónica (escenarios de tesis)
 
 ### W1_gbm_fixed
-
 - `1a_1_euro_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_lrm_mc.json`
 - `1a_1p_euro_tc0_lstm_cvar_sweep/`
@@ -1031,159 +1045,131 @@ Convenciones:
   - `train/lstm_cvar99.json`
   - `compare/lstm_cvar_sweep.json`
 - `1a_2_euro_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_bs_banded.json`
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 - `1b_1_asian_geo_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_geo_bs.json`
   - `compare/vs_lrm_mc.json`
 - `1b_2_asian_geo_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_geo_bs.json`
   - `compare/vs_geo_bs_banded.json`
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 - `1c_1_asian_arith_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
 - `1c_2_asian_arith_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 
 ### W2_gbm_random_ctx50
-
 - `1a_1_euro_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_lrm_mc.json`
 - `1a_2_euro_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_bs_banded.json`
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 - `1c_1_asian_arith_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
 - `1c_2_asian_arith_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 
 ### W3_garch_t_random_ctx50
-
 - `1a_1_euro_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_lrm_mc.json`
 - `1a_2_euro_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_bs_banded.json`
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 - `1c_1_asian_arith_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
 - `1c_2_asian_arith_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 
 ### W4_garch_t_tail_ctx50
-
 - `1a_1_euro_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_lrm_mc.json`
 - `1a_2_euro_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_bs_banded.json`
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 - `1c_1_asian_arith_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
 - `1c_2_asian_arith_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 
 ### W5_hmm3_garch_t_ctx100
-
 - `1a_1_euro_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_lrm_mc.json`
 - `1a_2_euro_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_bs.json`
   - `compare/vs_bs_banded.json`
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
 - `1c_1_asian_arith_tc0_cvar50/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
 - `1c_2_asian_arith_tc1_band/`
-  - `train/recurrent.json`
-  - `train/lstm.json`
-  - `calibration/band_0005.json ... calibration/band_0100.json` (20)
-  - `calibration/band_template.json` (template)
-  - `calibration/band_template_lrm.json` (template)
+  - `train/*.json` (Agente Deep Hedging)
   - `compare/vs_lrm_mc.json`
   - `compare/vs_lrm_mc_banded.json`
+  - `calibration/band_*.json`
+
+### 14.2 Variantes operativas presentes en `compare/`
+
+Patrones adicionales encontrados en los JSON actuales:
+- Por arquitectura: `*__lstm_only.json`, `*__recurrent_only.json`
+- Por costo alternativo: `*_0_003.json`, `*_0_005.json`
+- Diagnóstico técnico: `_diag_*.json`
+- Exploración LRM (W1): `vs_lrm_lsmc.json`, `vs_lrm_lsmc_tuned.json`, `vs_lrm_mc_2batches.json`
+
+Estas variantes son útiles para operación/calibración, pero no cambian la definición conceptual de los escenarios canónicos.
+
+### 14.3 Estado actual de calibraciones NI en carpetas `.2/calibration/`
+
+- Estándar general: `band_0005..band_0100` (20 configs, 0.5%..10%).
+- Excepción vigente:
+  - `W1_gbm_fixed/1a_2_euro_tc1_band/calibration/` incluye `band_0005..band_0200` (40 configs, 0.5%..20%).
+- Archivos auxiliares:
+  - `band_template.json`, `band_template_lrm.json`: plantillas.
+  - `bs_band_calibration_best.json`: output/metadata de selección.

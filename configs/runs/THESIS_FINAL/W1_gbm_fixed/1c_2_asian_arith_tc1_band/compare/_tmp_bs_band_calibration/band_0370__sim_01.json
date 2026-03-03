@@ -11,7 +11,7 @@
   "contingent_claim": "AsianArithmeticCall",
   "claim_underlying_index": 0,
   "fixing_indices": null,
-  "proportional_cost": 0.0,
+  "proportional_cost": 0.01,
   "risk_measure_name": "CVaR50",
   "cvar_alpha": 0.5,
   "benchmark_agent_name": "LocalRiskMinimizationAgent",
