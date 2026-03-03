@@ -7,5 +7,6 @@
   "contingent_claim": "EuropeanCall",
   "proportional_cost": 0.0,
   "risk_measure_name": "CVaR50",
-  "cvar_alpha": 0.5
+  "cvar_alpha": 0.5,
+  "train_paths": 20000
 }

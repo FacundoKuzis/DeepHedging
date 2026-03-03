@@ -8,6 +8,7 @@
   "benchmark_no_intervention_mode": "percentage",
   "benchmark_no_intervention_bound": 0.03,
   "benchmark_agent_name": "LocalRiskMinimizationAgent",
-  "benchmark_agents_to_compare": []
+  "benchmark_agents_to_compare": [],
+  "eval_paths": 10000,
+  "eval_agent_batch_size": 10000
 }
-

@@ -6,10 +6,6 @@
     {
       "agent_name": "RecurrentAgent",
       "model_name": "tf_w1_gbm_fixed_1b_2_asian_geo_tc1_band_recurrent"
-    },
-    {
-      "agent_name": "LSTMAgent",
-      "model_name": "tf_w1_gbm_fixed_1b_2_asian_geo_tc1_band_lstm"
     }
   ],
   "contingent_claim": "AsianGeometricCall",

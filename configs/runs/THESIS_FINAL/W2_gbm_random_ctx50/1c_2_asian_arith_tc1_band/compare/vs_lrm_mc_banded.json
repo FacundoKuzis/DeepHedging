@@ -6,5 +6,7 @@
   "benchmark_actions_reuse_agent_name": "LocalRiskMinimizationAgent",
   "benchmark_actions_reuse_apply_no_intervention": true,
   "benchmark_no_intervention_mode": "percentage",
-  "benchmark_no_intervention_bound": 0.03
+  "benchmark_no_intervention_bound": 0.03,
+  "eval_paths": 10000,
+  "eval_agent_batch_size": 10000
 }

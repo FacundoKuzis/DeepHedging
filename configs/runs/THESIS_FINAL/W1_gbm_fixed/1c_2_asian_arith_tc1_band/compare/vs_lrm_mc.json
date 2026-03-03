@@ -26,5 +26,7 @@
   "benchmark_lrm_verbose": true,
   "benchmark_lrm_log_every_t": 10,
   "benchmark_lrm_mc_log_every_chunks": 150,
-  "benchmark_agents_to_compare": []
+  "benchmark_agents_to_compare": [],
+  "eval_paths": 10000,
+  "eval_agent_batch_size": 10000
 }

@@ -1,8 +1,8 @@
 """
-Grid calibration runner for BS no-intervention band.
+Grid calibration runner for benchmark no-intervention band.
 
 What it does:
-1) Runs BS-banded compares across the full NI grid.
+1) Runs banded compares across the full NI grid.
 2) Uses multiple simulations (different eval seeds) per band.
 3) Disables bootstrap during calibration runs.
 4) Builds summary tables with metrics by band.
@@ -169,7 +169,7 @@ def _write_config_bound(config_path: str, bound: float) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Calibrate BS no-intervention band over a full grid.")
+    parser = argparse.ArgumentParser(description="Calibrate benchmark no-intervention band over a full grid.")
     parser.add_argument(
         "config_ref",
         help="Compare config path/name (normally a *vs_bs_banded*.json).",
@@ -225,10 +225,9 @@ def main() -> None:
 
     cfg = strip_meta_keys(merged)
     cfg = _apply_relaxed_defaults_compare(cfg, pipeline=pipeline)
-    if str(cfg.get("benchmark_agent_name", "")).strip() != "DeltaHedgingAgent":
-        raise ValueError(
-            "Target config must use benchmark_agent_name='DeltaHedgingAgent' for BS calibration."
-        )
+    benchmark_agent_name = str(cfg.get("benchmark_agent_name", "")).strip()
+    if not benchmark_agent_name:
+        raise ValueError("Target config must define a non-empty benchmark_agent_name.")
     if (
         args.eval_paths is not None
         and cfg.get("benchmark_actions_reuse_from_run", None) is not None
