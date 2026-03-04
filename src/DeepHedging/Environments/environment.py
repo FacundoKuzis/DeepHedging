@@ -1508,6 +1508,20 @@ class Environment:
         with open(os.path.join(optimizer_path, 'optimizer_weights.pkl'), 'wb') as f:
             pickle.dump(optimizer_weights, f)
 
+    def _optimizer_trainable_variables(self):
+        """
+        Return the full trainable variable list used during agent training.
+
+        This must include optional sidecar encoders (e.g., history Conv1D), not
+        only the core Keras model variables.
+        """
+        trainable_vars = list(self.agent.model.trainable_variables)
+        if bool(getattr(self.agent, "history_conv1d_enabled", False)):
+            encoder = getattr(self.agent, "history_conv1d_encoder", None)
+            if encoder is not None:
+                trainable_vars.extend(list(encoder.trainable_variables))
+        return trainable_vars
+
     def load_optimizer(self, optimizer_path, only_weights = False):
         """
         Load the optimizer state and object from the specified path using optimizer.get_config() and optimizer.variables().
@@ -1532,9 +1546,11 @@ class Environment:
             self.optimizer = tf.keras.optimizers.Adam.from_config(optimizer_config)
             variables_index_start = 0
 
-        # Initialize the optimizer's variables by applying it to some dummy data
-        dummy_data = [tf.zeros_like(var) for var in self.agent.model.trainable_variables]
-        self.optimizer.apply_gradients(zip(dummy_data, self.agent.model.trainable_variables))
+        # Initialize optimizer slots against the *full* trainable set used in training
+        # (core model + optional history encoder trainables).
+        trainable_vars = self._optimizer_trainable_variables()
+        dummy_data = [tf.zeros_like(var) for var in trainable_vars]
+        self.optimizer.apply_gradients(zip(dummy_data, trainable_vars))
 
         # Load the optimizer weights
         with open(os.path.join(optimizer_path, 'optimizer_weights.pkl'), 'rb') as f:

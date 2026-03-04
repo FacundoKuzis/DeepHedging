@@ -384,7 +384,18 @@ class BaseAgent(ABC):
             grads = tape.gradient(loss, trainable_vars)
             grads_and_vars = [(g, v) for g, v in zip(grads, trainable_vars) if g is not None]
             if grads_and_vars:
-                optimizer.apply_gradients(grads_and_vars)
+                try:
+                    optimizer.apply_gradients(grads_and_vars)
+                except KeyError as exc:
+                    msg = str(exc)
+                    # Keras v3 optimizer can reject unseen vars after resume.
+                    # Rebuild optimizer slots with the full trainable set, then retry.
+                    if "cannot recognize variable" not in msg:
+                        raise
+                    build_fn = getattr(optimizer, "build", None)
+                    if callable(build_fn):
+                        build_fn(trainable_vars)
+                    optimizer.apply_gradients(grads_and_vars)
 
         return loss
 
