@@ -6,15 +6,13 @@
     {
       "agent_name": "RecurrentAgent",
       "model_name": "tf_w3_garch_t_random_ctx50_1a_1_euro_tc0_cvar50_recurrent"
-    },
-    {
-      "agent_name": "LSTMAgent",
-      "model_name": "tf_w3_garch_t_random_ctx50_1a_1_euro_tc0_cvar50_lstm"
     }
   ],
   "contingent_claim": "EuropeanCall",
   "proportional_cost": 0.0,
   "benchmark_agent_name": "DeltaHedgingAgent",
-  "benchmark_agents_to_compare": []
+  "benchmark_agents_to_compare": [],
+  "plot_min_x": -10.0,
+  "plot_max_x": 10.0
 }
 
