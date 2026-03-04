@@ -1,0 +1,7 @@
+{
+  "description": "THESIS_FINAL W2: GBM random sigma/r + context 50 Conv (log-returns), sigma uniform [0.05, 0.5].",
+  "extends": "W2_gbm_random_ctx50_logret.json",
+  "gbm_sigma_uniform_low": 0.05,
+  "gbm_sigma_uniform_high": 0.5
+}
+
