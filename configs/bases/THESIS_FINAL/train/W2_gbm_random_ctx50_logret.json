@@ -1,0 +1,6 @@
+{
+  "description": "THESIS_FINAL W2: GBM random sigma/r + context 50 Conv (log-returns features).",
+  "extends": "W2_gbm_random_ctx50.json",
+  "context_feature_mode": "log_returns"
+}
+

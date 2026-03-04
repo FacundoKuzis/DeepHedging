@@ -1,0 +1,16 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/compare/W2_gbm_random_ctx50_logret.json",
+  "run_name": "tf_w2_gbm_random_ctx50_1a_1_euro_tc0_cvar50_vs_bs_cmp_mse_logret",
+  "description": "tf_w2_gbm_random_ctx50_1a_1_euro_tc0_cvar50_vs_bs_cmp_mse_logret",
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_name": "tf_w2_gbm_random_ctx50_1a_1_euro_tc0_cvar50_recurrent_mse_logret"
+    }
+  ],
+  "contingent_claim": "EuropeanCall",
+  "proportional_cost": 0.0,
+  "benchmark_agent_name": "DeltaHedgingAgent",
+  "benchmark_agents_to_compare": []
+}
+

@@ -1,0 +1,8 @@
+.\env\Scripts\python.exe .\examples\train_console.py configs\runs\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\train\recurrent_mse_logret.json --force-run
+.\env\Scripts\python.exe .\examples\compare_console.py configs\runs\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\compare\vs_bs_mse_logret.json --force-run
+
+
+G:\Mi unidad\Tesis2026\Models\Organized\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\compare\vs_bs_mse_logret\tables\bootstrap_metrics_wide.csv
+
+G:\Mi unidad\Tesis2026\Models\Organized\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\compare\vs_bs_mse_logret\tables\empirical_risk_metrics.csv
+

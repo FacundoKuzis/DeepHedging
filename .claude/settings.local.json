@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import json; d=json.load\\(open\\(r''G:\\\\Mi unidad\\\\Tesis2026\\\\Models\\\\Organized\\\\THESIS_FINAL\\\\W2_gbm_random_ctx50\\\\1a_1_euro_tc0_cvar50\\\\train\\\\recurrent\\\\resolved_config.json''\\)\\); print\\(''context_as_timesteps:'', d.get\\(''context_as_timesteps''\\)\\); print\\(''history_conv1d_enabled:'', d.get\\(''history_conv1d_enabled''\\)\\); print\\(''history_feature_dim:'', d.get\\(''history_feature_dim''\\)\\)\")",
+      "Bash(ls -d \"G:/Mi unidad/Tesis2026/Models/Organized/THESIS_FINAL\"/W*)",
+      "Bash(python3:*)"
+    ]
+  }
+}
