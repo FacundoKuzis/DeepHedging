@@ -7,5 +7,37 @@
   "contingent_claim": "EuropeanCall",
   "proportional_cost": 0.01,
   "risk_measure_name": "CVaR50",
-  "cvar_alpha": 0.5
+  "cvar_alpha": 0.5,
+  "train_paths": 60000,
+  "history_conv1d_enabled": true,
+  "history_conv1d_pooling": "global_max",
+  "history_conv1d_layers": [
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 1,
+      "activation": "relu",
+      "dropout": 0.0,
+      "use_batch_norm": false,
+      "use_residual": false
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 2,
+      "activation": "relu",
+      "dropout": 0.03,
+      "use_batch_norm": false,
+      "use_residual": true
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 4,
+      "activation": "relu",
+      "dropout": 0.03,
+      "use_batch_norm": false,
+      "use_residual": true
+    }
+  ]
 }
