@@ -229,6 +229,7 @@ def optional_keys() -> set[str]:
         "checkpoint_metric",
         "checkpoint_save_optimizer",
         "checkpoint_resume_if_available",
+        "dense_units",
     }
 
 

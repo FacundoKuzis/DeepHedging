@@ -27,7 +27,9 @@ class RecurrentAgent(SimpleAgent):
         context_pre_ttm_mode = "calculated",
         sequence_output_mode = "trade",
         position_activation = "linear",
+        dense_units = 64,
     ):
+        self.dense_units = int(dense_units)
         self.history_feature_dim = int(history_feature_dim)
         self.input_shape = (n_instruments + 1 + n_instruments + self.history_feature_dim,) # +1 for T-t and + n_instruments for accumulated position
         self.n_instruments = n_instruments
@@ -63,8 +65,8 @@ class RecurrentAgent(SimpleAgent):
         """
         model = tf.keras.Sequential([
             tf.keras.layers.InputLayer(input_shape=input_shape),  # Adjust input shape for accumulated position and T_minus_t
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(64, activation='relu'),
+            tf.keras.layers.Dense(self.dense_units, activation='relu'),
+            tf.keras.layers.Dense(self.dense_units, activation='relu'),
             tf.keras.layers.Dense(output_shape, activation='linear')
         ])
         return model

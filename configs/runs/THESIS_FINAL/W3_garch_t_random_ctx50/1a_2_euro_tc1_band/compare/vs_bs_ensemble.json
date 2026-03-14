@@ -1,0 +1,22 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/compare/W3_garch_t_random_ctx50.json",
+  "run_name": "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_vs_bs_ensemble_cmp",
+  "description": "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_vs_bs_ensemble_cmp",
+  "dense_units": 32,
+  "trained_agents": [
+    {
+      "agent_name": "RecurrentAgent",
+      "model_names": [
+        "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_recurrent_ens_s1",
+        "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_recurrent_ens_s2",
+        "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_recurrent_ens_s3",
+        "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_recurrent_ens_s4",
+        "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_recurrent_ens_s5"
+      ]
+    }
+  ],
+  "contingent_claim": "EuropeanCall",
+  "proportional_cost": 0.01,
+  "benchmark_agent_name": "DeltaHedgingAgent",
+  "benchmark_agents_to_compare": []
+}

@@ -13,3 +13,4 @@ from DeepHedging.Agents.arithmetic_asian_montecarlo_agent import ArithmeticAsian
 from DeepHedging.Agents.arithmetic_asian_montecarlo_control_variate_agent import ArithmeticAsianControlVariateAgent
 from DeepHedging.Agents.montecarlo_agent import MonteCarloAgent
 from DeepHedging.Agents.local_risk_minimization_agent import LocalRiskMinimizationAgent
+from DeepHedging.Agents.ensemble_agent import EnsembleAgent

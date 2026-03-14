@@ -47,6 +47,7 @@ from examples.thesis_result1_common import (  # noqa: E402
     get_config_relative_stem,
     validate_agent_name,
 )
+from DeepHedging.Agents import EnsembleAgent  # noqa: E402
 from DeepHedging.RiskMeasures import CVaR, MAE, WorstCase  # noqa: E402
 from DeepHedging.utils.gbm_calibration import (  # noqa: E402
     IRX_TICKER,
@@ -501,6 +502,7 @@ def optional_keys() -> set[str]:
         "trained_agents_plot_unified_label_es",
         "trained_agents_plot_unified_label_en",
         "trained_agents_plot_unified_color",
+        "dense_units",
     }
 
 
@@ -1193,21 +1195,34 @@ def validate_config(config: dict[str, Any]) -> None:
     for i, item in enumerate(config["trained_agents"]):
         if not isinstance(item, dict):
             raise ValueError(f"trained_agents[{i}] must be an object.")
-        allowed_keys = {"agent_name", "model_name", "label", "label_es", "label_en", "color"}
+        allowed_keys = {"agent_name", "model_name", "model_names", "label", "label_es", "label_en", "color"}
         extra_keys = set(item.keys()) - allowed_keys
         if extra_keys:
             raise ValueError(
                 f"trained_agents[{i}] has unknown keys: {sorted(extra_keys)}. "
                 f"Allowed keys: {sorted(allowed_keys)}"
             )
-        if "agent_name" not in item or "model_name" not in item:
-            raise ValueError(f"trained_agents[{i}] must include keys ['agent_name','model_name']")
+        has_single = "model_name" in item
+        has_ensemble = "model_names" in item
+        if not has_single and not has_ensemble:
+            raise ValueError(f"trained_agents[{i}] must include 'model_name' or 'model_names'")
+        if has_single and has_ensemble:
+            raise ValueError(f"trained_agents[{i}] must not have both 'model_name' and 'model_names'")
+        if "agent_name" not in item:
+            raise ValueError(f"trained_agents[{i}] must include 'agent_name'")
         name = str(item["agent_name"])
         validate_agent_name(name)
         if name not in TRAINABLE_AGENT_NAMES:
             raise ValueError(f"trained_agents[{i}].agent_name must be trainable")
-        if not isinstance(item["model_name"], str) or not item["model_name"].strip():
-            raise ValueError(f"trained_agents[{i}].model_name must be non-empty string")
+        if has_single:
+            if not isinstance(item["model_name"], str) or not item["model_name"].strip():
+                raise ValueError(f"trained_agents[{i}].model_name must be non-empty string")
+        if has_ensemble:
+            if not isinstance(item["model_names"], list) or len(item["model_names"]) < 2:
+                raise ValueError(f"trained_agents[{i}].model_names must be a list with at least 2 entries")
+            for j, mn in enumerate(item["model_names"]):
+                if not isinstance(mn, str) or not mn.strip():
+                    raise ValueError(f"trained_agents[{i}].model_names[{j}] must be non-empty string")
         for label_key in ("label", "label_es", "label_en"):
             if label_key in item and item[label_key] is not None:
                 if not isinstance(item[label_key], str) or not str(item[label_key]).strip():
@@ -2026,21 +2041,43 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
 
     trained_agents = []
     for idx_tr, item in enumerate(config["trained_agents"], start=1):
-        agent = build_agent_from_config(
-            agent_name=str(item["agent_name"]),
-            instrument=instrument,
-            claim=claim,
-            config=cfg_for_builders,
-        )
-        model_path = _model_path(agent, str(item["model_name"]))
-        if not os.path.isfile(model_path):
-            raise FileNotFoundError(f"Model not found for trained agent {item['agent_name']} at: {model_path}")
-        agent.load_model(model_path)
-        print(f"[run:{run_name}] Loaded model: {model_path}")
+        is_ensemble = "model_names" in item
+
+        if is_ensemble:
+            sub_agents = []
+            for mn in item["model_names"]:
+                sub = build_agent_from_config(
+                    agent_name=str(item["agent_name"]),
+                    instrument=instrument,
+                    claim=claim,
+                    config=cfg_for_builders,
+                )
+                mp = _model_path(sub, str(mn))
+                if not os.path.isfile(mp):
+                    raise FileNotFoundError(f"Model not found for ensemble member '{mn}' at: {mp}")
+                sub.load_model(mp)
+                print(f"[run:{run_name}] Loaded ensemble member: {mp}")
+                sub_agents.append(sub)
+            agent = EnsembleAgent(sub_agents)
+            display_model_name = item["model_names"][0]
+            print(f"[run:{run_name}] Created EnsembleAgent with {len(sub_agents)} members.")
+        else:
+            agent = build_agent_from_config(
+                agent_name=str(item["agent_name"]),
+                instrument=instrument,
+                claim=claim,
+                config=cfg_for_builders,
+            )
+            model_path = _model_path(agent, str(item["model_name"]))
+            if not os.path.isfile(model_path):
+                raise FileNotFoundError(f"Model not found for trained agent {item['agent_name']} at: {model_path}")
+            agent.load_model(model_path)
+            print(f"[run:{run_name}] Loaded model: {model_path}")
+            display_model_name = str(item["model_name"])
 
         plot_name_dict, plot_color = _resolve_trained_plot_style(
             config=config,
-            model_name=str(item["model_name"]),
+            model_name=display_model_name,
             compare_mode=compare_mode,
             trained_item=item,
         )
@@ -2048,7 +2085,7 @@ def run_comparison(run_name: str, config_path: str, config: dict[str, Any]) -> N
             agent.plot_name = plot_name_dict
         if plot_color is not None:
             agent.plot_color = str(plot_color)
-        agent.agent_id = f"tr_{idx_tr:02d}_{_slugify_label(str(getattr(agent, 'name', item['model_name'])))}"
+        agent.agent_id = f"tr_{idx_tr:02d}_{_slugify_label(str(getattr(agent, 'name', display_model_name)))}"
 
         trained_agents.append(agent)
 

@@ -530,6 +530,8 @@ def build_agent_from_config(
             kwargs["context_as_timesteps"] = bool(context_as_timesteps)
         if "context_pre_ttm_mode" in init_params:
             kwargs["context_pre_ttm_mode"] = str(context_pre_ttm_mode)
+        if "dense_units" in init_params and "dense_units" in config:
+            kwargs["dense_units"] = int(config["dense_units"])
         agent = agent_cls(**kwargs)
         # Optional constant feature appended to every timestep/input row.
         agent.append_log_strike_feature = bool(include_log_strike_feature)
