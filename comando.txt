@@ -14,3 +14,19 @@ G:\Mi unidad\Tesis2026\Models\Organized\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_eu
 ---
 .\env\Scripts\python.exe .\examples\train_console.py configs\runs\THESIS_FINAL\W2_gbm_random_ctx50\1a_2_euro_tc1_band\train\recurrent.json --force-run
 
+---
+
+python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s1.json
+python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s2.json
+python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s3.json
+python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s4.json
+python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s5.json
+
+
+python examples/compare_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_ensemble.json
+python examples/compare_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_lrm_mc_ensemble.json
+python examples/compare_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_banded_ensemble.json
+
+
+
+----
