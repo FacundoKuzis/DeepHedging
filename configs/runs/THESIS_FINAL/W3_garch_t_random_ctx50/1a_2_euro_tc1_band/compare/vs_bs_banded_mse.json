@@ -1,7 +1,7 @@
 {
-  "extends": "vs_bs.json",
-  "run_name": "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_vs_bs_banded_cmp",
-  "description": "compare banda NI",
+  "extends": "vs_bs_mse.json",
+  "run_name": "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_vs_bs_banded_cmp_mse",
+  "description": "compare banda NI mse",
   "benchmark_actions_reuse_from_run": "THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs",
   "benchmark_actions_reuse_agent_name": "00_bs_delta_hedging",
   "benchmark_actions_reuse_apply_no_intervention": true,

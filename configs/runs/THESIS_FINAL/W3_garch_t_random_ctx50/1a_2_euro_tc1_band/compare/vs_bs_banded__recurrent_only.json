@@ -7,5 +7,7 @@
       "agent_name": "RecurrentAgent",
       "model_name": "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_recurrent"
     }
-  ]
+  ],
+  "plot_min_x": -40,
+  "plot_max_x": 40
 }

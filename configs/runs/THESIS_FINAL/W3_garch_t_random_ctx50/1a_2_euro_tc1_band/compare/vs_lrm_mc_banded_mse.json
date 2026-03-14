@@ -1,0 +1,14 @@
+{
+  "extends": "vs_bs_mse.json",
+  "run_name": "tf_w3_garch_t_random_ctx50_1a_2_euro_tc1_band_vs_lrm_mc_banded_cmp_mse",
+  "description": "compare banda NI mse",
+  "benchmark_actions_reuse_from_run": "THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_lrm_mc",
+  "benchmark_actions_reuse_agent_name": "LocalRiskMinimizationAgent",
+  "benchmark_actions_reuse_apply_no_intervention": true,
+  "benchmark_no_intervention_mode": "percentage",
+  "benchmark_no_intervention_bound": 0.03,
+  "benchmark_agent_name": "LocalRiskMinimizationAgent",
+  "benchmark_agents_to_compare": [],
+  "eval_paths": 10000,
+  "eval_agent_batch_size": 10000
+}
