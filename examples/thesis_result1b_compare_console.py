@@ -503,6 +503,7 @@ def optional_keys() -> set[str]:
         "trained_agents_plot_unified_label_en",
         "trained_agents_plot_unified_color",
         "dense_units",
+        "include_sigma_feature",
     }
 
 
@@ -1375,6 +1376,9 @@ def _model_path(agent, model_name: str) -> str:
     direct_matches: list[str] = []
     best_ckpt_matches: list[str] = []
     latest_ckpt_matches: list[str] = []
+    # Lower-priority: checkpoint matches where grandparent != agent.name
+    best_ckpt_any: list[str] = []
+    latest_ckpt_any: list[str] = []
     for root, _, files in os.walk(RESULT1B_ROOT):
         if target_name not in files:
             continue
@@ -1392,43 +1396,38 @@ def _model_path(agent, model_name: str) -> str:
             grandparent_dir = os.path.basename(
                 os.path.dirname(os.path.dirname(os.path.dirname(full)))
             )
-            if parent_dir == "checkpoints" and grandparent_dir == str(agent.name):
-                if parent == "best":
-                    best_ckpt_matches.append(full)
+            if parent_dir == "checkpoints":
+                if grandparent_dir == str(agent.name):
+                    if parent == "best":
+                        best_ckpt_matches.append(full)
+                    else:
+                        latest_ckpt_matches.append(full)
                 else:
-                    latest_ckpt_matches.append(full)
+                    if parent == "best":
+                        best_ckpt_any.append(full)
+                    else:
+                        latest_ckpt_any.append(full)
 
-    if len(direct_matches) == 1:
-        return direct_matches[0]
-    if len(direct_matches) > 1:
-        rels = [os.path.relpath(p, RESULT1B_ROOT) for p in direct_matches]
-        raise FileNotFoundError(
-            f"Multiple direct model matches found for agent={agent.name}, model_name='{model_name}'. "
-            f"Use unique model_name. Matches: {rels}"
-        )
+    # Priority: direct > best_ckpt (strict) > latest_ckpt (strict) > best_ckpt (any) > latest_ckpt (any)
+    for label, matches in [
+        ("direct", direct_matches),
+        ("checkpoint-best", best_ckpt_matches),
+        ("checkpoint-latest", latest_ckpt_matches),
+        ("checkpoint-best-any", best_ckpt_any),
+        ("checkpoint-latest-any", latest_ckpt_any),
+    ]:
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            rels = [os.path.relpath(p, RESULT1B_ROOT) for p in matches]
+            raise FileNotFoundError(
+                f"Multiple {label} matches found for agent={agent.name}, model_name='{model_name}'. "
+                f"Use unique model_name. Matches: {rels}"
+            )
 
-    if len(best_ckpt_matches) == 1:
-        return best_ckpt_matches[0]
-    if len(best_ckpt_matches) > 1:
-        rels = [os.path.relpath(p, RESULT1B_ROOT) for p in best_ckpt_matches]
-        raise FileNotFoundError(
-            f"Multiple checkpoint-best matches found for agent={agent.name}, model_name='{model_name}'. "
-            f"Use unique model_name. Matches: {rels}"
-        )
-
-    if len(latest_ckpt_matches) == 1:
-        return latest_ckpt_matches[0]
-    if len(latest_ckpt_matches) > 1:
-        rels = [os.path.relpath(p, RESULT1B_ROOT) for p in latest_ckpt_matches]
-        raise FileNotFoundError(
-            f"Multiple checkpoint-latest matches found for agent={agent.name}, model_name='{model_name}'. "
-            f"Use unique model_name. Matches: {rels}"
-        )
-
-    if len(direct_matches) == 0:
-        raise FileNotFoundError(
-            f"Model not found for trained agent {agent.name} and model_name='{model_name}' under {RESULT1B_ROOT}."
-        )
+    raise FileNotFoundError(
+        f"Model not found for trained agent {agent.name} and model_name='{model_name}' under {RESULT1B_ROOT}."
+    )
 
 
 

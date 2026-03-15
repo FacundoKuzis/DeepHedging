@@ -461,6 +461,7 @@ class Environment:
         train_data = None
         train_pre_history = None
         train_path_r = None
+        train_path_sigma = None
         if not self.resample_each_epoch:
             train_data, train_pre_history = self._generate_data_and_context(
                 train_paths,
@@ -468,6 +469,10 @@ class Environment:
             ) # (n_paths, N+1, n_instruments)
             train_path_r = self._infer_per_path_r_if_available(
                 per_path_r=None,
+                n_paths=int(train_paths),
+            )
+            train_path_sigma = self._infer_per_path_sigma_if_available(
+                per_path_sigma=None,
                 n_paths=int(train_paths),
             )
 
@@ -480,9 +485,14 @@ class Environment:
                 per_path_r=None,
                 n_paths=int(val_paths),
             )
+            val_path_sigma = self._infer_per_path_sigma_if_available(
+                per_path_sigma=None,
+                n_paths=int(val_paths),
+            )
             T_minus_t_val =  self.get_T_minus_t(val_paths)
         else:
             val_path_r = None
+            val_path_sigma = None
 
         total_epochs = int(self.n_epochs)
         if total_epochs <= 0:
@@ -529,6 +539,10 @@ class Environment:
                     per_path_r=None,
                     n_paths=int(train_paths),
                 )
+                train_path_sigma = self._infer_per_path_sigma_if_available(
+                    per_path_sigma=None,
+                    n_paths=int(train_paths),
+                )
 
             # Training
             epoch_losses = []
@@ -536,6 +550,7 @@ class Environment:
                 batch_paths = train_data[i:i+self.batch_size]
                 batch_T_minus_t = self.get_T_minus_t(batch_paths.shape[0])
                 batch_path_r = None if train_path_r is None else train_path_r[i:i+self.batch_size]
+                batch_path_sigma = None if train_path_sigma is None else train_path_sigma[i:i+self.batch_size]
                 batch_pre_history = None
                 if train_pre_history is not None:
                     batch_pre_history = train_pre_history[i:i+self.batch_size]
@@ -564,6 +579,7 @@ class Environment:
                     loss_fn_for_batch,
                     batch_history_features=batch_history_features,
                     batch_pre_history_prices=batch_pre_history if use_temporal_prefix else None,
+                    batch_path_sigma=batch_path_sigma,
                 )
                 epoch_losses.append(loss.numpy())
 
@@ -589,6 +605,9 @@ class Environment:
                     batch_path_r_val = None
                     if val_path_r is not None:
                         batch_path_r_val = val_path_r[j:j+val_batch_size]
+                    batch_path_sigma_val = None
+                    if val_path_sigma is not None:
+                        batch_path_sigma_val = val_path_sigma[j:j+val_batch_size]
                     batch_pre_history_val = None
                     if val_pre_history is not None:
                         batch_pre_history_val = val_pre_history[j:j+val_batch_size]
@@ -606,6 +625,7 @@ class Environment:
                         batch_paths_val,
                         batch_ttm_val,
                         batch_path_r=batch_path_r_val,
+                        batch_path_sigma=batch_path_sigma_val,
                         batch_history_features=batch_history_features_val,
                         batch_pre_history_prices=batch_pre_history_val if use_temporal_prefix else None,
                     )

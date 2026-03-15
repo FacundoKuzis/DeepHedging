@@ -1,0 +1,7 @@
+{
+  "source_config": "C:\\Users\\facun\\Downloads\\tesis\\DeepHedging\\DeepHedging\\configs\\runs\\THESIS_FINAL\\W2_gbm_random_ctx50\\1a_2_euro_tc1_band\\compare\\vs_bs_banded_mse.json",
+  "objective_col": "benchmark_empirical_cvar_50",
+  "objective_direction": "min",
+  "best_band_bound": 0.345,
+  "best_band_pct": 34.5
+}

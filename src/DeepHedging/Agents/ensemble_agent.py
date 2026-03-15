@@ -38,14 +38,20 @@ class EnsembleAgent:
         batch_T_minus_t,
         batch_history_features=None,
         batch_pre_history_prices=None,
+        batch_path_sigma=None,
     ):
         all_actions = []
         for agent in self.sub_agents:
+            kwargs = {
+                "batch_history_features": batch_history_features,
+                "batch_pre_history_prices": batch_pre_history_prices,
+            }
+            if batch_path_sigma is not None and hasattr(agent, "include_sigma_feature"):
+                kwargs["batch_path_sigma"] = batch_path_sigma
             actions = agent.process_batch(
                 batch_paths,
                 batch_T_minus_t,
-                batch_history_features=batch_history_features,
-                batch_pre_history_prices=batch_pre_history_prices,
+                **kwargs,
             )
             all_actions.append(actions)
         return tf.reduce_mean(tf.stack(all_actions, axis=0), axis=0)

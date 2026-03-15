@@ -230,6 +230,7 @@ def optional_keys() -> set[str]:
         "checkpoint_save_optimizer",
         "checkpoint_resume_if_available",
         "dense_units",
+        "include_sigma_feature",
     }
 
 

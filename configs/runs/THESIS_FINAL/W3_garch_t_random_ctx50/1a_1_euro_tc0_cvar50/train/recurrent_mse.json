@@ -1,0 +1,10 @@
+{
+  "extends": "../../../../../bases/THESIS_FINAL/train/W3_garch_t_random_ctx50.json",
+  "run_name": "tf_w3_garch_t_random_ctx50_1a_1_euro_tc0_cvar50_recurrent_train_mse",
+  "description": "tf_w3_garch_t_random_ctx50_1a_1_euro_tc0_cvar50_recurrent_train_mse",
+  "model_name": "tf_w3_garch_t_random_ctx50_1a_1_euro_tc0_cvar50_recurrent_mse",
+  "agent_name": "RecurrentAgent",
+  "contingent_claim": "EuropeanCall",
+  "proportional_cost": 0.0,
+  "risk_measure_name": "MSE"
+}

@@ -28,10 +28,14 @@ class RecurrentAgent(SimpleAgent):
         sequence_output_mode = "trade",
         position_activation = "linear",
         dense_units = 64,
+        include_sigma_feature = False,
     ):
         self.dense_units = int(dense_units)
         self.history_feature_dim = int(history_feature_dim)
-        self.input_shape = (n_instruments + 1 + n_instruments + self.history_feature_dim,) # +1 for T-t and + n_instruments for accumulated position
+        self.include_sigma_feature = bool(include_sigma_feature)
+        n_sigma_features = 1 if self.include_sigma_feature else 0
+        self.input_shape = (n_instruments + 1 + n_instruments + self.history_feature_dim + n_sigma_features,) # +1 for T-t, + n_instruments for accumulated position, +sigma
+        self._batch_sigma = None
         self.n_instruments = n_instruments
         self.context_as_timesteps = bool(context_as_timesteps)
         mode = str(context_pre_ttm_mode).strip().lower()
@@ -99,7 +103,13 @@ class RecurrentAgent(SimpleAgent):
         )
         transformed_input = tf.concat([input_data, self.accumulated_position], axis=-1)
 
-        return transformed_input # (batch_size, n_instruments + 1 + n_instruments)
+        if self.include_sigma_feature and self._batch_sigma is not None:
+            sigma_feat = tf.expand_dims(
+                tf.cast(self._batch_sigma, dtype=tf.float32), axis=-1
+            )  # (batch_size, 1)
+            transformed_input = tf.concat([transformed_input, sigma_feat], axis=-1)
+
+        return transformed_input
 
     def _convert_model_output_to_trade_action(self, model_output):
         """
@@ -179,6 +189,7 @@ class RecurrentAgent(SimpleAgent):
         batch_T_minus_t,
         batch_history_features=None,
         batch_pre_history_prices=None,
+        batch_path_sigma=None,
     ):
         """
         Processes the entire batch timestep by timestep, updating the accumulated position at each step.
@@ -186,10 +197,22 @@ class RecurrentAgent(SimpleAgent):
         Arguments:
         - batch_paths (tf.Tensor): Tensor containing a batch of instrument paths. Shape: (batch_size, timesteps, input_shape)
         - batch_T_minus_t (tf.Tensor): Tensor containing the time to maturity at each timestep.
+        - batch_path_sigma (tf.Tensor, optional): Per-path sigma. Shape: (batch_size,)
 
         Returns:
         - all_actions (tf.Tensor): Tensor containing all the actions taken for the batch.
         """
+        # Store sigma for use in transform_input at each timestep
+        if self.include_sigma_feature and batch_path_sigma is not None:
+            self._batch_sigma = tf.cast(
+                tf.convert_to_tensor(batch_path_sigma, dtype=tf.float32),
+                dtype=tf.float32,
+            )
+            if len(self._batch_sigma.shape) > 1:
+                self._batch_sigma = tf.squeeze(self._batch_sigma, axis=-1)
+        else:
+            self._batch_sigma = None
+
         # Reset accumulated position at the start of processing each batch
         self.reset_accumulated_position(batch_paths.shape[0])
         core_paths = batch_paths[:, :-1, :]

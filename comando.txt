@@ -1,32 +1,117 @@
-.\env\Scripts\python.exe .\examples\train_console.py configs\runs\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\train\recurrent_mse_logret.json --force-run
+========================================================================
+=== RECURRENT MSE — ALL W2 & W3 SCENARIOS ===
+========================================================================
+(Nota: las bandas ya están calibradas de los runs CVaR — son del benchmark,
+ no del modelo entrenado, así que los mismos valores aplican para MSE.
+ Se incluyen comandos de calibración por si se quiere re-verificar.)
+
+------------------------------------------------------------------------
+--- W2 (GBM Random ctx50) ---
+------------------------------------------------------------------------
+
+# W2/1a_1 (Euro, tc=0) — TRAIN
+./env/Scripts/python.exe ./examples/train_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_1_euro_tc0_cvar50/train/recurrent_mse.json --force-run
+
+# W2/1a_1 (Euro, tc=0) — COMPARE vs BS
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs_mse.json --force-run
+
+# W2/1a_2 (Euro, tc=1%, band) — TRAIN
+./env/Scripts/python.exe ./examples/train_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/train/recurrent_mse.json --force-run
+
+# W2/1a_2 (Euro, tc=1%, band) — COMPARE vs BS
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_mse.json --force-run
+
+# W2/1a_2 (Euro, tc=1%, band) — COMPARE vs BS BANDED (band=0.03)
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_banded_mse.json --force-run
+
+# W2/1a_2 — CALIBRACIÓN BANDA BS (opcional)
+./env/Scripts/python.exe ./examples/calibrate_bs_no_intervention_grid.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_banded_mse.json --force-run
+
+# W2/1c_1 (Asian, tc=0) — TRAIN
+./env/Scripts/python.exe ./examples/train_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_1_asian_arith_tc0_cvar50/train/recurrent_mse.json --force-run
+
+# W2/1c_1 (Asian, tc=0) — COMPARE vs LRM MC
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_1_asian_arith_tc0_cvar50/compare/vs_lrm_mc_mse.json --force-run
+
+# W2/1c_2 (Asian, tc=1%, band) — TRAIN
+./env/Scripts/python.exe ./examples/train_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_2_asian_arith_tc1_band/train/recurrent_mse.json --force-run
+
+# W2/1c_2 (Asian, tc=1%, band) — COMPARE vs LRM MC
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_mse.json --force-run
+
+# W2/1c_2 (Asian, tc=1%, band) — COMPARE vs LRM MC BANDED (band=0.03)
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_banded_mse.json --force-run
+
+# W2/1c_2 — CALIBRACIÓN BANDA LRM (opcional)
+./env/Scripts/python.exe ./examples/calibrate_bs_no_intervention_grid.py configs/runs/THESIS_FINAL/W2_gbm_random_ctx50/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_banded_mse.json --force-run
+
+
+------------------------------------------------------------------------
+--- W3 (GARCH-t Random ctx50) ---
+------------------------------------------------------------------------
+
+# W3/1a_1 (Euro, tc=0) — TRAIN
+./env/Scripts/python.exe ./examples/train_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/train/recurrent_mse.json --force-run
+
+# W3/1a_1 (Euro, tc=0) — COMPARE vs BS
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs_mse.json --force-run
+
+# W3/1a_2 (Euro, tc=1%, band) — TRAIN (ya existía)
+./env/Scripts/python.exe ./examples/train_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_mse.json --force-run
+
+# W3/1a_2 (Euro, tc=1%, band) — COMPARE vs BS
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_mse.json --force-run
+
+# W3/1a_2 (Euro, tc=1%, band) — COMPARE vs BS BANDED (band=0.29)
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_banded_mse.json --force-run
+
+# W3/1a_2 — CALIBRACIÓN BANDA BS (opcional)
+./env/Scripts/python.exe ./examples/calibrate_bs_no_intervention_grid.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_banded_mse.json --force-run
+
+# W3/1c_1 (Asian, tc=0) — TRAIN
+./env/Scripts/python.exe ./examples/train_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_1_asian_arith_tc0_cvar50/train/recurrent_mse.json --force-run
+
+# W3/1c_1 (Asian, tc=0) — COMPARE vs LRM MC
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_1_asian_arith_tc0_cvar50/compare/vs_lrm_mc_mse.json --force-run
+
+# W3/1c_2 (Asian, tc=1%, band) — TRAIN
+./env/Scripts/python.exe ./examples/train_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_2_asian_arith_tc1_band/train/recurrent_mse.json --force-run
+
+# W3/1c_2 (Asian, tc=1%, band) — COMPARE vs LRM MC
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_mse.json --force-run
+
+# W3/1c_2 (Asian, tc=1%, band) — COMPARE vs LRM MC BANDED (band=0.03)
+./env/Scripts/python.exe ./examples/compare_console.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_banded_mse.json --force-run
+
+# W3/1c_2 — CALIBRACIÓN BANDA LRM (opcional)
+./env/Scripts/python.exe ./examples/calibrate_bs_no_intervention_grid.py configs/runs/THESIS_FINAL/W3_garch_t_random_ctx50/1c_2_asian_arith_tc1_band/compare/vs_lrm_mc_banded_mse.json --force-run
+
+
+========================================================================
+=== ORDEN RECOMENDADO DE EJECUCIÓN ===
+========================================================================
+1. Entrenar todos (8 modelos):
+   - W2: 1a_1, 1a_2, 1c_1, 1c_2
+   - W3: 1a_1, 1a_2, 1c_1, 1c_2
+
+2. Comparar tc=0 (sin banda):
+   - W2/1a_1 vs BS, W2/1c_1 vs LRM MC
+   - W3/1a_1 vs BS, W3/1c_1 vs LRM MC
+
+3. Comparar tc=1% sin banda:
+   - W2/1a_2 vs BS, W2/1c_2 vs LRM MC
+   - W3/1a_2 vs BS, W3/1c_2 vs LRM MC
+
+4. Comparar tc=1% con banda (requiere que tc=0 compare ya exista):
+   - W2/1a_2 vs BS banded, W2/1c_2 vs LRM MC banded
+   - W3/1a_2 vs BS banded, W3/1c_2 vs LRM MC banded
+
+5. (Opcional) Recalibrar bandas si los resultados lo justifican.
+
+
+========================================================================
+=== COMANDOS ANTERIORES (referencia) ===
+========================================================================
+
+./env/Scripts/python.exe ./examples/train_console.py configs/runs/THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\train\recurrent_mse_logret.json --force-run
 .\env\Scripts\python.exe .\examples\compare_console.py configs\runs\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\compare\vs_bs_mse_logret.json --force-run
-
-
-G:\Mi unidad\Tesis2026\Models\Organized\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\compare\vs_bs_mse_logret\tables\bootstrap_metrics_wide.csv
-
-G:\Mi unidad\Tesis2026\Models\Organized\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\compare\vs_bs_mse_logret\tables\empirical_risk_metrics.csv
-
------
-
-
-.\env\Scripts\python.exe .\examples\train_console.py configs\runs\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\train\recurrent_mse_logret_sigma005_05_p10.json --force-run
-.\env\Scripts\python.exe .\examples\compare_console.py configs\runs\THESIS_FINAL\W2_gbm_random_ctx50\1a_1_euro_tc0_cvar50\compare\vs_bs_mse_logret_sigma005_05_p10.json --force-run
----
-.\env\Scripts\python.exe .\examples\train_console.py configs\runs\THESIS_FINAL\W2_gbm_random_ctx50\1a_2_euro_tc1_band\train\recurrent.json --force-run
-
----
-
-python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s1.json
-python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s2.json
-python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s3.json
-python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s4.json
-python examples/train_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/train/recurrent_ens_s5.json
-
-
-python examples/compare_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_ensemble.json
-python examples/compare_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_lrm_mc_ensemble.json
-python examples/compare_console.py runs/THESIS_FINAL/W3_garch_t_random_ctx50/1a_2_euro_tc1_band/compare/vs_bs_banded_ensemble.json
-
-
-
-----

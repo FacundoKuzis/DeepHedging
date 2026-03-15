@@ -532,6 +532,8 @@ def build_agent_from_config(
             kwargs["context_pre_ttm_mode"] = str(context_pre_ttm_mode)
         if "dense_units" in init_params and "dense_units" in config:
             kwargs["dense_units"] = int(config["dense_units"])
+        if "include_sigma_feature" in init_params and config.get("include_sigma_feature", False):
+            kwargs["include_sigma_feature"] = True
         agent = agent_cls(**kwargs)
         # Optional constant feature appended to every timestep/input row.
         agent.append_log_strike_feature = bool(include_log_strike_feature)

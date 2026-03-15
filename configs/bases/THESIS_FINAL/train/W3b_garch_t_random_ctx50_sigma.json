@@ -1,0 +1,56 @@
+{
+  "instrument_model": "garch",
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.04,
+  "gbm_sigma_uniform_high": 0.8,
+  "r_per_path_mode": "fixed",
+  "garch_alpha_per_path_mode": "uniform",
+  "garch_alpha_uniform_low": 0.03,
+  "garch_alpha_uniform_high": 0.12,
+  "garch_beta_per_path_mode": "uniform",
+  "garch_beta_uniform_low": 0.55,
+  "garch_beta_uniform_high": 0.78,
+  "garch_leverage_per_path_mode": "fixed",
+  "garch_leverage": 0.0,
+  "garch_use_student_t": true,
+  "garch_student_t_df_per_path_mode": "uniform",
+  "garch_student_t_df_uniform_low": 3.2,
+  "garch_student_t_df_uniform_high": 18.0,
+  "use_price_history_context": true,
+  "context_for_path_generation_only": false,
+  "context_length": 50,
+  "history_conv1d_enabled": true,
+  "history_conv1d_pooling": "global_max",
+  "history_conv1d_layers": [
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 1,
+      "activation": "relu",
+      "dropout": 0.0,
+      "use_batch_norm": false,
+      "use_residual": false
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 2,
+      "activation": "relu",
+      "dropout": 0.03,
+      "use_batch_norm": false,
+      "use_residual": true
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 4,
+      "activation": "relu",
+      "dropout": 0.03,
+      "use_batch_norm": false,
+      "use_residual": true
+    }
+  ],
+  "include_sigma_feature": true,
+  "description": "THESIS_FINAL W3b: GARCH(no leverage)+t random, context 50 Conv + sigma as input feature.",
+  "extends": "common.json"
+}

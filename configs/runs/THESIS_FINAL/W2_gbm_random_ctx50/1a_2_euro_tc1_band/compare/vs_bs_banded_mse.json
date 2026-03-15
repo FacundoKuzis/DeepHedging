@@ -1,0 +1,11 @@
+{
+  "extends": "vs_bs_mse.json",
+  "run_name": "tf_w2_gbm_random_ctx50_1a_2_euro_tc1_band_vs_bs_banded_cmp_mse",
+  "description": "compare banda NI mse",
+  "benchmark_actions_reuse_from_run": "THESIS_FINAL/W2_gbm_random_ctx50/1a_1_euro_tc0_cvar50/compare/vs_bs",
+  "benchmark_actions_reuse_agent_name": "00_bs_delta_hedging",
+  "benchmark_actions_reuse_apply_no_intervention": true,
+  "benchmark_no_intervention_mode": "percentage",
+  "benchmark_no_intervention_bound": 0.345,
+  "benchmark_agents_to_compare": []
+}

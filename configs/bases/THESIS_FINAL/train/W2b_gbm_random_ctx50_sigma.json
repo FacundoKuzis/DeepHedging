@@ -1,0 +1,44 @@
+{
+  "description": "THESIS_FINAL W2b: GBM random sigma/r + context 50 Conv + sigma as input feature.",
+  "instrument_model": "gbm",
+  "gbm_sigma_per_path_mode": "uniform",
+  "gbm_sigma_uniform_low": 0.08,
+  "gbm_sigma_uniform_high": 0.6,
+  "r_per_path_mode": "fixed",
+  "use_price_history_context": true,
+  "context_for_path_generation_only": false,
+  "context_length": 50,
+  "history_conv1d_enabled": true,
+  "history_conv1d_pooling": "global_max",
+  "history_conv1d_layers": [
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 1,
+      "activation": "relu",
+      "dropout": 0.0,
+      "use_batch_norm": false,
+      "use_residual": false
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 2,
+      "activation": "relu",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true
+    },
+    {
+      "filters": 16,
+      "kernel_size": 3,
+      "dilation_rate": 4,
+      "activation": "relu",
+      "dropout": 0.05,
+      "use_batch_norm": false,
+      "use_residual": true
+    }
+  ],
+  "include_sigma_feature": true,
+  "extends": "common.json"
+}

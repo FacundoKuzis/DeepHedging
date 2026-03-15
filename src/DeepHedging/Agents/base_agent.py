@@ -338,6 +338,7 @@ class BaseAgent(ABC):
         loss_function,
         batch_history_features=None,
         batch_pre_history_prices=None,
+        batch_path_sigma=None,
     ):
         """
         Train the model on a batch of data, processing timestep by timestep.
@@ -366,6 +367,11 @@ class BaseAgent(ABC):
                     kwargs["batch_pre_history_prices"] = batch_pre_history_prices
                 elif "pre_history_prices" in params:
                     kwargs["pre_history_prices"] = batch_pre_history_prices
+            if batch_path_sigma is not None:
+                if "batch_path_sigma" in params:
+                    kwargs["batch_path_sigma"] = batch_path_sigma
+                elif "path_sigma" in params:
+                    kwargs["path_sigma"] = batch_path_sigma
             if kwargs:
                 actions = self.process_batch(batch_paths, batch_T_minus_t, **kwargs)
             else:
